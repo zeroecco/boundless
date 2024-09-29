@@ -20,5 +20,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url = { workspace = true }
 
 [dev-dependencies]
-broker = { path = "../../../crates/broker" }
+boundless-market = { workspace = true, features = ["test-utils"] }
+broker = { workspace = true, features = ["test-utils"] }
 tracing-test = "0.2"

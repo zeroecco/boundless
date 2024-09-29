@@ -41,6 +41,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
+boundless-market = { path = ".", features = ["test-utils"] }
 guest-util = { workspace = true }
 tracing-test = "0.2"
 
@@ -51,3 +52,4 @@ required-features = ["cli"]
 [features]
 cli = ["dep:guest-util", "dep:serde_yaml", "tokio/rt-multi-thread"]
 default = ["cli"]
+test-utils = []
