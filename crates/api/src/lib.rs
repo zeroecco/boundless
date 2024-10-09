@@ -135,7 +135,12 @@ impl IntoResponse for AppError {
             Self::ReceiptMissing(_) | Self::JournalMissing(_) => StatusCode::NOT_FOUND,
             Self::InternalErr(_) | Self::DbError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        tracing::error!("api error, code {code}: {self:?}");
+        let log_msg = format!("api error, code {code}: {self:?}");
+        if matches!(self, Self::ImgAlreadyExists(_)) {
+            tracing::warn!(log_msg);
+        } else {
+            tracing::error!(log_msg);
+        }
 
         (code, Json(ErrMsg { r#type: self.type_str(), msg: self.to_string() })).into_response()
     }
