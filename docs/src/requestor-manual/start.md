@@ -1,21 +1,25 @@
 # Requestor Quick Start
 
-This guide highlights tips, tools, and techniques for integrating RISC Zero guest programs with the [Boundless market][page-market].
+This guide highlights tips, tools, and techniques for building RISC Zero guest programs that integrate with the [Boundless market][page-market] to generate proofs for them.
 
 ## Before you begin
 
-:::info
+<div class="warning">
+
 Those completely new to development of verifiable computation using a zkVM should first get a firm grasp of the [core concepts][r0-docs], [terms][r0-terms], and experiment with [examples][r0-examples].
-:::
+
+</div>
 
 1. Follow the [local development][page-local-dev] to install deps and configure a Boundless devnet.
 2. To interact with live [market deployment][page-deployments], you must obtain funds for gas fees and proof fulfillment payments.
 
 ## Starting a New Project
 
-:::note
+<div class="warning">
+
 For existing RISC Zero apps, see the [integrating existing projects](#integrating-existing-projects) section.
-:::
+
+</div>
 
 ### Examples
 
@@ -42,7 +46,10 @@ TODO: compare base [foundry template][r0-foundry-template] noting that we intend
 
 [r0-docs]: https://dev.risczero.com/api
 [r0-terms]: https://dev.risczero.com/terminology
-[r0-examples]: https://dev.risczero.com/terminology
+
+<!-- TODO versioning of all links https://linear.app/risczero/issue/DR-369/version-all-links-correctly-in-the-boundless-book -->
+
+[r0-examples]: https://github.com/risc0/risc0/tree/release-1.1/examples
 [boundless-examples]: https://github.com/boundless-xyz/boundless/tree/main/examples/
 [boundless-repo]: https://github.com/boundless-xyz/boundless/
 [boundless-foundry-template]: https://github.com/boundless-xyz/boundless-foundry-template/
