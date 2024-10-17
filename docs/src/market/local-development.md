@@ -5,9 +5,11 @@ Ensure the following software is installed on your machine before proceeding:
 - **[Rust](https://www.rust-lang.org/tools/install) version 1.79 or higher**
 - **[Foundry](https://book.getfoundry.sh/getting-started/installation) version 0.2 or higher**
 
-Before starting, ensure you have cloned with recursive submodules, or pull them with:
+Before starting, ensure you have cloned the [Boundless monorepo][boundless-repo] with recursive submodules:
 
 ```console
+git clone git@github.com:boundless-xyz/boundless.git 
+cd boundless
 git submodule update --init
 ```
 
@@ -114,3 +116,4 @@ Check `cargo run --bin cli -- --help` for a full list of commands available thro
 [page-bento-running]: ../prover-manual/bento/running_bento.md
 [page-requestor-request]: ../requestor-manual/broadcasting.md
 [boundless-foundry-template]: https://github.com/boundless-xyz/boundless-foundry-template/
+[boundless-repo]: https://github.com/boundless-xyz/boundless/

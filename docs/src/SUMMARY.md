@@ -13,6 +13,7 @@
 
 - [🙋 Requestor Manual](./requestor-manual/README.md)
 
+  - [Quick Start](./requestor-manual/start.md)
   - [Broadcasting Requests](./requestor-manual/broadcasting.md)
 
 - [🏋 Prover Manual](./prover-manual/README.md)
