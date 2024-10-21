@@ -23,7 +23,8 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use alloy_sol_types::{sol, SolCall};
-use blobstream0_core::{post_batch, prove_block_range};
+use blobstream0_core::post_batch;
+use blobstream0_core::prover::{Blobstream0Prover, Risc0Prover};
 use blobstream0_primitives::IBlobstream::{
     self, BinaryMerkleProof, DataRootTuple, IBlobstreamInstance,
 };
@@ -131,10 +132,11 @@ async fn e2e_basic_range() -> anyhow::Result<()> {
     let (_anvil, contract) = setup_test_environment().await?;
 
     let tm_client = Arc::new(HttpClient::new(CELESTIA_RPC_URL)?);
-    let receipt =
-        prove_block_range(tm_client.clone(), BATCH_START as u64..BATCH_END as u64).await?;
+    let receipt = Risc0Prover
+        .prove_block_range(tm_client.clone(), BATCH_START as u64..BATCH_END as u64)
+        .await?;
 
-    post_batch(&contract, &receipt).await?;
+    post_batch(&contract, receipt).await?;
 
     let height = contract.latestHeight().call().await?;
     assert_eq!(height._0, BATCH_END as u64 - 1);
@@ -264,10 +266,11 @@ async fn test_contract_upgrade() -> anyhow::Result<()> {
 
     // Test that the new implementation works as normal
     let tm_client = Arc::new(HttpClient::new(CELESTIA_RPC_URL)?);
-    let receipt =
-        prove_block_range(tm_client.clone(), BATCH_START as u64..BATCH_END as u64).await?;
+    let receipt = Risc0Prover
+        .prove_block_range(tm_client.clone(), BATCH_START as u64..BATCH_END as u64)
+        .await?;
 
-    post_batch(&contract, &receipt).await?;
+    post_batch(&contract, receipt).await?;
 
     let height = contract.latestHeight().call().await?;
     assert_eq!(height._0, BATCH_END as u64 - 1);

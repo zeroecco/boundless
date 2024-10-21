@@ -15,6 +15,7 @@
 use self::blobstream::BlobstreamService;
 use super::setup_provider;
 use alloy::{primitives::Address, providers::ProviderBuilder};
+use blobstream0_core::prover::Risc0Prover;
 use blobstream0_primitives::IBlobstream;
 use clap::Parser;
 use tendermint_rpc::HttpClient;
@@ -59,8 +60,10 @@ impl ServiceArgs {
 
         let contract = IBlobstream::new(self.eth_address, provider);
 
+        let prover = Risc0Prover;
+
         tracing::info!(target: "blobstream0::service", "Starting service");
-        BlobstreamService::new(contract, tm_client, self.batch_size)
+        BlobstreamService::new(contract, tm_client, self.batch_size, prover)
             .spawn()
             .await?;
 

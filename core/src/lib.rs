@@ -13,34 +13,22 @@
 // limitations under the License.
 
 use alloy::{network::Network, providers::Provider, transports::Transport};
-use alloy_sol_types::SolValue;
-use anyhow::Context;
 use blobstream0_primitives::{
     proto::{TrustedLightBlock, UntrustedLightBlock},
     IBlobstream::IBlobstreamInstance,
-    LightBlockProveData, RangeCommitment,
 };
-use risc0_ethereum_contracts::groth16;
-use risc0_zkvm::{default_prover, is_dev_mode, sha::Digestible, ExecutorEnv, ProverOpts, Receipt};
+use prover::ProofOutput;
+use risc0_zkvm::is_dev_mode;
 use std::{ops::Range, sync::Arc, time::Duration};
 use tendermint::{block::Height, validator::Set};
 use tendermint_light_client_verifier::types::Header;
-use tendermint_proto::{types::Header as ProtoHeader, Protobuf};
 use tendermint_rpc::{Client, HttpClient, Paging};
 use tokio::{sync::Semaphore, task::JoinHandle};
 use tracing::{instrument, Level};
 
 mod range_iterator;
-use range_iterator::LightBlockRangeIterator;
 
-// This is configured to use the default docker build path. The reason for the feature flag is
-// because we want a consistent docker image to build the program, which should not be run within
-// the dockerized service container.
-#[cfg(feature = "prebuilt-docker")]
-const LIGHT_CLIENT_GUEST_ELF: &[u8] =
-    include_bytes!("../../target/riscv-guest/riscv32im-risc0-zkvm-elf/docker/light_client_guest/light-client-guest");
-#[cfg(not(feature = "prebuilt-docker"))]
-use light_client_guest::LIGHT_CLIENT_GUEST_ELF;
+pub mod prover;
 
 /// Currently set to the max allowed by tendermint RPC
 const HEADER_REQ_COUNT: u64 = 20;
@@ -138,100 +126,11 @@ pub async fn fetch_headers(
     Ok(all_blocks)
 }
 
-/// Prove a single block with the trusted light client block and the height to fetch and prove.
-#[instrument(
-    target = "blobstream0::core",
-    skip(input),
-    fields(light_range = ?input.untrusted_height()..input.trusted_height()),
-    err, level = Level::DEBUG)]
-pub async fn prove_block(input: LightBlockProveData) -> anyhow::Result<Receipt> {
-    let mut buffer = Vec::<u8>::new();
-    assert_eq!(
-        input.untrusted_height() - input.trusted_height() - 1,
-        input.interval_headers.len() as u64
-    );
-    let expected_next_hash = input.untrusted_block.signed_header.header().hash();
-    let expected_next_height = input.untrusted_height();
-    let expected_trusted_hash = input.trusted_block.signed_header.header().hash();
-
-    TrustedLightBlock {
-        signed_header: input.trusted_block.signed_header,
-        next_validators: input.trusted_block.next_validators,
-    }
-    .encode_length_delimited(&mut buffer)?;
-
-    UntrustedLightBlock {
-        signed_header: input.untrusted_block.signed_header,
-        validators: input.untrusted_block.validators,
-    }
-    .encode_length_delimited(&mut buffer)?;
-
-    for header in input.interval_headers {
-        Protobuf::<ProtoHeader>::encode_length_delimited(header, &mut buffer)?;
-    }
-
-    let buffer_len: u32 = buffer
-        .len()
-        .try_into()
-        .expect("buffer cannot exceed 32 bit range");
-
-    tracing::debug!(target: "blobstream0::core", "Proving light client");
-    // Note: must be in blocking context to not have issues with Bonsai blocking client when selected
-    let prove_info = tokio::task::spawn_blocking(move || {
-        let env = ExecutorEnv::builder()
-            .write_slice(&[buffer_len])
-            .write_slice(&buffer)
-            .build()?;
-
-        let prover = default_prover();
-        prover.prove_with_opts(env, LIGHT_CLIENT_GUEST_ELF, &ProverOpts::groth16())
-    })
-    .await??;
-    let receipt = prove_info.receipt;
-    let commitment = RangeCommitment::abi_decode(&receipt.journal.bytes, true)?;
-    // Assert that what is proven is expected based on the inputs.
-    assert_eq!(expected_next_hash.as_bytes(), commitment.newHeaderHash);
-    assert_eq!(expected_next_height, commitment.newHeight);
-    assert_eq!(
-        expected_trusted_hash.as_bytes(),
-        commitment.trustedHeaderHash.as_slice()
-    );
-
-    Ok(receipt)
-}
-
-/// Fetches and proves a range of light client blocks.
-#[instrument(target = "blobstream0::core", skip(client), err, level = Level::INFO)]
-pub async fn prove_block_range(
-    client: Arc<HttpClient>,
-    range: Range<u64>,
-) -> anyhow::Result<Receipt> {
-    // Include fetching the trusted light client block from before the range.
-    let (trusted_block, blocks) = tokio::try_join!(
-        fetch_trusted_light_block(&client, Height::try_from(range.start - 1)?),
-        fetch_headers(client.clone(), range.start..range.end)
-    )?;
-
-    let mut range_iterator = LightBlockRangeIterator {
-        client: &client,
-        trusted_block,
-        blocks: &blocks,
-    };
-
-    let inputs = range_iterator
-        .next_range()
-        .await?
-        .context("unable to prove any blocks in the range")?;
-    let receipt = prove_block(inputs).await?;
-
-    Ok(receipt)
-}
-
 /// Post batch proof to Eth based chain.
-#[instrument(target = "blobstream0::core", skip(contract, receipt), err, level = Level::DEBUG)]
+#[instrument(target = "blobstream0::core", skip(contract, proof), err, level = Level::DEBUG)]
 pub async fn post_batch<T, P, N>(
     contract: &IBlobstreamInstance<T, P, N>,
-    receipt: &Receipt,
+    proof: ProofOutput,
 ) -> anyhow::Result<()>
 where
     T: Transport + Clone,
@@ -239,12 +138,8 @@ where
     N: Network,
 {
     tracing::debug!(target: "blobstream0::core", "Posting batch (dev mode={})", is_dev_mode());
-    let seal = match is_dev_mode() {
-        true => [&[0u8; 4], receipt.claim()?.digest().as_bytes()].concat(),
-        false => groth16::encode(receipt.inner.groth16()?.seal.clone())?,
-    };
 
-    let update_tx = contract.updateRange(receipt.journal.bytes.clone().into(), seal.into());
+    let update_tx = contract.updateRange(proof.journal.into(), proof.seal.into());
     update_tx
         .send()
         .await?

@@ -18,37 +18,42 @@ use std::time::{Duration, Instant};
 
 use alloy::{network::Network, primitives::FixedBytes, providers::Provider, transports::Transport};
 use anyhow::Context;
-use blobstream0_core::{post_batch, prove_block_range};
+use blobstream0_core::post_batch;
+use blobstream0_core::prover::Blobstream0Prover;
 use blobstream0_primitives::IBlobstream::IBlobstreamInstance;
 use rand::Rng;
 use tendermint_rpc::{Client, HttpClient};
 use tokio::task::JoinError;
 
-pub(crate) struct BlobstreamService<T, P, N> {
+pub(crate) struct BlobstreamService<T, P, N, B> {
     contract: Arc<IBlobstreamInstance<T, P, N>>,
     tm_client: Arc<HttpClient>,
     batch_size: u64,
+    prover: B,
 }
 
-impl<T, P, N> BlobstreamService<T, P, N> {
+impl<T, P, N, B> BlobstreamService<T, P, N, B> {
     pub fn new(
         contract: IBlobstreamInstance<T, P, N>,
         tm_client: HttpClient,
         batch_size: u64,
+        prover: B,
     ) -> Self {
         Self {
             contract: Arc::new(contract),
             tm_client: Arc::new(tm_client),
             batch_size,
+            prover,
         }
     }
 }
 
-impl<T, P, N> BlobstreamService<T, P, N>
+impl<T, P, N, B> BlobstreamService<T, P, N, B>
 where
     T: Transport + Clone,
     P: Provider<T, N> + 'static,
     N: Network,
+    B: Blobstream0Prover + Send + Sync,
 {
     async fn fetch_current_state(&self) -> Result<anyhow::Result<BlobstreamState>, JoinError> {
         let contract = Arc::clone(&self.contract);
@@ -115,10 +120,12 @@ where
             break (trusted_height, untrusted_height);
         };
 
-        let receipt = prove_block_range(self.tm_client.clone(), trusted_height..untrusted_height)
+        let proof = self
+            .prover
+            .prove_block_range(self.tm_client.clone(), trusted_height..untrusted_height)
             .await
             .context("failed to prove block range")?;
-        post_batch(&self.contract, &receipt)
+        post_batch(&self.contract, proof)
             .await
             .context("failed to post batch")?;
 

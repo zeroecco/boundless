@@ -18,7 +18,7 @@ use alloy::{
     providers::ProviderBuilder,
 };
 use alloy_sol_types::{sol, SolCall};
-use blobstream0_core::prove_block_range;
+use blobstream0_core::prover::{Blobstream0Prover, Risc0Prover};
 use blobstream0_primitives::IBlobstream;
 use clap::Parser;
 use dotenv::dotenv;
@@ -198,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
 
             let client = Arc::new(HttpClient::new(tendermint_rpc.as_str())?);
 
-            let receipt = prove_block_range(client, start..end).await?;
+            let receipt = Risc0Prover.prove_block_range(client, start..end).await?;
 
             fs::write(out, bincode::serialize(&receipt)?).await?;
         }
