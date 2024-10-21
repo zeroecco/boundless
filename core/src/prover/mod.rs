@@ -16,6 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::range_iterator::LightBlockRangeIterator;
 
+// #[cfg(feature = "boundless")]
+mod boundless;
+// #[cfg(feature = "boundless")]
+pub use boundless::BoundlessProver;
+
 // This is configured to use the default docker build path. The reason for the feature flag is
 // because we want a consistent docker image to build the program, which should not be run within
 // the dockerized service container.
@@ -137,6 +142,7 @@ pub trait Blobstream0Prover {
 }
 
 // TODO move out Bonsai impl to optimize avoiding uploading ELF for each proof.
+#[derive(Debug)]
 pub struct Risc0Prover;
 
 #[async_trait]
@@ -162,3 +168,4 @@ impl Blobstream0Prover for Risc0Prover {
         })
     }
 }
+

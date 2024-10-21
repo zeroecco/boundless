@@ -15,10 +15,10 @@ sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8
 
 # boundless monorepo dependencies.
 # TODO remove ssh and cargo config when public.
-aggregation-set = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.1.0" }
-guest-assessor = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.1.0" }
-boundless-market = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.1.0" }
-broker = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.1.0" }
+aggregation-set = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.2.0" }
+guest-assessor = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.2.0" }
+boundless-market = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.2.0" }
+broker = { git = "ssh://git@github.com/boundless-xyz/boundless.git", tag = "v0.2.0" }
 
 # Always optimize; building and running the guest takes much longer without optimization.
 [profile.dev]
