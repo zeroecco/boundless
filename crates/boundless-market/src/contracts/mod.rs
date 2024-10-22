@@ -19,6 +19,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{eip712_domain, Eip712Domain};
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "zkvm"))]
 use std::time::Duration;
 #[cfg(not(target_os = "zkvm"))]
 use thiserror::Error;
