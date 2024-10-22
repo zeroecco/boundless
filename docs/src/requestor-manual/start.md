@@ -1,6 +1,6 @@
 # Requestor Quick Start
 
-This guide highlights tips, tools, and techniques for building RISC Zero guest programs that integrate with the [Boundless market][page-market] to generate proofs for them.
+This guide highlights tips, tools, and techniques for building RISC Zero guest programs that submit proof generation requests to the [Boundless Market][page-market] to be fulfilled.
 
 ## Before you begin
 
@@ -10,7 +10,7 @@ Those completely new to development of verifiable computation using a zkVM shoul
 
 </div>
 
-1. Follow the [local development][page-local-dev] to install deps and configure a Boundless devnet.
+1. Follow the [local development][page-local-dev] to install dependencies and configure a Boundless devnet.
 2. To interact with live [market deployment][page-deployments], you must obtain funds for gas fees and proof fulfillment payments.
 
 ## Starting a New Project
@@ -23,11 +23,21 @@ For existing RISC Zero apps, see the [integrating existing projects](#integratin
 
 ### Examples
 
-The Boundless' monorepo includes [examples][boundless-examples] that can be used as _reference_ on the patterns required in the `host` to integrate and interact with Boundless.
+As a _reference_, Boundless' [examples][boundless-examples] show key patterns required in the `host` to integrate and interact with Boundless.
 
-## Foundry Template
+These examples are extremely minimal, and thus are not likely ideal for _building_ applications.
 
-The [Boundless foundry template][boundless-foundry-template] is the best place to start _building_ a new Boundless application.
+## [Foundry](https://book.getfoundry.sh/getting-started/installation) Template
+
+To _start building from scratch_, the [Boundless Foundry Template][boundless-foundry-template] is the best place to base a new project.
+
+The Template integrates a zkVM proof - fulfilled by the Market - with a custom contract that calls to a deployment of a verifier contract that the same Market is connected to.
+It also includes:
+
+1. Utilities to evaluate and define [proof order][term-proof-order] requirements
+2. Use of the `boundless_market::sdk::client::Client` for interactions with a [Market deployment][page-deployments]
+3. Simple logic for awaiting fulfillment, and ultimately using that proof to in a contract call
+4. Minimal examples of integration tests (see [local development][page-local-dev] for more details)
 
 ## Integrating Existing Projects
 
@@ -40,7 +50,7 @@ Key differences include:
 | Submission endpoint      | A [Market deployment][page-deployments] | [api.bonsai.xyz](https://bonsai.xyz) |
 | TODO                     | More here?                              | ?                                    |
 
-Use the [Boundless foundry template][boundless-foundry-template]
+Use the [Boundless Foundry Template][boundless-foundry-template]
 
 TODO: compare base [foundry template][r0-foundry-template] noting that we intend to bring best practices discovered from Boundless into a new base template (likely using one of the existing repos and archiving the other)
 
@@ -57,3 +67,4 @@ TODO: compare base [foundry template][r0-foundry-template] noting that we intend
 [page-deployments]: ../market/deployments.md
 [page-local-dev]: ../market/local-development.md
 [page-market]: ../market/README.md
+[term-proof-order]: ../glossary.md#proof-order
