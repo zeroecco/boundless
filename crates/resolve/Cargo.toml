@@ -1,0 +1,25 @@
+[package]
+name = "resolve"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aggregation-set = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+risc0-binfmt = { workspace = true }
+risc0-zkvm = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+guest-resolve = { workspace = true }
+guest-util = { workspace = true }
+rand = { workspace = true }
+# TODO(risc0#2342) Remove the requirement that the prove feature be used.
+risc0-zkvm = { workspace = true, features = ["client", "prove"] }
+test-log = { workspace = true }
+tracing = { workspace = true }

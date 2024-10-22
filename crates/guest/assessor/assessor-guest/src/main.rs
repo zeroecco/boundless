@@ -7,8 +7,7 @@
 
 extern crate alloc;
 
-use aggregation_set::SET_BUILDER_GUEST_ID;
-use aggregation_set::{merkle_root, GuestOutput};
+use aggregation_set::{merkle_root, GuestOutput, SET_BUILDER_GUEST_ID};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::aliases::U192;
 use alloy_sol_types::SolValue;

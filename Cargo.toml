@@ -8,8 +8,10 @@ members = [
     "crates/boundless-market",
     "crates/broker",
     "crates/guest/assessor",
+    "crates/guest/resolve",
     "crates/guest/set-builder",
     "crates/guest/util",
+    "crates/resolve",
     "crates/taskdb",
     "crates/workflow",
     "crates/workflow-common"
@@ -26,9 +28,11 @@ aggregation-set = { path = "crates/aggregation-set" }
 assessor = { path = "crates/assessor" }
 bento-client = { path = "crates/bento-client" }
 boundless-market = { path = "crates/boundless-market" }
-guest-set-builder = { path = "crates/guest/set-builder" }
 guest-assessor = { path = "crates/guest/assessor" }
+guest-resolve = { path = "crates/guest/resolve" }
+guest-set-builder = { path = "crates/guest/set-builder" }
 guest-util = { path = "crates/guest/util" }
+resolve = { path = "crates/resolve" }
 taskdb = { path = "crates/taskdb" }
 workflow = { path = "crates/workflow" }
 workflow-common = { path = "crates/workflow-common" }

@@ -3292,6 +3292,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "guest-resolve"
+version = "0.1.0"
+dependencies = [
+ "risc0-build",
+ "risc0-build-ethereum",
+]
+
+[[package]]
 name = "guest-set-builder"
 version = "0.2.0"
 dependencies = [
@@ -5215,6 +5223,26 @@ dependencies = [
  "web-sys",
  "webpki-roots 0.26.6",
  "windows-registry",
+]
+
+[[package]]
+name = "resolve"
+version = "0.1.0"
+dependencies = [
+ "aggregation-set",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "guest-resolve",
+ "guest-util",
+ "hex",
+ "postcard",
+ "rand",
+ "risc0-binfmt",
+ "risc0-zkvm",
+ "serde",
+ "test-log",
+ "tracing",
 ]
 
 [[package]]
