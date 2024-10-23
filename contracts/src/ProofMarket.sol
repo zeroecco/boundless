@@ -240,7 +240,7 @@ contract ProofMarket is IProofMarket, EIP712 {
         emit RequestLockedin(request.id, prover);
     }
 
-    // TODO(victor): Add a path that allows a prover to fuilfill a request without first sending a lock-in.
+    // TODO(#70): Add a path that allows a prover to fulfill a request without first sending a lock-in.
     function fulfill(Fulfillment calldata fill, bytes calldata assessorSeal) external {
         // Verify the application guest proof. We need to verify it here, even though the market
         // guest already verified that the prover has knowledge of a verifying receipt, because
