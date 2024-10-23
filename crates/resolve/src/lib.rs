@@ -6,7 +6,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use aggregation_set::SetInclusionReceipt;
@@ -68,18 +67,6 @@ pub struct ResolveInput {
     // outside of testing. Consider dropping this by using InnerAssumptionReceipt instead of a
     // AssumptionReceipt as the base enum.
     pub assumption: AssumptionReceipt<ReceiptClaim>,
-}
-
-impl ResolveInput {
-    // TOOD: Use write_frame instead of generating the concatenated buffer here.
-    pub fn to_vec(&self) -> Vec<u8> {
-        let bytes = postcard::to_allocvec(self).unwrap();
-        let length = bytes.len() as u32;
-        let mut result = Vec::with_capacity(4 + bytes.len());
-        result.extend_from_slice(&length.to_le_bytes());
-        result.extend_from_slice(&bytes);
-        result
-    }
 }
 
 #[cfg(test)]
@@ -213,7 +200,7 @@ mod tests {
 
         // Proving should fail if the assumption receipt is not provided.
         let env = ExecutorEnv::builder()
-            .write_slice(&input.to_vec())
+            .write_frame(&postcard::to_allocvec(&input).unwrap())
             .add_assumption(conditional_receipt.clone())
             .build()
             .unwrap();
@@ -222,7 +209,7 @@ mod tests {
 
         // Proving should fail if the conditional_receipt is not provided.
         let env = ExecutorEnv::builder()
-            .write_slice(&input.to_vec())
+            .write_frame(&postcard::to_allocvec(&input).unwrap())
             .add_assumption(echo_receipt.clone())
             .build()
             .unwrap();
@@ -230,7 +217,7 @@ mod tests {
         assert!(err.to_string().contains("no receipt found to resolve assumption"));
 
         let env = ExecutorEnv::builder()
-            .write_slice(&input.to_vec())
+            .write_frame(&postcard::to_allocvec(&input).unwrap())
             .add_assumption(conditional_receipt)
             .add_assumption(echo_receipt)
             .build()
@@ -268,7 +255,7 @@ mod tests {
 
         // Run with the conditional receipt, and the set receipt for the singleton as assumptions.
         let env = ExecutorEnv::builder()
-            .write_slice(&input.to_vec())
+            .write_frame(&postcard::to_allocvec(&input).unwrap())
             .add_assumption(conditional_receipt)
             .add_assumption(singleton_receipt)
             .build()
@@ -310,7 +297,7 @@ mod tests {
         // succinct STARK receipt for direct verification of the root.
         // NOTE: Direct verification of a poseidon2 SuccinctReceipt takes about 300M cycles.
         let env = ExecutorEnv::builder()
-            .write_slice(&input.to_vec())
+            .write_frame(&postcard::to_allocvec(&input).unwrap())
             .add_assumption(conditional_receipt)
             .build()
             .unwrap();
@@ -357,7 +344,7 @@ mod tests {
 
         // Run with the conditional receipt, and the set root receipt as assumptions.
         let env = ExecutorEnv::builder()
-            .write_slice(&input.to_vec())
+            .write_frame(&postcard::to_allocvec(&input).unwrap())
             .add_assumption(conditional_receipt)
             .add_assumption(set_receipt)
             .build()

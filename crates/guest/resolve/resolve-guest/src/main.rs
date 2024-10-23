@@ -11,12 +11,7 @@ use risc0_zkvm::{
 };
 
 fn main() {
-    // TODO: Use env::read_frame from risc0-zkvm v1.1
-    let mut len: u32 = 0;
-    env::read_slice(core::slice::from_mut(&mut len));
-    let mut bytes = vec![0u8; len as usize];
-    env::read_slice(&mut bytes);
-
+    let bytes = env::read_frame();
     let input: ResolveInput = postcard::from_bytes(&bytes).expect("failed to deserialize input");
 
     // Verify the integrity of the conditional and assumption claims.

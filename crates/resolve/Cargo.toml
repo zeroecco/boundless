@@ -21,6 +21,6 @@ guest-resolve = { workspace = true }
 guest-util = { workspace = true }
 rand = { workspace = true }
 # TODO(risc0#2342) Remove the requirement that the prove feature be used.
-risc0-zkvm = { workspace = true, features = ["client", "prove"] }
+risc0-zkvm = { workspace = true, features = ["client", "prove", "unstable"] }
 test-log = { workspace = true }
 tracing = { workspace = true }
