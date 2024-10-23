@@ -86,9 +86,7 @@ impl ResolveInput {
 mod tests {
     use alloc::vec;
 
-    use aggregation_set::{
-        SetInclusionReceipt, AGGREGATION_SET_GUEST_ELF, AGGREGATION_SET_GUEST_ID,
-    };
+    use aggregation_set::{SetInclusionReceipt, SET_BUILDER_GUEST_ELF, SET_BUILDER_GUEST_ID};
     use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
     use guest_util::{ECHO_ELF, ECHO_ID, IDENTITY_ELF, IDENTITY_ID};
     use rand::Rng;
@@ -109,14 +107,6 @@ mod tests {
             default_prover().prove_with_opts(env, elf, &ProverOpts::succinct())?;
         tracing::debug!("finished proving: {:#?}", stats);
         Ok(receipt)
-    }
-
-    /// Produce a fake receipt for a random image ID and journal.
-    fn mock_receipt() -> Receipt {
-        let mut rng = rand::thread_rng();
-        let journal: Vec<u8> = (0..rng.gen_range(0..1024)).map(|_| rng.gen()).collect();
-        let claim = ReceiptClaim::ok(Digest::new(rng.gen()), journal.clone());
-        Receipt::new(InnerReceipt::Fake(FakeReceipt::new(claim)), journal)
     }
 
     fn echo(input: &str) -> anyhow::Result<Receipt> {
@@ -166,15 +156,15 @@ mod tests {
                 .map(|r| r.claim().map(|c| c.digest()))
                 .collect::<Result<Vec<_>, _>>()?,
         )?;
-        let output = aggregation_set::GuestOutput::new(AGGREGATION_SET_GUEST_ID, root);
+        let output = aggregation_set::GuestOutput::new(SET_BUILDER_GUEST_ID, root);
         let journal = output.abi_encode();
-        let claim = ReceiptClaim::ok(AGGREGATION_SET_GUEST_ID, journal.clone());
+        let claim = ReceiptClaim::ok(SET_BUILDER_GUEST_ID, journal.clone());
         Ok(Receipt::new(InnerReceipt::Fake(FakeReceipt::new(claim)), journal))
     }
 
     fn singleton_set(receipt: Receipt) -> anyhow::Result<Receipt> {
         let guest_input = aggregation_set::GuestInput::Singleton {
-            self_image_id: Digest::from(AGGREGATION_SET_GUEST_ID),
+            self_image_id: Digest::from(SET_BUILDER_GUEST_ID),
             claim: receipt.claim().unwrap().value().unwrap(),
         };
         let env = ExecutorEnv::builder()
@@ -183,7 +173,7 @@ mod tests {
             .add_assumption(receipt)
             .build()
             .unwrap();
-        prove(env, AGGREGATION_SET_GUEST_ELF)
+        prove(env, SET_BUILDER_GUEST_ELF)
     }
 
     #[test]
@@ -323,8 +313,10 @@ mod tests {
 
         // Generate a list of random receipts and insert the echo receipt at a random index.
         let mut rng = rand::thread_rng();
-        let mut receipt_set: Vec<Receipt> =
-            (0..rng.gen_range(2..1024)).map(|_| mock_receipt()).collect();
+        let mut receipt_set: Vec<Receipt> = (0..rng.gen_range(2..32))
+            .map(|i| echo(&format!("{}", i)))
+            .collect::<Result<_, _>>()
+            .unwrap();
         let echo_index = rng.gen_range(0..receipt_set.len());
         receipt_set[echo_index] = echo_receipt;
 
