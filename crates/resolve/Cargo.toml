@@ -15,6 +15,7 @@ risc0-zkvm = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+aggregation-set = { workspace = true, features = ["verify"] }
 anyhow = { workspace = true }
 guest-resolve = { workspace = true }
 guest-util = { workspace = true }

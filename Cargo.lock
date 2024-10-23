@@ -54,6 +54,7 @@ dependencies = [
  "hex",
  "rand",
  "risc0-binfmt",
+ "risc0-ethereum-contracts",
  "risc0-zkvm",
  "serde",
  "tokio",

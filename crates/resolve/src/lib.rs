@@ -87,14 +87,15 @@ mod tests {
     use alloc::vec;
 
     use aggregation_set::{SetInclusionReceipt, SET_BUILDER_GUEST_ELF, SET_BUILDER_GUEST_ID};
+    use alloy_sol_types::SolValue;
+    use anyhow::anyhow;
     use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
     use guest_util::{ECHO_ELF, ECHO_ID, IDENTITY_ELF, IDENTITY_ID};
     use rand::Rng;
     use risc0_zkvm::{
         default_prover, get_prover_server,
         sha::{Digest, Digestible},
-        ExecutorEnv, ExecutorImpl, FakeReceipt, InnerReceipt, ProveInfo, ProverOpts, Receipt,
-        VerifierContext,
+        ExecutorEnv, ExecutorImpl, InnerReceipt, ProveInfo, ProverOpts, Receipt, VerifierContext,
     };
     use test_log::test;
 
@@ -123,7 +124,7 @@ mod tests {
             return prove(env, IDENTITY_ELF);
         }
 
-        // TODO(victor): Figure out a way to get a conditional receipt with using the prover server
+        // TODO(victor): Figure out a way to get a conditional receipt without using the prover server
         // or api client directly. Also make prove_segment work in dev mode, because there is no
         // reason it shouldn't.
         // Compress the segments, but don't resolve any assumptions.
@@ -146,20 +147,20 @@ mod tests {
         ))
     }
 
-    // TODO(victor): Create a testutils module in the set-builder crate.
-    /// Produce a mock receipt for an aggregation of the given list of receipts.
-    fn build_set(receipts: Vec<Receipt>) -> anyhow::Result<Receipt> {
-        // Skip runnning the real set builer program here and simply build the tree directly.
-        let root = aggregation_set::merkle_root(
-            &receipts
-                .iter()
-                .map(|r| r.claim().map(|c| c.digest()))
-                .collect::<Result<Vec<_>, _>>()?,
-        )?;
-        let output = aggregation_set::GuestOutput::new(SET_BUILDER_GUEST_ID, root);
-        let journal = output.abi_encode();
-        let claim = ReceiptClaim::ok(SET_BUILDER_GUEST_ID, journal.clone());
-        Ok(Receipt::new(InnerReceipt::Fake(FakeReceipt::new(claim)), journal))
+    /// Produce receipt for an aggregation of the given list of receipts.
+    fn build_set(mut receipts: Vec<Receipt>) -> anyhow::Result<Receipt> {
+        match receipts.len() {
+            0 => Err(anyhow!("Receipt list is empty, cannot compute Merkle root")),
+            1 => singleton_set(receipts.pop().unwrap()),
+            _ => {
+                // Split the list into two halves
+                let mut right = receipts;
+                let left = right.split_off(right.len().next_power_of_two() / 2);
+                let left_set = build_set(left)?;
+                let right_set = build_set(right)?;
+                join_set(left_set, right_set)
+            }
+        }
     }
 
     fn singleton_set(receipt: Receipt) -> anyhow::Result<Receipt> {
@@ -171,6 +172,25 @@ mod tests {
             .write(&guest_input)
             .unwrap()
             .add_assumption(receipt)
+            .build()
+            .unwrap();
+        prove(env, SET_BUILDER_GUEST_ELF)
+    }
+
+    fn join_set(left_set: Receipt, right_set: Receipt) -> anyhow::Result<Receipt> {
+        let left_set_out = aggregation_set::GuestOutput::abi_decode(&left_set.journal.bytes, true)?;
+        let right_set_out =
+            aggregation_set::GuestOutput::abi_decode(&right_set.journal.bytes, true)?;
+        let guest_input = aggregation_set::GuestInput::Join {
+            self_image_id: Digest::from(SET_BUILDER_GUEST_ID),
+            left_set_root: left_set_out.root(),
+            right_set_root: right_set_out.root(),
+        };
+        let env = ExecutorEnv::builder()
+            .write(&guest_input)
+            .unwrap()
+            .add_assumption(left_set)
+            .add_assumption(right_set)
             .build()
             .unwrap();
         prove(env, SET_BUILDER_GUEST_ELF)

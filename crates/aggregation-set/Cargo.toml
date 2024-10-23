@@ -13,6 +13,7 @@ anyhow = { workspace = true }
 guest-set-builder = { workspace = true, optional = true }
 hex = { workspace = true }
 risc0-binfmt = { workspace = true }
+risc0-ethereum-contracts = { workspace = true, optional = true }
 risc0-zkvm = { workspace = true }
 serde = { workspace = true }
 
@@ -21,5 +22,7 @@ rand = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [features]
-default = ["verify"]
+default = ["verify", "host"]
 verify = ["dep:guest-set-builder"]
+# TODO(risc0-ethereum#304): risc0-ethereum-contracts does not build in the guest
+host = ["dep:risc0-ethereum-contracts"]

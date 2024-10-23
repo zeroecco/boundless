@@ -24,18 +24,18 @@ homepage = "https://beboundless.xyz/"
 repository = "https://github.com/boundless-xyz/boundless/"
 
 [workspace.dependencies]
-aggregation-set = { path = "crates/aggregation-set" }
-assessor = { path = "crates/assessor" }
-bento-client = { path = "crates/bento-client" }
-boundless-market = { path = "crates/boundless-market" }
-guest-assessor = { path = "crates/guest/assessor" }
-guest-resolve = { path = "crates/guest/resolve" }
-guest-set-builder = { path = "crates/guest/set-builder" }
-guest-util = { path = "crates/guest/util" }
-resolve = { path = "crates/resolve" }
-taskdb = { path = "crates/taskdb" }
-workflow = { path = "crates/workflow" }
-workflow-common = { path = "crates/workflow-common" }
+aggregation-set = { path = "crates/aggregation-set", default-features = false }
+assessor = { path = "crates/assessor", default-features = false }
+bento-client = { path = "crates/bento-client", default-features = false }
+boundless-market = { path = "crates/boundless-market", default-features = false }
+guest-assessor = { path = "crates/guest/assessor", default-features = false }
+guest-resolve = { path = "crates/guest/resolve", default-features = false }
+guest-set-builder = { path = "crates/guest/set-builder", default-features = false }
+guest-util = { path = "crates/guest/util", default-features = false }
+resolve = { path = "crates/resolve", default-features = false }
+taskdb = { path = "crates/taskdb", default-features = false }
+workflow = { path = "crates/workflow", default-features = false }
+workflow-common = { path = "crates/workflow-common", default-features = false }
 
 alloy = { version = "0.3" }
 alloy-primitives = { version = "0.8" }

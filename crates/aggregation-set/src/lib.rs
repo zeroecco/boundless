@@ -11,10 +11,12 @@ use alloy_primitives::{Keccak256, B256};
 use alloy_sol_types::SolValue;
 use anyhow::{anyhow, bail, Error, Result};
 use risc0_binfmt::{tagged_struct, Digestible};
+#[cfg(feature = "host")]
+use risc0_zkvm::sha::DIGEST_BYTES;
 use risc0_zkvm::{
     sha,
-    sha::{Digest, Sha256, DIGEST_BYTES},
-    InnerReceipt, MaybePruned, Receipt, ReceiptClaim, VerifierContext,
+    sha::{Digest, Sha256},
+    MaybePruned, Receipt, ReceiptClaim, VerifierContext,
 };
 use serde::{Deserialize, Serialize};
 
@@ -160,42 +162,19 @@ where
     /// Appends the verifier selector, determined from the first 4 bytes of the verifier
     /// parameters digest, which contains the aggregation set builder image ID. If non-empty, the
     /// root receipt will be appended.
+    #[cfg(feature = "host")]
     pub fn abi_encode_seal(&self) -> anyhow::Result<Vec<u8>> {
         let selector = &self.verifier_parameters.as_bytes()[..4];
         let merkle_path: Vec<B256> =
             self.merkle_path.iter().map(|x| <[u8; DIGEST_BYTES]>::from(*x).into()).collect();
-        let root_seal: Vec<u8> = self.root.as_ref().map(encode_seal).unwrap_or(Ok(vec![]))?;
+        let root_seal: Vec<u8> =
+            self.root.as_ref().map(risc0_ethereum_contracts::encode_seal).unwrap_or(Ok(vec![]))?;
         let seal = Seal { path: merkle_path, root_seal: root_seal.into() };
         let mut encoded_seal = Vec::<u8>::with_capacity(selector.len() + seal.abi_encoded_size());
         encoded_seal.extend_from_slice(selector);
         encoded_seal.extend_from_slice(&seal.abi_encode());
         Ok(encoded_seal)
     }
-}
-
-// TODO: when upgrading to risc0-ethereum-contracts 1.1.0 this function can be found there.
-fn encode_seal(receipt: &risc0_zkvm::Receipt) -> anyhow::Result<Vec<u8>> {
-    let seal = match receipt.inner.clone() {
-        InnerReceipt::Fake(receipt) => {
-            let seal = receipt.claim.digest::<sha::Impl>().as_bytes().to_vec();
-            let selector = &[0u8; 4];
-            // Create a new vector with the capacity to hold both selector and seal
-            let mut selector_seal = Vec::with_capacity(selector.len() + seal.len());
-            selector_seal.extend_from_slice(selector);
-            selector_seal.extend_from_slice(&seal);
-            selector_seal
-        }
-        InnerReceipt::Groth16(receipt) => {
-            let selector = &receipt.verifier_parameters.as_bytes()[..4];
-            // Create a new vector with the capacity to hold both selector and seal
-            let mut selector_seal = Vec::with_capacity(selector.len() + receipt.seal.len());
-            selector_seal.extend_from_slice(selector);
-            selector_seal.extend_from_slice(receipt.seal.as_ref());
-            selector_seal
-        }
-        _ => bail!("Unsupported receipt type"),
-    };
-    Ok(seal)
 }
 
 /// Verifier parameters used to verify a [SetInclusionReceipt].
