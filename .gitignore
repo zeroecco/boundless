@@ -22,18 +22,24 @@ target/
 .idea
 
 # Ignore generated files
-contracts/src/SetBuilderImageID.sol
-contracts/src/AssessorImageID.sol
-contracts/src/EchoImageID.sol
-contracts/src/ResolveImageID.sol
-contracts/src/UtilImageID.sol
-contracts/test/SetBuilderElf.sol
-contracts/test/AssessorElf.sol
-contracts/test/EchoElf.sol
-contracts/test/ResolveElf.sol
-contracts/test/UtilElf.sol
+/contracts/src/SetBuilderImageID.sol
+/contracts/src/AssessorImageID.sol
+/contracts/src/EchoImageID.sol
+/contracts/src/ResolveImageID.sol
+/contracts/src/UtilImageID.sol
+/contracts/test/SetBuilderElf.sol
+/contracts/test/AssessorElf.sol
+/contracts/test/EchoElf.sol
+/contracts/test/ResolveElf.sol
+/contracts/test/UtilElf.sol
 
 # Lints & Format Caches
 .lycheecache
 # Ignore sccache install location created in CI
 sccache-v0.*
+
+# Ignore the internal contents of the submodules.
+# This helps utilities that use .gitignore, such as Docker and ag, ignore those folders.
+/lib/forge-std/**
+/lib/openzeppelin-contracts/**
+/lib/risc0-ethereum/**
