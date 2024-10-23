@@ -4,6 +4,7 @@
 
 pragma solidity ^0.8.20;
 
+import {IImageInfo} from "./IImageInfo.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 /// Seal of the SetInclusionReceipt.
@@ -14,7 +15,7 @@ struct Seal {
     bytes rootSeal;
 }
 
-interface IRiscZeroSetVerifier is IRiscZeroVerifier {
+interface IRiscZeroSetVerifier is IRiscZeroVerifier, IImageInfo {
     error VerificationFailed();
 
     /// A new root has been added to the set.
@@ -25,7 +26,4 @@ interface IRiscZeroSetVerifier is IRiscZeroVerifier {
 
     /// Returns whether `root` has been submitted.
     function containsRoot(bytes32 root) external view returns (bool);
-
-    /// Returns the set builder imageId and its url.
-    function imageInfo() external view returns (bytes32, string memory);
 }

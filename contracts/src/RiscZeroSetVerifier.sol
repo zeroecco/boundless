@@ -10,6 +10,8 @@ import {
 } from "risc0/IRiscZeroVerifier.sol";
 import {IRiscZeroSetVerifier, Seal} from "./IRiscZeroSetVerifier.sol";
 
+import {IImageInfo} from "./IImageInfo.sol";
+
 /// @notice Error raised when this verifier receives a receipt with a selector that does not match
 ///         its own. The selector value is calculated from the verifier parameters, and so this
 ///         usually indicates a mismatch between the version of the prover and this verifier.
@@ -109,6 +111,7 @@ contract RiscZeroSetVerifier is IRiscZeroSetVerifier {
         return merkleRoots[root];
     }
 
+    /// @inheritdoc IImageInfo
     function imageInfo() external view returns (bytes32, string memory) {
         return (IMAGE_ID, imageUrl);
     }

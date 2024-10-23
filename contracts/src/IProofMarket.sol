@@ -4,6 +4,8 @@
 
 pragma solidity ^0.8.20;
 
+import {IImageInfo} from "./IImageInfo.sol";
+
 // TODO(victor) Think about compressing this struct. One way to reduce
 // associated gas costs would be to put all the fields not needed for lockin
 // into a sub-struct that is hashed.
@@ -92,7 +94,7 @@ struct AssessorJournal {
     bytes32 eip712DomainSeparator;
 }
 
-interface IProofMarket {
+interface IProofMarket is IImageInfo {
     /// Event logged when a new proving request is submitted by a client.
     event RequestSubmitted(ProvingRequest request, bytes clientSignature);
     /// Event logged when a request is locked in by the given prover.
@@ -174,7 +176,4 @@ interface IProofMarket {
 
     /// EIP 712 domain separator getter
     function eip712DomainSeparator() external view returns (bytes32);
-
-    /// Returns the assessor imageId and its url.
-    function imageInfo() external view returns (bytes32, string memory);
 }

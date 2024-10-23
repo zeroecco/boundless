@@ -10,6 +10,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IRiscZeroVerifier, Receipt, ReceiptClaim, ReceiptClaimLib} from "risc0/IRiscZeroVerifier.sol";
 
+import {IImageInfo} from "./IImageInfo.sol";
 import {IProofMarket, ProvingRequest, Offer, Fulfillment, AssessorJournal} from "./IProofMarket.sol";
 import {ProofMarketLib} from "./ProofMarketLib.sol";
 
@@ -359,6 +360,7 @@ contract ProofMarket is IProofMarket, EIP712 {
         require(sent, "Failed to burn Ether");
     }
 
+    /// @inheritdoc IImageInfo
     function imageInfo() external view returns (bytes32, string memory) {
         return (ASSESSOR_ID, imageUrl);
     }
