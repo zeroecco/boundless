@@ -116,15 +116,11 @@ If you require customizing a local devnet configuration, and need to operate it 
 
 5. Deposit Prover funds and start the [Broker][page-broker]
 
-   Here we will use a mock prover by setting `RISC0_DEV_MODE`.
-   The Broker can use either [Bonsai][bonsai-homepage] or [Bento][page-bento] as backend, remove `RISC0_DEV_MODE` and:
-
-   - To use Bonsai, export the `BONSAI_API_URL` and `BONSAI_API_KEY` env vars, or the the associated CLI flags.
-   - To use Bento, export the `BENTO_API_URL` env var or use the `--bento-api-url` CLI flag.
-     _This requires there is a Bento service listening, refer to the [Running Bento][page-bento-running] guide to configure and deploy one._
-
    The Broker needs to have funds deposited on the Boundless market contract to cover lock-in stake on requests.
    Setting the `--deposit-amount` flag below has the Broker deposit 10 ETH to the market upon startup.
+
+   > By setting `RISC0_DEV_MODE`, Broker connects to a mock proving service.
+   > To run a real prover, see the [connecting a proving service][id-broker-connect-prover] guide.
 
    ```sh
    RISC0_DEV_MODE=1 RUST_LOG=info cargo run --bin broker -- --private-key ${PRIVATE_KEY:?} --proof-market-addr ${PROOF_MARKET_ADDRESS:?} --set-verifier-addr ${SET_VERIFIER_ADDRESS:?} --deposit-amount 10
@@ -174,3 +170,4 @@ Further instructions for:
 [boundless-foundry-template-repo]: https://github.com/boundless-xyz/boundless-foundry-template/
 [term-broker]: ../prover-manual/broker/README.md
 [bonsai-homepage]: https://www.bonsai.xyz/
+[id-broker-connect-prover]: ../prover-manual/broker/operation.md#connect-a-proving-service

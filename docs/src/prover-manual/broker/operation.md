@@ -9,9 +9,20 @@ Before operation Bento (except in basic [local development][page-local-dev] only
 
 </div>
 
-## Connect a Bento instance
+## Connect a Proving Service
 
-A Broker requires a [running Bento instance][page-bento-run], that can be affirmed with a test proof fulfillment:
+A Broker requires a [running Bento instance][page-bento-run], or if not viable, one may use Bonsai as a remote proving service[^bonsai].
+
+Select _**one of the following**_:
+
+- Your own [Bento](#bento) instance
+- RISC Zero's [Bonsai](#bonsai) service
+
+### Bento
+
+Use your [Bento][page-bento] instance by exporting your `BENTO_API_URL` env var or set the `--bento-api-url` CLI flag.
+
+Check Bento is running by requesting a 32 cycle test proof:
 
 ```bash
 RUST_LOG=info cargo run --bin bento_cli -- -c 32
@@ -24,6 +35,20 @@ RUST_LOG=info cargo run --bin bento_cli -- -c 32
 2024-10-23T14:37:39.371331Z  INFO bento_cli: STARK Job running....
 2024-10-23T14:37:41.373508Z  INFO bento_cli: STARK Job running....
 2024-10-23T14:37:43.375780Z  INFO bento_cli: Job done!
+```
+
+### Bonsai
+
+Use RISC Zero's [Bonsai][bonsai-homepage] service by exporting the `BONSAI_API_URL` and `BONSAI_API_KEY` env vars, or set via the associated CLI flags.
+
+Check the status of Bonsai by running a basic job with:
+
+```bash
+TODO
+```
+
+```txt
+TODO
 ```
 
 ## Funding your Broker on the proving market
@@ -75,8 +100,12 @@ RUST_LOG=info,boundless_market=debug cargo run --bin cli --  deposit ${BOUNDLESS
 2024-10-23T14:30:07.175994Z  INFO cli: Deposited: 500000000000000000
 ```
 
+[^bonsai]: Bonsai is a proving service provided by the RISC Zero team, and useful where one cannot run an instance of Bento. Learn more and request an Bonsai API key [here][bonsai-homepage]. We highly suggest running Bento over using Bonsai, further discussion on why here **TODO link to PR**
+
 [page-broker-config]: ./configure.md
 [page-local-dev]: ../../market/local-development.md
 [page-bento-perf]: ../bento/performance.md
 [page-deployments]: ../../market/deployments.md
 [page-bento-run]: ../bento/running.md
+[page-bento]: ../prover-manual/bento/README.md
+[bonsai-homepage]: https://www.bonsai.xyz/
