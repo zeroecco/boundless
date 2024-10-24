@@ -30,6 +30,15 @@ mod range_iterator;
 
 pub mod prover;
 
+// This is configured to use the default docker build path. The reason for the feature flag is
+// because we want a consistent docker image to build the program, which should not be run within
+// the dockerized service container.
+#[cfg(feature = "prebuilt-docker")]
+pub const LIGHT_CLIENT_GUEST_ELF: &[u8] =
+    include_bytes!("../../target/riscv-guest/riscv32im-risc0-zkvm-elf/docker/light_client_guest/light-client-guest");
+#[cfg(not(feature = "prebuilt-docker"))]
+pub use light_client_guest::LIGHT_CLIENT_GUEST_ELF;
+
 /// Currently set to the max allowed by tendermint RPC
 const HEADER_REQ_COUNT: u64 = 20;
 

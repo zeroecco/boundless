@@ -16,6 +16,7 @@ use alloy::{
     hex::FromHex,
     primitives::{hex, Address, FixedBytes},
     providers::ProviderBuilder,
+    signers::local::PrivateKeySigner,
 };
 use alloy_sol_types::{sol, SolCall};
 use blobstream0_core::prover::{Blobstream0Prover, Risc0Prover};
@@ -57,7 +58,7 @@ const BN254_CONTROL_ID: [u8; 32] =
 #[cfg(feature = "fireblocks")]
 macro_rules! setup_provider {
     ($cli:ident) => {{
-        let fireblocks_address: Address = $cli.fireblocks_address.parse()?;
+        let fireblocks_address: Address = $cli.fireblocks_address;
         let provider = ProviderBuilder::new()
             .fetch_chain_id()
             .filler(crate::fireblocks::FireblocksFiller {
@@ -71,7 +72,7 @@ macro_rules! setup_provider {
 #[cfg(not(feature = "fireblocks"))]
 macro_rules! setup_provider {
     ($cli:ident) => {{
-        let signer: alloy::signers::local::PrivateKeySigner = $cli.private_key_hex.parse()?;
+        let signer: alloy::signers::local::PrivateKeySigner = $cli.private_key_hex.clone();
         let signer_address = signer.address();
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
@@ -123,20 +124,20 @@ struct DeployArgs {
     #[cfg(feature = "fireblocks")]
     /// Fireblocks signer address.
     #[clap(long, env)]
-    fireblocks_address: String,
+    fireblocks_address: Address,
 
     #[cfg(not(feature = "fireblocks"))]
     /// Hex encoded private key to use for deploying.
     #[clap(long, env)]
-    private_key_hex: String,
+    private_key_hex: PrivateKeySigner,
 
     /// Hex encoded address of admin for upgrades. Will default to the private key address.
     #[clap(long, env)]
-    admin_address: Option<String>,
+    admin_address: Option<Address>,
 
     /// Address of risc0 verifier to use (either mock or groth16)
     #[clap(long, env)]
-    verifier_address: Option<String>,
+    verifier_address: Option<Address>,
 
     /// Trusted height for contract
     #[clap(long, env)]
@@ -165,16 +166,16 @@ struct UpgradeArgs {
     #[cfg(feature = "fireblocks")]
     /// Fireblocks signer address.
     #[clap(long, env)]
-    fireblocks_address: String,
+    fireblocks_address: Address,
 
     #[cfg(not(feature = "fireblocks"))]
     /// Hex encoded private key to use for deploying.
     #[clap(long, env)]
-    private_key_hex: String,
+    private_key_hex: PrivateKeySigner,
 
     /// Hex encoded address of admin for upgrades. Will default to the private key address.
     #[clap(long, env)]
-    proxy_address: String,
+    proxy_address: Address,
 }
 
 #[tokio::main]
@@ -205,13 +206,13 @@ async fn main() -> anyhow::Result<()> {
         BlobstreamCli::Deploy(deploy) => {
             let (provider, signer_address) = setup_provider!(deploy);
             let admin_address: Address = if let Some(address) = deploy.admin_address {
-                address.parse()?
+                address
             } else {
                 signer_address
             };
 
             let verifier_address: Address = if let Some(address) = deploy.verifier_address {
-                address.parse()?
+                address
             } else {
                 let deployed_address = if deploy.dev {
                     tracing::debug!(target: "blobstream0::cli", "Deploying mock verifier");
@@ -259,7 +260,7 @@ async fn main() -> anyhow::Result<()> {
         BlobstreamCli::Upgrade(upgrade) => {
             let (provider, _) = setup_provider!(upgrade);
 
-            let proxy_address: Address = upgrade.proxy_address.parse()?;
+            let proxy_address: Address = upgrade.proxy_address;
             println!("proxy address: {}", proxy_address);
 
             let implementation = IBlobstream::deploy(&provider).await?;

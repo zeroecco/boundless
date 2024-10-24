@@ -1474,6 +1474,7 @@ dependencies = [
  "bincode",
  "blobstream0-core",
  "blobstream0-primitives",
+ "boundless-market",
  "clap",
  "dotenv",
  "rand",

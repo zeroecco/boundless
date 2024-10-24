@@ -94,15 +94,15 @@ where
                     // unfulfilled in the market before it expires. If a prover locks in
                     // the request and does not fulfill it before the timeout, the prover can be
                     // slashed.
-                    .with_timeout(1000),
+                    .with_timeout(20),
             );
 
         // Send the request and wait for it to be completed.
-        let request_id = self.client.submit_request(&request).await?;
-        tracing::info!("Request {} submitted", request_id);
+        let request_id = self.client.submit_request(&request).await.unwrap();
+        tracing::info!(target: "blobstream0::core", "Request {} submitted", request_id);
 
         // Wait for the request to be fulfilled by the market, returning the journal and seal.
-        tracing::info!("Waiting for request {} to be fulfilled", request_id);
+        tracing::info!(target: "blobstream0::core", "Waiting for request {} to be fulfilled", request_id);
         let (journal, seal) = self
             .client
             .wait_for_request_fulfillment(request_id, Duration::from_secs(5), None)

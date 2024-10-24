@@ -1,3 +1,4 @@
+use crate::LIGHT_CLIENT_GUEST_ELF;
 use alloy_sol_types::SolValue;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -7,12 +8,12 @@ use blobstream0_primitives::{
 };
 use risc0_ethereum_contracts::groth16;
 use risc0_zkvm::{default_prover, is_dev_mode, sha::Digestible, ExecutorEnv, ProverOpts};
+use serde::{Deserialize, Serialize};
 use std::{ops::Range, sync::Arc};
 use tendermint::block::Height;
 use tendermint_proto::{types::Header as ProtoHeader, Protobuf};
 use tendermint_rpc::HttpClient;
 use tracing::{instrument, Level};
-use serde::{Deserialize, Serialize};
 
 use crate::range_iterator::LightBlockRangeIterator;
 
@@ -20,15 +21,6 @@ use crate::range_iterator::LightBlockRangeIterator;
 mod boundless;
 // #[cfg(feature = "boundless")]
 pub use boundless::BoundlessProver;
-
-// This is configured to use the default docker build path. The reason for the feature flag is
-// because we want a consistent docker image to build the program, which should not be run within
-// the dockerized service container.
-#[cfg(feature = "prebuilt-docker")]
-const LIGHT_CLIENT_GUEST_ELF: &[u8] =
-    include_bytes!("../../target/riscv-guest/riscv32im-risc0-zkvm-elf/docker/light_client_guest/light-client-guest");
-#[cfg(not(feature = "prebuilt-docker"))]
-use light_client_guest::LIGHT_CLIENT_GUEST_ELF;
 
 /// Output from generating a proof. This represents the data that will be posted to the contract on
 /// chain.
@@ -89,17 +81,6 @@ pub trait Blobstream0Prover {
         serialized_input.extend_from_slice(&buffer);
         let proof = self.prove(serialized_input).await?;
 
-        // // Note: must be in blocking context to not have issues with Bonsai blocking client when selected
-        // let prove_info = tokio::task::spawn_blocking(move || {
-        //     let env = ExecutorEnv::builder()
-        //         .write_slice(&[buffer_len])
-        //         .write_slice(&buffer)
-        //         .build()?;
-
-        //     let prover = default_prover();
-        //     prover.prove_with_opts(env, LIGHT_CLIENT_GUEST_ELF, &ProverOpts::groth16())
-        // })
-        // .await??;
         let commitment = RangeCommitment::abi_decode(&proof.journal, true)?;
         // Assert that what is proven is expected based on the inputs.
         assert_eq!(expected_next_hash.as_bytes(), commitment.newHeaderHash);
@@ -168,4 +149,3 @@ impl Blobstream0Prover for Risc0Prover {
         })
     }
 }
-
