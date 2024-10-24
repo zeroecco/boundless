@@ -72,12 +72,12 @@ impl Default for MarketConf {
     }
 }
 
-/// All configuration related to prover (bonsai / Bento) mechanics
+/// All configuration related to prover (Bonsai / Bento) mechanics
 #[derive(Deserialize, Serialize)]
 pub struct ProverConf {
     /// Polling interval to monitor proving status (in millisecs)
     pub status_poll_ms: u64,
-    /// Optional config, if using bonsai set the zkvm version here
+    /// Optional config, if using Bonsai set the zkvm version here
     pub bonsai_r0_zkvm_ver: Option<String>,
     /// Number of retries to query a prover backend for on failures
     ///
@@ -306,7 +306,7 @@ max_file_size = 50_000_000
 
 [prover]
 status_poll_ms = 1000
-bonsai_r0_zkvm_ver = "1.0.1"
+bonsai_r0_zkvm_ver = "1.1"
 req_retry_count = 0
 
 [batcher]
@@ -368,7 +368,7 @@ error = ?"#;
         assert_eq!(config.market.lockin_priority_gas, None);
 
         assert_eq!(config.prover.status_poll_ms, 1000);
-        assert_eq!(config.prover.bonsai_r0_zkvm_ver.unwrap(), "1.0.1");
+        assert_eq!(config.prover.bonsai_r0_zkvm_ver.unwrap(), "1.1");
         assert_eq!(config.prover.req_retry_count, 0);
         assert_eq!(config.prover.set_builder_guest_path, None);
         assert_eq!(config.prover.assessor_set_guest_path, None);

@@ -137,7 +137,7 @@ impl RetryTask for ProvingService {
             loop {
                 // TODO: parallel_proofs management
                 // we need to query the Bento/Bonsai backend and constrain the number of running
-                // parallel proofs currently bonsai does not have this feature but
+                // parallel proofs currently Bonsai does not have this feature but
                 // we could add it to both to support it. Alternatively we could
                 // track it in our local DB but that could de-sync from the proving-backend so
                 // its not ideal
