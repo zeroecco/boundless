@@ -103,10 +103,12 @@ where
 
         // Wait for the request to be fulfilled by the market, returning the journal and seal.
         tracing::info!(target: "blobstream0::core", "Waiting for request {} to be fulfilled", request_id);
-        let (journal, seal) = self
-            .client
-            .wait_for_request_fulfillment(request_id, Duration::from_secs(5), None)
-            .await?;
+        let (journal, seal) = tokio::time::timeout(
+            Duration::from_secs(12 * 50),
+            self.client
+                .wait_for_request_fulfillment(request_id, Duration::from_secs(8), None),
+        )
+        .await??;
 
         Ok(ProofOutput {
             journal: journal.into(),
