@@ -99,7 +99,7 @@ where
             );
 
         // Send the request and wait for it to be completed.
-        let request_id = self.client.submit_request(&request).await.unwrap();
+        let request_id = self.client.submit_request(&request).await?;
         tracing::info!(target: "blobstream0::core", "Request {} submitted", request_id);
 
         // Wait for the request to be fulfilled by the market, returning the journal and seal.
