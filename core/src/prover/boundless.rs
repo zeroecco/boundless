@@ -90,11 +90,12 @@ where
                         U96::from::<u128>(parse_ether("0.001")?.try_into()?),
                         mcycles_count,
                     )
+                    .with_lockin_stake(500000000000000000u128.try_into()?)
                     // The timeout is the maximum number of blocks the request can stay
                     // unfulfilled in the market before it expires. If a prover locks in
                     // the request and does not fulfill it before the timeout, the prover can be
                     // slashed.
-                    .with_timeout(50),
+                    .with_timeout(150),
             );
 
         // Send the request and wait for it to be completed.
@@ -104,7 +105,7 @@ where
         // Wait for the request to be fulfilled by the market, returning the journal and seal.
         tracing::info!(target: "blobstream0::core", "Waiting for request {} to be fulfilled", request_id);
         let (journal, seal) = tokio::time::timeout(
-            Duration::from_secs(12 * 50),
+            Duration::from_secs(12 * 150),
             self.client
                 .wait_for_request_fulfillment(request_id, Duration::from_secs(8), None),
         )
