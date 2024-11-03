@@ -1840,6 +1840,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "boundless-prover"
+version = "0.2.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "async-trait",
+ "boundless-market",
+ "risc0-ethereum-contracts",
+ "risc0-zkvm",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "broker"
 version = "0.2.0"
 dependencies = [
