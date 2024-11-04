@@ -6,14 +6,16 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-alloy = { version = "0.3.3", features = ["node-bindings", "network", "providers", "transports", "signer-local"] }
+alloy = { workspace = true, features = ["node-bindings", "network", "providers", "transports", "signer-local"] }
 # alloy-sol-types = { version = "0.8.2", features = ["json"] }
-anyhow = "1.0"
-async-trait = "0.1"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
 boundless-market = { workspace = true }
 risc0-ethereum-contracts = { workspace = true }
 risc0-zkvm = { workspace = true }
 serde = { workspace = true }
 # TODO check feats
-tokio = { workspace = true, features = ["rt", "macros"] }
-tracing = "0.1.40"
+tokio = { workspace = true }
+tracing = { workspace = true }
+bonsai-sdk = { workspace = true }
+bincode = { workspace = true }

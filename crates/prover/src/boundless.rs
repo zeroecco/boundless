@@ -21,9 +21,11 @@ use risc0_zkvm::{
 
 use super::AsyncProve;
 
-// TODO docs
+/// A program uploaded to the configured storage provider of the [Client].
+/// 
+/// A proof can be generated using the [AsyncProve::prove] method.
 #[derive(Clone)]
-pub struct BoundlessProver<T, P, S, F>
+pub struct BoundlessProgram<T, P, S, F>
 where
     F: Fn(u64) -> anyhow::Result<Offer>,
 {
@@ -51,42 +53,43 @@ fn default_offer_from_mcycles(mcycles_count: u64) -> anyhow::Result<Offer> {
         .with_timeout(150))
 }
 
-impl<T, P, S, F> BoundlessProver<T, P, S, F>
+impl<T, P, S, F> BoundlessProgram<T, P, S, F>
 where
     F: Fn(u64) -> anyhow::Result<Offer>,
 {
     // TODO revisit this API, perhaps not the cleanest to just assume mcycles is only important context
     //      and also this could be async to check a network for what the current price/mcycle is.
-    pub fn with_offer_fn<F2>(self, get_offer: F2) -> BoundlessProver<T, P, S, F2>
+    pub fn with_offer_fn<F2>(self, get_offer: F2) -> BoundlessProgram<T, P, S, F2>
     where
         F2: Fn(u64) -> anyhow::Result<Offer>,
     {
         let Self { image_url, client, elf, image_id, polling_interval, get_offer: _ } = self;
-        BoundlessProver { image_url, client, elf, image_id, polling_interval, get_offer }
+        BoundlessProgram { image_url, client, elf, image_id, polling_interval, get_offer }
     }
 
     /// Update the interval to poll the network for requests to be fulfilled.
     pub fn with_polling_interval(
         mut self,
         polling_interval: Duration,
-    ) -> BoundlessProver<T, P, S, F> {
+    ) -> BoundlessProgram<T, P, S, F> {
         self.polling_interval = polling_interval;
         self
     }
 }
 
-impl<T, P, S> BoundlessProver<T, P, S, fn(u64) -> anyhow::Result<Offer>>
+impl<T, P, S> BoundlessProgram<T, P, S, fn(u64) -> anyhow::Result<Offer>>
 where
     T: Transport + Clone + Send + Sync,
     P: Provider<T, Ethereum> + 'static + Clone + Send + Sync,
     S: StorageProvider + Clone + Send + Sync,
 {
-    pub async fn upload(client: Client<T, P, S>, elf: &[u8]) -> anyhow::Result<Self> {
+    pub async fn upload_elf(client: Client<T, P, S>, elf: impl Into<Vec<u8>>) -> anyhow::Result<Self> {
+        let elf = elf.into();
         let image_url = client.upload_image(&elf).await?;
 
-        let image_id = compute_image_id(elf)?;
+        let image_id = compute_image_id(&elf)?;
 
-        Ok(Self::from_parts(image_url, client, elf.to_vec(), image_id))
+        Ok(Self::from_parts(image_url, client, elf, image_id))
     }
 
     pub fn from_parts(
@@ -107,7 +110,7 @@ where
 }
 
 #[async_trait]
-impl<T, P, S, F> AsyncProve for BoundlessProver<T, P, S, F>
+impl<T, P, S, F> AsyncProve for BoundlessProgram<T, P, S, F>
 where
     T: Transport + Clone + Send + Sync,
     P: Provider<T, Ethereum> + 'static + Clone + Send + Sync,
