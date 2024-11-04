@@ -242,7 +242,7 @@ contract ProofMarket is IProofMarket, EIP712 {
     }
 
     // TODO(victor): Add a path that allows a prover to fuilfill a request without first sending a lock-in.
-    function fulfill(Fulfillment calldata fill, bytes calldata assessorSeal) external {
+    function fulfill(Fulfillment calldata fill, bytes calldata assessorSeal, address prover) external {
         // Verify the application guest proof. We need to verify it here, even though the market
         // guest already verified that the prover has knowledge of a verifying receipt, because
         // we need to make sure the _delivered_ seal is valid.
@@ -256,7 +256,12 @@ contract ProofMarket is IProofMarket, EIP712 {
         ids[0] = fill.id;
         bytes32 assessorJournalDigest = sha256(
             abi.encode(
-                AssessorJournal({requestIds: ids, root: claimDigest, eip712DomainSeparator: _domainSeparatorV4()})
+                AssessorJournal({
+                    requestIds: ids,
+                    root: claimDigest,
+                    eip712DomainSeparator: _domainSeparatorV4(),
+                    prover: prover
+                })
             )
         );
         // Verification of the assessor seal does not need to comply with FULFILL_MAX_GAS_FOR_VERIFY.
@@ -267,7 +272,7 @@ contract ProofMarket is IProofMarket, EIP712 {
         emit RequestFulfilled(fill.id, fill.journal, fill.seal);
     }
 
-    function fulfillBatch(Fulfillment[] calldata fills, bytes calldata assessorSeal) public {
+    function fulfillBatch(Fulfillment[] calldata fills, bytes calldata assessorSeal, address prover) public {
         // TODO(victor): Figure out how much the memory here is costing. If it's significant, we can do some tricks to reduce memory pressure.
         bytes32[] memory claimDigests = new bytes32[](fills.length);
         uint192[] memory ids = new uint192[](fills.length);
@@ -281,7 +286,14 @@ contract ProofMarket is IProofMarket, EIP712 {
         // Verify the assessor, which ensures the application proof fulfills a valid request with the given ID.
         // NOTE: Signature checks and recursive verification happen inside the assessor.
         bytes32 assessorJournalDigest = sha256(
-            abi.encode(AssessorJournal({requestIds: ids, root: batchRoot, eip712DomainSeparator: _domainSeparatorV4()}))
+            abi.encode(
+                AssessorJournal({
+                    requestIds: ids,
+                    root: batchRoot,
+                    eip712DomainSeparator: _domainSeparatorV4(),
+                    prover: prover
+                })
+            )
         );
         // Verification of the assessor seal does not need to comply with FULFILL_MAX_GAS_FOR_VERIFY.
         VERIFIER.verify(assessorSeal, ASSESSOR_ID, assessorJournalDigest);
@@ -368,11 +380,12 @@ contract ProofMarket is IProofMarket, EIP712 {
         bytes32 root,
         bytes calldata seal,
         Fulfillment[] calldata fills,
-        bytes calldata assessorSeal
+        bytes calldata assessorSeal,
+        address prover
     ) external {
         IRiscZeroSetVerifier setVerifier = IRiscZeroSetVerifier(address(VERIFIER));
         setVerifier.submitMerkleRoot(root, seal);
-        fulfillBatch(fills, assessorSeal);
+        fulfillBatch(fills, assessorSeal, prover);
     }
 }
 
