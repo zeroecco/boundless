@@ -141,8 +141,10 @@ struct AssessorJournal {
     // Root of the Merkle tree committing to the set of proven claims.
     // In the case of a batch of size one, this may simply be a claim digest.
     bytes32 root;
-    // EIP712 domain separator
+    // EIP712 domain separator.
     bytes32 eip712DomainSeparator;
+    // The address of the prover that produced the assessor receipt.
+    address prover;
 }
 ```
 
@@ -251,6 +253,25 @@ interface IProofMarket {
     function deliver(Fulfillment calldata fill, bytes calldata assessorSeal, address prover) external;
     /// @notice Delivers a batch of proofs. See IProofMarket.deliver for more information.
     function deliverBatch(Fulfillment[] calldata fills, bytes calldata assessorSeal, address prover) external;
+
+    /// @notice Checks the validity of the request and then writes the current auction price to
+    /// transient storage.
+    /// @dev When called within the same transaction, this method can be used to fulfill a request
+    /// that is not locked. This is useful when the prover wishes to fulfill a request, but does
+    /// not want to issue a lock transaction e.g. because the stake is to high or to save money by
+    /// avoiding the gas costs of the lock transaction.
+    function priceRequest(ProvingRequest calldata request, bytes calldata clientSignature) external;
+
+    /// @notice A combined call to `IProofMarket.priceRequest` and `IProofMarket.fulfillBatch`.
+    /// The caller should provide the signed request and signature for each unlocked request they
+    /// want to fulfill. Payment for unlocked requests will go to the provided `prover` address.
+    function priceAndFulfillBatch(
+        ProvingRequest[] calldata requests,
+        bytes[] calldata clientSignatures,
+        Fulfillment[] calldata fills,
+        bytes calldata assessorSeal,
+        address prover
+    ) external;
 
     /// @notice Combined function to submit a new merkle root to the set-verifier and call fulfillBatch.
     /// @dev Useful to reduce the transaction count for fulfillments

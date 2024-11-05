@@ -13,7 +13,7 @@ import {TestReceipt} from "risc0/../test/TestReceipt.sol";
 import {RiscZeroMockVerifier} from "risc0/test/RiscZeroMockVerifier.sol";
 import {TestUtils} from "./TestUtils.sol";
 
-import {ProofMarket, MerkleProofish, AssessorJournal} from "../src/ProofMarket.sol";
+import {ProofMarket, MerkleProofish, AssessorJournal, TransientPrice, TransientPriceLib} from "../src/ProofMarket.sol";
 import {
     Fulfillment,
     IProofMarket,
@@ -603,6 +603,41 @@ contract ProofMarketTest is Test {
         proofMarket.fulfill(fill, assessorSeal, mockOtherProverAddr);
     }
 
+    function testPriceAndFulfill() external {
+        Vm.Wallet memory client = createClient(1);
+
+        ProvingRequest memory request = defaultRequest(client.addr, 3);
+
+        bytes memory clientSignature = signRequest(client, request);
+
+        uint256 balanceBefore = proofMarket.balanceOf(PROVER_WALLET.addr);
+        console2.log("Prover balance before:", balanceBefore);
+
+        (Fulfillment memory fill, bytes memory assessorSeal) = fulfillRequest(request, APP_JOURNAL, PROVER_WALLET.addr);
+
+        Fulfillment[] memory fills = new Fulfillment[](1);
+        fills[0] = fill;
+        ProvingRequest[] memory requests = new ProvingRequest[](1);
+        requests[0] = request;
+        bytes[] memory clientSignatures = new bytes[](1);
+        clientSignatures[0] = clientSignature;
+
+        vm.expectEmit(true, true, true, true);
+        emit IProofMarket.RequestFulfilled(request.id);
+        vm.expectEmit(true, true, true, false);
+        emit IProofMarket.ProofDelivered(request.id, hex"", hex"");
+        proofMarket.priceAndFulfillBatch(requests, clientSignatures, fills, assessorSeal, PROVER_WALLET.addr);
+
+        // Check that the proof was submitted
+        assertTrue(proofMarket.requestIsFulfilled(fill.id), "Request should have fulfilled status");
+
+        uint256 balanceAfter = proofMarket.balanceOf(PROVER_WALLET.addr);
+        console2.log("Prover balance after:", balanceAfter);
+        assertEq(balanceBefore + 1 ether, balanceAfter);
+
+        checkProofMarketBalance();
+    }
+
     function testFulfillAlreadyFulfilled() public {
         // Submit request and fulfill it
         Vm.Wallet memory client = createClient(1);
@@ -883,5 +918,20 @@ contract ProofMarketTest is Test {
 
         bytes32 root = MerkleProofish.processTree(leaves);
         assertEq(root, 0xe004c72e4cb697fa97669508df099edbc053309343772a25e56412fc7db8ebef);
+    }
+}
+
+contract TransientPriceLibTest is Test {
+    using TransientPriceLib for TransientPrice;
+
+    /// forge-config: default.fuzz.runs = 10000
+    function testFuzz_PackUnpack(bool valid, uint96 price) public {
+        TransientPrice memory original = TransientPrice({valid: valid, price: price});
+
+        uint256 packed = TransientPriceLib.pack(original);
+        TransientPrice memory unpacked = TransientPriceLib.unpack(packed);
+
+        assertEq(unpacked.valid, original.valid, "Valid flag mismatch");
+        assertEq(unpacked.price, original.price, "Price mismatch");
     }
 }
