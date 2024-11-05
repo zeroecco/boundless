@@ -12,6 +12,9 @@ import {ReceiptClaim, ReceiptClaimLib} from "risc0/IRiscZeroVerifier.sol";
 import {TestReceipt} from "risc0/../test/TestReceipt.sol";
 import {RiscZeroMockVerifier} from "risc0/test/RiscZeroMockVerifier.sol";
 import {TestUtils} from "./TestUtils.sol";
+import {IERC1967} from "@openzeppelin/contracts/interfaces/IERC1967.sol";
+import {UnsafeUpgrades, Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
+import {Options as UpgradeOptions} from "openzeppelin-foundry-upgrades/Options.sol";
 
 import {ProofMarket, MerkleProofish, AssessorJournal, TransientPrice, TransientPriceLib} from "../src/ProofMarket.sol";
 import {
@@ -26,6 +29,7 @@ import {
     Requirements
 } from "../src/IProofMarket.sol";
 import {ProofMarketLib} from "../src/ProofMarketLib.sol";
+import {ProofMarketV2Test} from "./contracts/ProofMarketV2Test.sol";
 import {RiscZeroSetVerifier} from "../src/RiscZeroSetVerifier.sol";
 
 contract ProofMarketTest is Test {
@@ -37,6 +41,7 @@ contract ProofMarketTest is Test {
 
     RiscZeroMockVerifier private verifier;
     ProofMarket private proofMarket;
+    address private proxy;
     RiscZeroSetVerifier private setVerifier;
     mapping(uint256 => bool) private clientWallets;
     uint256 initialBalance;
@@ -64,9 +69,21 @@ contract ProofMarketTest is Test {
         vm.deal(PROVER_WALLET.addr, DEFAULT_BALANCE);
 
         vm.startPrank(OWNER_WALLET.addr);
+
+        // Deploy the implementation contracts
         verifier = new RiscZeroMockVerifier(MOCK_SELECTOR);
         setVerifier = new RiscZeroSetVerifier(verifier, SET_BUILDER_IMAGE_ID, "https://set-builder.dev.null");
-        proofMarket = new ProofMarket(setVerifier, ASSESSOR_IMAGE_ID, "https://assessor.dev.null");
+
+        // Deploy the UUPS proxy with the implementation
+        UpgradeOptions memory opts;
+        opts.constructorData = ProofMarketLib.encodeConstructorArgs(setVerifier, ASSESSOR_IMAGE_ID);
+        proxy = Upgrades.deployUUPSProxy(
+            "ProofMarket.sol:ProofMarket",
+            abi.encodeCall(ProofMarket.initialize, (OWNER_WALLET.addr, "https://assessor.dev.null")),
+            opts
+        );
+        proofMarket = ProofMarket(proxy);
+
         vm.stopPrank();
 
         vm.prank(PROVER_WALLET.addr);
@@ -77,6 +94,9 @@ contract ProofMarketTest is Test {
         }
 
         initialBalance = address(proofMarket).balance;
+
+        // Verify that OWNER is the actual owner
+        assertEq(proofMarket.owner(), OWNER_WALLET.addr, "OWNER address is not the contract owner after deployment");
     }
 
     // Utility function to check initial and final balance difference
@@ -112,8 +132,8 @@ contract ProofMarketTest is Test {
         return ProvingRequest({
             id: ProofMarketLib.requestId(client, idx),
             requirements: REQUIREMENTS,
-            imageUrl: "http://image.dev.null",
-            input: Input({inputType: InputType.Url, data: bytes("http://input.dev.null")}),
+            imageUrl: "https://image.dev.null",
+            input: Input({inputType: InputType.Url, data: bytes("https://input.dev.null")}),
             offer: offer
         });
     }
@@ -122,8 +142,8 @@ contract ProofMarketTest is Test {
         return ProvingRequest({
             id: ProofMarketLib.requestId(client, idx),
             requirements: REQUIREMENTS,
-            imageUrl: "http://image.dev.null",
-            input: Input({inputType: InputType.Url, data: bytes("http://input.dev.null")}),
+            imageUrl: "https://image.dev.null",
+            input: Input({inputType: InputType.Url, data: bytes("https://input.dev.null")}),
             offer: Offer({
                 minPrice: 1 ether,
                 maxPrice: 2 ether,
@@ -919,13 +939,73 @@ contract ProofMarketTest is Test {
         bytes32 root = MerkleProofish.processTree(leaves);
         assertEq(root, 0xe004c72e4cb697fa97669508df099edbc053309343772a25e56412fc7db8ebef);
     }
+
+    /// @dev Test the upgradeability of the contract under safe conditions.
+    /// This mode requires to **always** start from a clean cache, as such, before running
+    /// forge test, make sure to run `forge clean && forge build` to clear the cache and build from scratch.
+    // TODO(#109) Refactor these tests to check for upgradeability from a prior commit to the latest version.
+    // With that, we might also check that it is possible to upgrade to a notional future version, or we might
+    // want to drop the ProofMarketV2Test contract.
+    function testUpgradeability() public {
+        address implAddressV1 = Upgrades.getImplementationAddress(proxy);
+        vm.startPrank(OWNER_WALLET.addr);
+        // Deploy a new implementation of the same contract
+        vm.expectEmit(false, true, true, true);
+        emit IERC1967.Upgraded(address(0));
+        UpgradeOptions memory opts;
+        opts.constructorData = ProofMarketLib.encodeConstructorArgs(proofMarket.VERIFIER(), ASSESSOR_IMAGE_ID);
+        Upgrades.upgradeProxy(proxy, "ProofMarketV2Test.sol:ProofMarketV2Test", "", opts, OWNER_WALLET.addr);
+        vm.stopPrank();
+        address implAddressV2 = Upgrades.getImplementationAddress(proxy);
+        assertFalse(implAddressV2 == implAddressV1);
+
+        (bytes32 imageID, string memory imageUrl) = proofMarket.imageInfo();
+        assertEq(imageID, ASSESSOR_IMAGE_ID, "Image ID should be the same after upgrade");
+        assertEq(imageUrl, "https://assessor.dev.null", "Image URL should be the same after upgrade");
+    }
+
+    function testUnsafeUpgrade() public {
+        vm.startPrank(OWNER_WALLET.addr);
+        proxy = UnsafeUpgrades.deployUUPSProxy(
+            address(new ProofMarket(setVerifier, ASSESSOR_IMAGE_ID)),
+            abi.encodeCall(ProofMarket.initialize, (OWNER_WALLET.addr, "https://assessor.dev.null"))
+        );
+        proofMarket = ProofMarket(proxy);
+        address implAddressV1 = UnsafeUpgrades.getImplementationAddress(proxy);
+
+        // Should emit an `Upgraded` event
+        vm.expectEmit(false, true, true, true);
+        emit IERC1967.Upgraded(address(0));
+        UnsafeUpgrades.upgradeProxy(
+            proxy, address(new ProofMarket(setVerifier, ASSESSOR_IMAGE_ID)), "", OWNER_WALLET.addr
+        );
+        vm.stopPrank();
+        address implAddressV2 = UnsafeUpgrades.getImplementationAddress(proxy);
+
+        assertFalse(implAddressV2 == implAddressV1);
+
+        (bytes32 imageID, string memory imageUrl) = proofMarket.imageInfo();
+        assertEq(imageID, ASSESSOR_IMAGE_ID, "Image ID should be the same after upgrade");
+        assertEq(imageUrl, "https://assessor.dev.null", "Image URL should be the same after upgrade");
+    }
+
+    function testTransferOwnership() public {
+        address newOwner = vm.createWallet("NEW_OWNER").addr;
+        vm.prank(OWNER_WALLET.addr);
+        proofMarket.transferOwnership(newOwner);
+
+        vm.prank(newOwner);
+        proofMarket.acceptOwnership();
+
+        assertEq(proofMarket.owner(), newOwner, "Owner should be changed");
+    }
 }
 
 contract TransientPriceLibTest is Test {
     using TransientPriceLib for TransientPrice;
 
     /// forge-config: default.fuzz.runs = 10000
-    function testFuzz_PackUnpack(bool valid, uint96 price) public {
+    function testFuzz_PackUnpack(bool valid, uint96 price) public pure {
         TransientPrice memory original = TransientPrice({valid: valid, price: price});
 
         uint256 packed = TransientPriceLib.pack(original);
