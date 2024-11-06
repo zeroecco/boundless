@@ -20,5 +20,5 @@ From the top-level working directory:
 # Format all files configured in .dprint.jsonc
 dprint fmt
 # Check all links configured in lychee.toml
-lychee .
+git ls-files '*.md' | xargs lychee --base . --cache -
 ```
