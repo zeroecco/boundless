@@ -576,7 +576,7 @@ mod tests {
             private_key: ctx.prover_signer.clone(),
             proof_market_address: ctx.proof_market_addr,
             set_verifier_address: ctx.set_verifier_addr,
-            order_stream_url: Url::parse("http://localhost:8080").unwrap(),
+            order_stream_url: Url::parse("http://localhost:8585").unwrap(),
             tx_timeout: None,
             command: Command::Deposit { amount: U256::from(100) },
         };
@@ -607,7 +607,7 @@ mod tests {
             private_key: ctx.customer_signer.clone(),
             proof_market_address: ctx.proof_market_addr,
             set_verifier_address: ctx.set_verifier_addr,
-            order_stream_url: Url::parse("http://localhost:8080").unwrap(),
+            order_stream_url: Url::parse("http://localhost:8585").unwrap(),
             tx_timeout: None,
             command: Command::SubmitRequest {
                 yaml_request: "../../request.yaml".to_string(),
