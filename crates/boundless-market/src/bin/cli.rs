@@ -165,16 +165,25 @@ struct SubmitOfferRequirements {
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 struct MainArgs {
+    /// URL of the Ethereum RPC endpoint
     #[clap(short, long, env, default_value = "http://localhost:8545")]
     rpc_url: Url,
-    #[clap(long, env)]
+    /// URL of the order stream service
+    #[clap(long, env, default_value = "http://localhost:8585")]
     order_stream_url: Url,
+    /// Private key of the wallet
     #[clap(long, env)]
     private_key: PrivateKeySigner,
+    /// Address of the proof market contract
     #[clap(short, long, env)]
     proof_market_address: Address,
+    /// Address of the SetVerifier contract
     #[clap(short, long, env)]
     set_verifier_address: Address,
+    /// Tx timeout in seconds
+    #[clap(long, env)]
+    tx_timeout: Option<u64>,
+    /// Subcommand to run
     #[command(subcommand)]
     command: Command,
 }
@@ -205,7 +214,11 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
         .with_recommended_fillers()
         .wallet(wallet)
         .on_http(args.rpc_url.clone());
-    let proof_market = ProofMarketService::new(args.proof_market_address, provider.clone(), caller);
+    let mut proof_market =
+        ProofMarketService::new(args.proof_market_address, provider.clone(), caller);
+    if let Some(tx_timeout) = args.tx_timeout {
+        proof_market = proof_market.with_timeout(Duration::from_secs(tx_timeout));
+    }
 
     let command = args.command.clone();
 
@@ -230,7 +243,7 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
             } else {
                 storage_provider_from_env().await?
             };
-            let client = Client::from_parts(
+            let mut client = Client::from_parts(
                 signer.clone(),
                 args.rpc_url.clone(),
                 args.proof_market_address,
@@ -239,6 +252,9 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 storage_provider,
             )
             .await?;
+            if let Some(tx_timeout) = args.tx_timeout {
+                client = client.with_timeout(Duration::from_secs(tx_timeout));
+            }
 
             request_id = submit_offer(client, &offer_args).await?;
         }
@@ -253,7 +269,7 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
             } else {
                 storage_provider_from_env().await?
             };
-            let client = Client::from_parts(
+            let mut client = Client::from_parts(
                 signer.clone(),
                 args.rpc_url.clone(),
                 args.proof_market_address,
@@ -262,6 +278,9 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 storage_provider,
             )
             .await?;
+            if let Some(tx_timeout) = args.tx_timeout {
+                client = client.with_timeout(Duration::from_secs(tx_timeout));
+            }
 
             request_id = submit_request(id, yaml_request, client, wait, offchain, dry_run).await?;
         }
@@ -558,6 +577,7 @@ mod tests {
             proof_market_address: ctx.proof_market_addr,
             set_verifier_address: ctx.set_verifier_addr,
             order_stream_url: Url::parse("http://localhost:8080").unwrap(),
+            tx_timeout: None,
             command: Command::Deposit { amount: U256::from(100) },
         };
 
@@ -588,6 +608,7 @@ mod tests {
             proof_market_address: ctx.proof_market_addr,
             set_verifier_address: ctx.set_verifier_addr,
             order_stream_url: Url::parse("http://localhost:8080").unwrap(),
+            tx_timeout: None,
             command: Command::SubmitRequest {
                 yaml_request: "../../request.yaml".to_string(),
                 id: None,
