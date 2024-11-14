@@ -8,19 +8,25 @@ use super::{
     IRiscZeroSetVerifier::{self, IRiscZeroSetVerifierErrors, IRiscZeroSetVerifierInstance},
     TXN_CONFIRM_TIMEOUT,
 };
+use crate::contracts::set_verifier::IRiscZeroVerifier::IRiscZeroVerifierInstance;
 use alloy::{
     network::Ethereum,
     primitives::{Address, Bytes, B256},
-    providers::Provider,
     transports::Transport,
 };
 use alloy_provider;
 use anyhow::{Context, Result};
-use risc0_ethereum_contracts::IRiscZeroVerifier;
+
+//TODO: drop this once risc0-ethereum is updated
+alloy::sol!(
+    #![sol(rpc, all_derives)]
+    "../../lib/risc0-ethereum/contracts/src/IRiscZeroVerifier.sol"
+);
 
 #[derive(Clone)]
 pub struct SetVerifierService<T, P> {
     instance: IRiscZeroSetVerifierInstance<T, P, Ethereum>,
+    verifier_instance: IRiscZeroVerifierInstance<T, P, Ethereum>,
     caller: Address,
     tx_timeout: Duration,
 }
@@ -31,9 +37,10 @@ where
     P: alloy_provider::Provider<T, Ethereum> + 'static + Clone,
 {
     pub fn new(address: Address, provider: P, caller: Address) -> Self {
-        let instance = IRiscZeroSetVerifier::new(address, provider);
+        let instance = IRiscZeroSetVerifier::new(address, provider.clone());
+        let verifier_instance = IRiscZeroVerifier::new(address, provider);
 
-        Self { instance, caller, tx_timeout: TXN_CONFIRM_TIMEOUT }
+        Self { instance, verifier_instance, caller, tx_timeout: TXN_CONFIRM_TIMEOUT }
     }
 
     pub fn instance(&self) -> &IRiscZeroSetVerifierInstance<T, P, Ethereum> {
@@ -69,12 +76,7 @@ where
 
     pub async fn verify(&self, seal: Bytes, image_id: B256, journal_digest: B256) -> Result<()> {
         tracing::debug!("Calling verify({:?},{:?},{:?})", seal, image_id, journal_digest);
-        let verifier =
-            IRiscZeroVerifier::new(
-                *self.instance().address(),
-                self.instance().provider()
-            );
-        verifier
+        self.verifier_instance
             .verify(seal, image_id, journal_digest)
             .call()
             .await
