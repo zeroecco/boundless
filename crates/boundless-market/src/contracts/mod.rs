@@ -17,7 +17,6 @@ use alloy::{
 use alloy_primitives::{
     aliases::{U160, U192, U96},
     Address, Bytes, B256, U256,
-    PrimitiveSignature,
 };
 use alloy_sol_types::{eip712_domain, Eip712Domain};
 use serde::{Deserialize, Serialize};
@@ -176,7 +175,7 @@ impl ProvingRequest {
         signer: &impl SignerSync,
         contract_addr: Address,
         chain_id: u64,
-    ) -> Result<PrimitiveSignature, SignerErr> {
+    ) -> Result<Signature, SignerErr> {
         let domain = eip712_domain(contract_addr, chain_id);
         let hash = self.eip712_signing_hash(&domain.alloy_struct());
         signer.sign_hash_sync(&hash)

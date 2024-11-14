@@ -11,7 +11,6 @@ use super::{
 use alloy::{
     network::Ethereum,
     primitives::{Address, Bytes, B256},
-    providers::Provider,
     transports::Transport,
 };
 use alloy_provider;
@@ -70,10 +69,7 @@ where
     pub async fn verify(&self, seal: Bytes, image_id: B256, journal_digest: B256) -> Result<()> {
         tracing::debug!("Calling verify({:?},{:?},{:?})", seal, image_id, journal_digest);
         let verifier =
-            IRiscZeroVerifier::new(
-                *self.instance().address(),
-                self.instance().provider()
-            );
+            IRiscZeroVerifier::new(*self.instance().address(), self.instance().provider());
         verifier
             .verify(seal, image_id, journal_digest)
             .call()
