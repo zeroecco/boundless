@@ -14,6 +14,7 @@ use alloy::{
     providers::Provider,
     transports::Transport,
 };
+use alloy_provider;
 use anyhow::{Context, Result};
 use risc0_ethereum_contracts::IRiscZeroVerifier;
 
@@ -27,7 +28,7 @@ pub struct SetVerifierService<T, P> {
 impl<T, P> SetVerifierService<T, P>
 where
     T: Transport + Clone,
-    P: Provider<T, Ethereum> + 'static + Clone,
+    P: alloy_provider::Provider<T, Ethereum> + 'static + Clone,
 {
     pub fn new(address: Address, provider: P, caller: Address) -> Self {
         let instance = IRiscZeroSetVerifier::new(address, provider);
@@ -69,7 +70,10 @@ where
     pub async fn verify(&self, seal: Bytes, image_id: B256, journal_digest: B256) -> Result<()> {
         tracing::debug!("Calling verify({:?},{:?},{:?})", seal, image_id, journal_digest);
         let verifier =
-            IRiscZeroVerifier::new(*self.instance().address(), self.instance().provider().clone());
+            IRiscZeroVerifier::new(
+                *self.instance().address(),
+                self.instance().provider()
+            );
         verifier
             .verify(seal, image_id, journal_digest)
             .call()
