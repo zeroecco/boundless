@@ -1,11 +1,11 @@
-export function Hero() {
+export default function Hero() {
   return (
     <section className="relative">
-      <div className="cc8v2 c38j2 c82xa c3mi3 absolute cvd4p ci34p opacity-50" aria-hidden="true">
+      <div className="cc8v2 c38j2 c82xa c3mi3 cvd4p ci34p absolute opacity-50" aria-hidden="true">
         <img className="c13of" src="/stripes.svg" width="768" height="432" alt="Stripes" />
       </div>
 
-      <div className="cc8v2 c38j2 cscpp c82xa absolute cxj7m" aria-hidden="true">
+      <div className="cc8v2 c38j2 cscpp c82xa cxj7m absolute" aria-hidden="true">
         <div className="cjxwv cwgyo cjgwc cmxwm csv9q ca7zz c5uon czfz1" />
       </div>
       <div className="cc8v2 c38j2 cfkl5 cvizd c82xa absolute" aria-hidden="true">
@@ -37,9 +37,9 @@ export function Hero() {
                 Boundless lets you focus on building the future. We'll handle the rest.
               </p>
               <div className="csw7z c2xfw cgkcp cnbst relative">
-                <div className="c0ix1 citj5 relative c6dyc cdj6q cqcwp">
+                <div className="c0ix1 citj5 c6dyc cdj6q cqcwp relative">
                   <a
-                    className="cdnfp cnbzd cnky1 bg-primary cw1xo  text-white dark:text-black c8slg cg07b c07cc cwq93 codvp cnv5k cayql"
+                    className="cdnfp cnbzd cnky1 cw1xo c8slg cg07b c07cc cwq93 codvp cnv5k cayql bg-primary text-white dark:text-black"
                     href="/prove/broker-node"
                   >
                     Quick Start

@@ -1,4 +1,3 @@
-import VitePluginCssMediaSplitter from "css-media-splitter/vite-plugin";
 import biomePlugin from "vite-plugin-biome";
 import VitePluginSitemap from "vite-plugin-sitemap";
 import { defineConfig } from "vocs";
@@ -227,7 +226,7 @@ export default defineConfig({
     },
   },
   vite: {
-    plugins: [generateSitemap(), VitePluginCssMediaSplitter(), biomePlugin()],
+    plugins: [generateSitemap(), biomePlugin()],
   },
   sidebar: SIDEBAR_CONFIG,
   topNav: [
