@@ -73,7 +73,7 @@ Also referred to as the Client in the context of contracts, the party submitting
 [page-bento]: /prover-manual/bento/introduction
 [page-boundless-market]: /market/introduction
 [page-broker]: /prover-manual/broker/introduction
-[page-deployments]: /market/public-deployments
+[page-deployments]: /public-deployments
 [r0-page-dev-mode]: https://dev.risczero.com/api/next/generating-proofs/dev-mode
 [r0-term-clock-cycles]: https://dev.risczero.com/terminology#clock-cycles
 [r0-term-elf-binary]: https://dev.risczero.com/terminology#elf-binary
