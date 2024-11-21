@@ -1,0 +1,58 @@
+export function Hero() {
+  return (
+    <section className="relative">
+      <div className="cc8v2 c38j2 c82xa c3mi3 absolute cvd4p ci34p opacity-50" aria-hidden="true">
+        <img className="c13of" src="/stripes.svg" width="768" height="432" alt="Stripes" />
+      </div>
+
+      <div className="cc8v2 c38j2 cscpp c82xa absolute cxj7m" aria-hidden="true">
+        <div className="cjxwv cwgyo cjgwc cmxwm csv9q ca7zz c5uon czfz1" />
+      </div>
+      <div className="cc8v2 c38j2 cfkl5 cvizd c82xa absolute" aria-hidden="true">
+        <div className="cjxwv cwgyo cjgwc cmxwm csv9q cx349 ca7zz c5uon czfz1" />
+      </div>
+      <div className="cc8v2 c38j2 cinxm c2l8u c82xa absolute" aria-hidden="true">
+        <div className="cjxwv cwgyo cjgwc cmxwm csv9q cx349 ca7zz c5uon czfz1" />
+      </div>
+
+      <div className="cxbfd cx5hs cqcwp cn7jq">
+        <div className="ccd2c c71n8 cb4uz cbgts">
+          <div className="cczaz headline-text ce84p cb4uz">
+            <h1 className="cqzis c9f55 chf5m c9s5u cruyu font-serif">
+              The first universal ZK protocol <br />
+              that transforms how blockchains compute
+            </h1>
+            <div className="c441s cqcwp">
+              <p className="ce0zw cprne c60f3">
+                By turning complex computations into lightweight, verifiable proofs, Boundless enables applications to
+                scale seamlessly across all chains—no compromises, no limits.
+              </p>
+              <p className="ce0zw cprne c60f3">
+                With Boundless, developers can write and deploy sophisticated applications once deemed impossible. Build
+                without worrying about infrastructure, execution limits, or compute overhead. Our Core Services handle
+                proof generation, aggregation, and settlement, while Extensions like Steel and Kailua unlock
+                unprecedented cost savings and speed—all using the tools and languages you already know.
+              </p>
+              <p className="ce0zw cprne c60f3">
+                Boundless lets you focus on building the future. We'll handle the rest.
+              </p>
+              <div className="csw7z c2xfw cgkcp cnbst relative">
+                <div className="c0ix1 citj5 relative c6dyc cdj6q cqcwp">
+                  <a
+                    className="cdnfp cnbzd cnky1 bg-primary cw1xo  text-white dark:text-black c8slg cg07b c07cc cwq93 codvp cnv5k cayql"
+                    href="/prove/broker-node"
+                  >
+                    Quick Start
+                  </a>
+                  <a className="c2np1 c3ns1 c8slg cgwj6 c2mml c07cc cwq93 cayql" href="/introduction/why-boundless">
+                    Why Boundless
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
