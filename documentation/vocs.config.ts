@@ -105,7 +105,7 @@ const SIDEBAR_CONFIG = [
       },
     ],
   },
-  {
+  /*{
     text: "Market",
     collapsed: true,
     items: [
@@ -188,6 +188,10 @@ const SIDEBAR_CONFIG = [
         link: "/prover-manual/monitoring",
       },
     ],
+  },*/
+  {
+    text: "📄 Smart Contracts Documentation",
+    link: "/smart-contracts",
   },
 ];
 
