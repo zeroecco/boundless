@@ -5,7 +5,7 @@ import { defineConfig } from "vocs";
 
 const SIDEBAR_CONFIG = [
   {
-    text: "Introduction",
+    text: "✨ Introduction",
     collapsed: false,
     items: [
       {
@@ -23,8 +23,91 @@ const SIDEBAR_CONFIG = [
     ],
   },
   {
-    text: "Market",
+    text: "🏋️ Build",
     collapsed: false,
+    items: [
+      {
+        text: "Build a Program",
+        items: [
+          {
+            text: "RISC Zero's zkVM",
+            link: "/build/build-a-program/risc-zero-zkvm",
+          },
+          {
+            text: "Extensions",
+            link: "/build/build-a-program/extensions",
+          },
+          {
+            text: "Foundry Template",
+            link: "/build/build-a-program/foundry-template",
+          },
+        ],
+      },
+      {
+        text: "Request a Proof",
+        link: "/build/request-a-proof",
+      },
+      {
+        text: "Use a Proof in your App",
+        link: "/build/use-a-proof-in-your-app",
+      },
+    ],
+  },
+  {
+    text: "🪬 Prove",
+    collapsed: false,
+    items: [
+      {
+        text: "Broker Node",
+        link: "/prove/broker-node",
+      },
+      {
+        text: "Bid on Proofs",
+        link: "/prove/bid-on-proofs",
+      },
+      {
+        text: "Submit Proofs",
+        link: "/prove/submit-proofs",
+      },
+    ],
+  },
+  {
+    text: "🧠 Advanced & References",
+    collapsed: false,
+    items: [
+      {
+        text: "FAQ",
+        link: "/faq",
+      },
+      {
+        text: "Terminology",
+        link: "/terminology",
+      },
+      {
+        text: "Optimize Proving Times",
+        link: "/optimize-proving-times",
+      },
+      {
+        text: "RISC Zero's zkVM",
+        link: "/risc-zero-zkvm",
+      },
+      {
+        text: "Market Matching Design",
+        link: "/market-matching-design",
+      },
+      {
+        text: "Market Design",
+        link: "/market-design",
+      },
+      {
+        text: "Public Deployments",
+        link: "/public-deployments",
+      },
+    ],
+  },
+  {
+    text: "Market",
+    collapsed: true,
     items: [
       {
         text: "Introduction",
@@ -46,7 +129,7 @@ const SIDEBAR_CONFIG = [
   },
   {
     text: "Requestor Manual",
-    collapsed: false,
+    collapsed: true,
     items: [
       {
         text: "Introduction",
@@ -60,7 +143,7 @@ const SIDEBAR_CONFIG = [
   },
   {
     text: "Prover Manual",
-    collapsed: false,
+    collapsed: true,
     items: [
       {
         text: "Introduction",
@@ -103,40 +186,6 @@ const SIDEBAR_CONFIG = [
       {
         text: "Monitoring",
         link: "/prover-manual/monitoring",
-      },
-    ],
-  },
-  {
-    text: "Advanced & References",
-    collapsed: false,
-    items: [
-      {
-        text: "FAQ",
-        link: "/faq",
-      },
-      {
-        text: "Terminology",
-        link: "/terminology",
-      },
-      {
-        text: "Optimize Proving Times",
-        link: "/optimize-proving-times",
-      },
-      {
-        text: "RISC Zero's zkVM",
-        link: "/risc0-zkvm",
-      },
-      {
-        text: "Market Matching Design",
-        link: "/market-matching-design",
-      },
-      {
-        text: "Market Design",
-        link: "/market-design",
-      },
-      {
-        text: "Public Deployments",
-        link: "/public-deployments",
       },
     ],
   },
