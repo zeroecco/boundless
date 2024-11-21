@@ -5,7 +5,26 @@ import { defineConfig } from "vocs";
 
 const SIDEBAR_CONFIG = [
   {
+    text: "Introduction",
+    collapsed: false,
+    items: [
+      {
+        text: "Why Boundless?",
+        link: "/introduction/why-boundless",
+      },
+      {
+        text: "What is Boundless?",
+        link: "/introduction/what-is-boundless",
+      },
+      {
+        text: "Proof Lifecycle",
+        link: "/introduction/proof-lifecycle",
+      },
+    ],
+  },
+  {
     text: "Market",
+    collapsed: false,
     items: [
       {
         text: "Introduction",
@@ -23,14 +42,11 @@ const SIDEBAR_CONFIG = [
         text: "Local Development",
         link: "/market/local-development",
       },
-      {
-        text: "Public Deployments",
-        link: "/market/public-deployments",
-      },
     ],
   },
   {
     text: "Requestor Manual",
+    collapsed: false,
     items: [
       {
         text: "Introduction",
@@ -44,6 +60,7 @@ const SIDEBAR_CONFIG = [
   },
   {
     text: "Prover Manual",
+    collapsed: false,
     items: [
       {
         text: "Introduction",
@@ -90,16 +107,38 @@ const SIDEBAR_CONFIG = [
     ],
   },
   {
-    text: "Smart Contracts Documentation",
-    link: "/smart-contracts",
-  },
-  {
-    text: "Reference",
-    link: "/reference",
-  },
-  {
-    text: "Glossary",
-    link: "/glossary",
+    text: "Advanced & References",
+    collapsed: false,
+    items: [
+      {
+        text: "FAQ",
+        link: "/faq",
+      },
+      {
+        text: "Terminology",
+        link: "/terminology",
+      },
+      {
+        text: "Optimize Proving Times",
+        link: "/optimize-proving-times",
+      },
+      {
+        text: "RISC Zero's zkVM",
+        link: "/risc0-zkvm",
+      },
+      {
+        text: "Market Matching Design",
+        link: "/market-matching-design",
+      },
+      {
+        text: "Market Design",
+        link: "/market-design",
+      },
+      {
+        text: "Public Deployments",
+        link: "/public-deployments",
+      },
+    ],
   },
 ];
 

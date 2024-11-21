@@ -1,6 +1,6 @@
 ---
 title: Boundless Market v0.3 RFC
-description: A high-level overview of the Boundless Market v0.3 RFC
+description: A high-level overview of the Boundless Market v0.3 RFC.
 ---
 
 # Boundless Market v0.3 RFC
@@ -13,8 +13,7 @@ Below is a diagram of the interaction flow assuming a user with a wallet is driv
 
 [Diagram source](https://excalidraw.com#json=Dez07vdrpA3Hm4cX96jsF,qk9CxkIWC1AXOCN14KbQ6Q)
 
-::::steps
-
+:::steps
 ### Step1
 
 [Requestor][term-requestor] broadcasts their proof request to make it available to all provers.
@@ -52,8 +51,7 @@ Requestor fetches the Merkle inclusion path, which acts as their receipt seal fr
 ### Step 8
 
 Requestor sends a transaction to complete their application flow, with authentication provided by the receipt.
-
-::::
+:::
 
 ## Market Contract and Guest
 
