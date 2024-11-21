@@ -28,13 +28,9 @@ In the initial 0th version, the Market is facilitated on-chain where one is \[de
 
 A cluster of services that coordinate to search for, bid on, and attempt to fulfil [proof orders](#proof-order).
 
-> See the [Bento Section][page-bento] for more details.
-
 ## Broker
 
 The Broker monitors a [deployment][page-deployments] of the [Boundless Market](#boundless-market) and, based on customizable criteria, bids on and locks-in on proof requests. Proof generation jobs are subsequently passed to an instance of [Bento](#bento), and ultimately are the request(s) are fulfilled it on the Market.
-
-> See the [Broker Section][page-broker] for more details.
 
 ## Preflight
 
@@ -70,9 +66,7 @@ See `contracts/src/IProofMarket.sol` for more details.
 
 Also referred to as the Client in the context of contracts, the party submitting orders to the market proofs form the Boundless Market.
 
-[page-bento]: /prover-manual/bento/introduction
-[page-boundless-market]: /market/introduction
-[page-broker]: /prover-manual/broker/introduction
+[page-boundless-market]: /market-design
 [page-deployments]: /public-deployments
 [r0-page-dev-mode]: https://dev.risczero.com/api/next/generating-proofs/dev-mode
 [r0-term-clock-cycles]: https://dev.risczero.com/terminology#clock-cycles
