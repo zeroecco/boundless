@@ -26,6 +26,10 @@ const SIDEBAR_CONFIG = [
     collapsed: false,
     items: [
       {
+        text: "Quickstart",
+        link: "/build/quickstart",
+      },
+      {
         text: "Build a Program",
         items: [
           {
