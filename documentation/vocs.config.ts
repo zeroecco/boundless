@@ -53,24 +53,6 @@ const SIDEBAR_CONFIG = [
     ],
   },
   {
-    text: "🪬 Prove",
-    collapsed: false,
-    items: [
-      {
-        text: "Broker Node",
-        link: "/prove/broker-node",
-      },
-      {
-        text: "Bid on Proofs",
-        link: "/prove/bid-on-proofs",
-      },
-      {
-        text: "Submit Proofs",
-        link: "/prove/submit-proofs",
-      },
-    ],
-  },
-  {
     text: "🧠 Advanced & References",
     collapsed: false,
     items: [
