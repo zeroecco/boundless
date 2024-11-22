@@ -64,13 +64,13 @@ See contracts/src/IProofMarket.sol for more details.
 
 Also referred to as the Client in the context of contracts, the party submitting orders to the market proofs form the Boundless Market.
 
-[r0-term-image-id]: https://dev.risczero.com/terminology#image-id]
-[r0-term-clock-cycles]: https://dev.risczero.com/terminology#clock-cycles
-[r0-term-guest-program]: https://dev.risczero.com/terminology#guest-program
-[r0-term-elf-binary]: https://dev.risczero.com/terminology#elf-binary
-[r0-term-receipt]: https://dev.risczero.com/terminology#receipt
-[r0-page-dev-mode]: https://dev.risczero.com/api/next/generating-proofs/dev-mode
-[page-boundless-market]: ./market/README.md
 [page-bento]: ./prover-manual/bento/README.md
+[page-boundless-market]: ./market/README.md
 [page-broker]: ./prover-manual/broker/README.md
 [page-deployments]: ./market/deployments.md
+[r0-page-dev-mode]: https://dev.risczero.com/api/next/generating-proofs/dev-mode
+[r0-term-clock-cycles]: https://dev.risczero.com/terminology#clock-cycles
+[r0-term-elf-binary]: https://dev.risczero.com/terminology#elf-binary
+[r0-term-guest-program]: https://dev.risczero.com/terminology#guest-program
+[r0-term-image-id]: https://dev.risczero.com/terminology#image-id]
+[r0-term-receipt]: https://dev.risczero.com/terminology#receipt

@@ -31,6 +31,7 @@ const SIDEBAR_CONFIG = [
       },
       {
         text: "Build a Program",
+        collapsed: false,
         items: [
           {
             text: "RISC Zero's zkVM",
@@ -51,7 +52,7 @@ const SIDEBAR_CONFIG = [
         link: "/build/request-a-proof",
       },
       {
-        text: "Use a Proof in your App",
+        text: "Use a Proof in Your App",
         link: "/build/use-a-proof-in-your-app",
       },
     ],
@@ -65,28 +66,32 @@ const SIDEBAR_CONFIG = [
         link: "/faq",
       },
       {
-        text: "Terminology",
-        link: "/terminology",
-      },
-      {
-        text: "Optimize Proving Times",
-        link: "/optimize-proving-times",
-      },
-      {
-        text: "RISC Zero's zkVM",
-        link: "/risc-zero-zkvm",
+        text: "Market Design",
+        link: "/market-design",
       },
       {
         text: "Market Matching Design",
         link: "/market-matching-design",
       },
       {
-        text: "Market Design",
-        link: "/market-design",
+        text: "Optimize Proving Times",
+        link: "/optimize-proving-times",
       },
       {
         text: "Public Deployments",
         link: "/public-deployments",
+      },
+      {
+        text: "RISC Zero's zkVM",
+        link: "/risc-zero-zkvm",
+      },
+      {
+        text: "Smart Contracts",
+        link: "/smart-contracts",
+      },
+      {
+        text: "Terminology",
+        link: "/terminology",
       },
     ],
   },
@@ -174,10 +179,6 @@ const SIDEBAR_CONFIG = [
       },
     ],
   },*/
-  {
-    text: "📄 Smart Contracts Documentation",
-    link: "/smart-contracts",
-  },
 ];
 
 export function generateSitemap() {

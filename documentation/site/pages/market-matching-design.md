@@ -9,13 +9,13 @@ description: Learn how the Boundless market matching mechanism works.
 
 We describe the Boundless reverse-Dutch auction, a matching and price discovery mechanism for proof requests.
 
-TL;DR: The requestor broadcasts a proof request. Initially, the request offers a low reward; eventually the reward begins to increase, until it reaches some max. At any time prior to the request’s expiration/completion, the request can be "locked-in" by a prover who escrows some stake; this gives them the exclusive ability to be paid for a proof, and on success their reward will be based on when they "locked-in" the request.
+TL;DR: The requestor broadcasts a proof request. Initially, the request offers a low reward; eventually the reward begins to increase, until it reaches some max. At any time prior to the request's expiration/completion, the request can be "locked-in" by a prover who escrows some stake; this gives them the exclusive ability to be paid for a proof, and on success their reward will be based on when they "locked-in" the request.
 
 In slightly more detail, the lifecycle of a successful proving request looks like this: The requester broadcasts their request (e.g., via calldata on the market). The request includes requirements for the proof (Image ID, predicates on the journal, etc.) as well as an offer (the parameters of the auction), which includes (among other things) the maximum price that the requester is willing to pay.
 
 When publishing their request, the requester escrows the necessary funds (i.e., maximum price) in the market. An auction is held according to the parameters specified by the offer. During this time, provers can attempt to lock-in the request by submitting a bid. The first bid received by the market wins the auction, and the reward (price paid by the requester) is based on when their bid was received (see Offers below).
 
-To submit a bid, a prover must escrow the necessary stake (described in the offer); the stake is returned to them if they submit the proof prior to the offer’s expiration. The winning bidder completes the proof before the request expires and is paid according to their bid.
+To submit a bid, a prover must escrow the necessary stake (described in the offer); the stake is returned to them if they submit the proof prior to the offer's expiration. The winning bidder completes the proof before the request expires and is paid according to their bid.
 
 ## Offers and Rewards
 

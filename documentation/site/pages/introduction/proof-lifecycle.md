@@ -24,7 +24,7 @@ Provers analyze the request and propose a price they are willing to accept to ge
 
 ### <span class="text-[var(--vocs-color\_textAccent)]">\*</span> Agreement and Staking
 
-Once a prover's bid is accepted, the transaction is finalized. Both parties stake funds to guarantee payment and ensure the prover’s commitment to deliver the proof.
+Once a prover's bid is accepted, the transaction is finalized. Both parties stake funds to guarantee payment and ensure the prover's commitment to deliver the proof.
 
 ### <span class="text-[var(--vocs-color\_textAccent)]">\*</span> Proof Generation
 
@@ -63,7 +63,7 @@ They will then run the zkVM software to generate a proof, at which point this pr
 
 ### zkVM
 
-The Boundless stack is currently only built for RISC Zero’s zkVM. The zkVM executes and proves a Rust program to produce a STARK/SNARK proof.
+The Boundless stack is currently only built for RISC Zero's zkVM. The zkVM executes and proves a Rust program to produce a STARK/SNARK proof.
 zkVM docs are detailed and explain a lot.
 
 ## Where Does Boundless Fit into Your App? \[Mix in pieces from here above]
@@ -77,6 +77,6 @@ zkVM docs are detailed and explain a lot.
   - This allows you to offload execution from your application (onchain to offchain).
   - Allow for the same trust assumptions as onchain (magic of ZK).
   - Provide a portable way to verify your program both offchain and onchain.
-- That’s great, show me the good stuff:
+- That's great, show me the good stuff:
   - Workflow diagram of a standard onchain application (think excalidraw) utilising a ZK proof to offload execution to the prover.
   - High level discussion of tradeoffs for verifiable compute on Boundless: latency, price, speed etc.

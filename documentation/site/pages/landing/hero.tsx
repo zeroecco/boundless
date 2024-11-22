@@ -46,7 +46,7 @@ export default function Hero() {
                 <div className="c0ix1 citj5 c6dyc cdj6q cqcwp relative">
                   <a
                     className="cdnfp cnbzd cnky1 cw1xo c8slg cg07b c07cc cwq93 codvp cnv5k cayql bg-primary text-white dark:text-black"
-                    href="/prove/broker-node"
+                    href="/build/quickstart"
                   >
                     Quick Start
                   </a>
