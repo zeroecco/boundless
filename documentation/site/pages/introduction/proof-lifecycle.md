@@ -7,10 +7,9 @@ description: The lifecycle of a proof on Boundless.
 
 ## Lifecycle of a Proof
 
-{/* @TODO--PICTURE\_GOES\_HERE */}
+![Proof Lifecycle](/boundless_market_diagram.png)
 
-::::steps
-
+:::steps
 ### Program Initialization
 
 A program is created with the RISC0 zkVM, requiring a proof to validate its content.
@@ -38,8 +37,7 @@ The market verifies the proof. Upon successful verification, funds are released 
 ### Proof Utilization
 
 The application retrieves the proof and integrates it seamlessly.
-
-::::
+:::
 
 <span class="text-[var(--vocs-color\_textAccent)]">\*</span> All taken care off out of sight of the app developer
 
