@@ -1,10 +1,13 @@
+import { useEffect } from "react";
+
 export default function Hero() {
+  useEffect(() => {
+    const logo = document.querySelector(".logo");
+    logo?.classList.add("h-10");
+  }, []);
+
   return (
     <section className="relative">
-      <div className="cc8v2 c38j2 c82xa c3mi3 cvd4p ci34p absolute opacity-50" aria-hidden="true">
-        <img className="c13of" src="/stripes.svg" width="768" height="432" alt="Stripes" />
-      </div>
-
       <div className="cc8v2 c38j2 cscpp c82xa cxj7m absolute" aria-hidden="true">
         <div className="cjxwv cwgyo cjgwc cmxwm csv9q ca7zz c5uon czfz1" />
       </div>
@@ -16,9 +19,12 @@ export default function Hero() {
       </div>
 
       <div className="cxbfd cx5hs cqcwp cn7jq">
-        <div className="ccd2c c71n8 cb4uz cbgts">
-          <div className="cczaz headline-text ce84p cb4uz">
-            <h1 className="cqzis c9f55 chf5m c9s5u cruyu font-serif">
+        <div className="ccd2c cb4uz cbgts">
+          <div className="cczaz headline-text cb4uz">
+            <div className="text-center">
+              <img src="/logo.png" alt="Boundless logo" className="mx-auto h-10" />
+            </div>
+            <h1 className="cqzis c9f55 c9s5u my-16 font-serif">
               The first universal ZK protocol <br />
               that transforms how blockchains compute
             </h1>

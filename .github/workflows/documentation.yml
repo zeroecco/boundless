@@ -81,7 +81,7 @@ jobs:
           COMMENT_ID=$(echo "$COMMENTS" | jq -r '.[] | select(.body | contains("🚀 Documentation Preview")) | .id' | head -n1)
           
           # Updated comment body with both URLs
-          COMMENT_BODY="🚀 Documentation Preview\n\nDeployment URL: ${{ steps.deploy.outputs.deployment_url }}\nBranch Preview: ${{ steps.deploy.outputs.branch_url }}\n\n_Updated at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')_"
+          COMMENT_BODY="🚀 Documentation Preview\n\nDeployment URL: ${{ steps.deploy.outputs.deployment_url }}\n\n_Updated at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')_"
           
           # Create JSON payload
           PAYLOAD="{\"body\":\"$COMMENT_BODY\"}"
