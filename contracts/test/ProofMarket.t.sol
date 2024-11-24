@@ -481,7 +481,7 @@ contract ProofMarketBasicTest is ProofMarketTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IProofMarket.ProverNotInAppnetLockinAllowList.selector,
-                address(0x5c541fA34e0b605E586fB688EFa1550169d80ECb)
+                address(0x706f5Dc8b0100f6b9c0fE57D6109537D5b089cDA)
             )
         );
         proofMarket.lockinWithSig(request, clientSignature, badProverSignature);
@@ -582,8 +582,7 @@ contract ProofMarketBasicTest is ProofMarketTest {
         bytes memory proverSignature = testProver.sign(request);
 
         // Attempt to lockin a request with maxPrice smaller than minPrice
-        // should revert with "maxPrice cannot be smaller than minPrice"
-        vm.expectRevert("maxPrice cannot be smaller than minPrice");
+        vm.expectRevert(abi.encodeWithSelector(IProofMarket.InvalidRequest.selector));
         if (withSig) {
             proofMarket.lockinWithSig(request, clientSignature, proverSignature);
         } else {
@@ -618,8 +617,7 @@ contract ProofMarketBasicTest is ProofMarketTest {
         bytes memory proverSignature = testProver.sign(request);
 
         // Attempt to lockin a request with rampUpPeriod greater than timeout
-        // should revert with "Request cannot expire before end of bidding period"
-        vm.expectRevert("Request cannot expire before end of bidding period");
+        vm.expectRevert(abi.encodeWithSelector(IProofMarket.InvalidRequest.selector));
         if (withSig) {
             proofMarket.lockinWithSig(request, clientSignature, proverSignature);
         } else {
@@ -794,7 +792,7 @@ contract ProofMarketBasicTest is ProofMarketTest {
 
         ProvingRequest[] memory requests = new ProvingRequest[](batchSize);
         bytes[] memory journals = new bytes[](batchSize);
-        uint96 expectedRevenue = 0;
+        uint256 expectedRevenue = 0;
         uint256 idx = 0;
         for (uint256 i = 0; i < batch.length; i++) {
             Client client = getClient(i);
@@ -803,7 +801,7 @@ contract ProofMarketBasicTest is ProofMarketTest {
                 ProvingRequest memory request = client.request(uint32(j));
 
                 // TODO: This is a fragile part of this test. It should be improved.
-                uint96 desiredPrice = uint96(1.5 ether);
+                uint256 desiredPrice = uint256(1.5 ether);
                 vm.roll(request.offer.blockAtPrice(desiredPrice));
                 expectedRevenue += desiredPrice;
 
