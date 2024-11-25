@@ -3,6 +3,8 @@ title: Request a Proof
 description: How to request a proof from the Boundless market.
 ---
 
+import PricingCalculator from "../../components/pricing-calculator";
+
 # Request a Proof
 
 Key thing to mention here: proof here means an attestation from the set verifier that the proof they requested has been verified and included. Perhaps we could call this construct a "Boundless Proof" directly to delineate between standard ZKP ready for verification, and the above representation of a proof already verified and stored in a merkle tree.
@@ -18,3 +20,9 @@ Key thing to mention here: proof here means an attestation from the set verifier
 - How to get funds back for proofs that were not fulfilled
 
 Broadcasting Proof Requests from current documentation will fill out a lot of this page.
+
+## Pricing Calculator
+
+Use this interactive calculator to get suggested request parameters based on your program's complexity and desired proof time:
+
+<PricingCalculator />
