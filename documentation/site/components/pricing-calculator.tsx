@@ -1,7 +1,9 @@
-import formatters from "@poppinss/intl-formatter";
+import NumberFlow from "@number-flow/react";
 import { Skeleton } from "@risc0/ui/skeleton";
 import { useEffect, useState } from "react";
 import { useBlockNumber, usePublicClient } from "wagmi";
+
+const SEPOLIA_CHAIN_ID = 11_155_111;
 
 type PricingInputs = {
   programCycles: number;
@@ -9,10 +11,32 @@ type PricingInputs = {
   currentBlockNumber: number | undefined;
 };
 
-const SEPOLIA_CHAIN_ID = 11155111;
+type TimingBreakdown = {
+  totalTimeMinutes: number;
+  generationTimeMinutes: number;
+  submissionTimeMinutes: number;
+  acceptanceTimeMinutes: number;
+  requiredBlocks: number;
+};
+
+function calculateE2ETime(cycles: number, blocksPerMinute: number): TimingBreakdown {
+  const cyclesPerSecond = 100_000; // 100k cycles/second
+  const submissionTimeMinutes = 2;
+  const acceptanceTimeMinutes = 3;
+  const generationTimeMinutes = cycles / cyclesPerSecond / 60;
+  const totalTimeMinutes = generationTimeMinutes + submissionTimeMinutes + acceptanceTimeMinutes;
+
+  return {
+    totalTimeMinutes,
+    generationTimeMinutes,
+    submissionTimeMinutes,
+    acceptanceTimeMinutes,
+    requiredBlocks: Math.ceil(totalTimeMinutes * blocksPerMinute),
+  };
+}
 
 const calculateSuggestion = (cycles: number, minutes: number, startBlock: number, blocksPerMinute: number) => {
-  const basePrice = (cycles / 1000000) * 0.5;
+  const basePrice = (cycles / 1_000_000) * 0.5;
 
   return {
     minPrice: basePrice,
@@ -29,7 +53,7 @@ export default function PricingCalculator() {
   const publicClient = usePublicClient({ chainId: SEPOLIA_CHAIN_ID });
   const [blocksPerMinute, setBlocksPerMinute] = useState<number | undefined>(undefined);
   const [inputs, setInputs] = useState<PricingInputs>({
-    programCycles: 1000000,
+    programCycles: 1_000_000,
     desiredTimeMinutes: 10,
     currentBlockNumber: undefined,
   });
@@ -74,10 +98,11 @@ export default function PricingCalculator() {
     blocksPerMinute && inputs.currentBlockNumber
       ? calculateSuggestion(inputs.programCycles, inputs.desiredTimeMinutes, inputs.currentBlockNumber, blocksPerMinute)
       : null;
+  const timing = blocksPerMinute ? calculateE2ETime(inputs.programCycles, blocksPerMinute) : null;
 
   return (
     <div className="my-8 rounded-lg border border-[var(--vocs-color\_border);] p-6">
-      {suggestion ? (
+      {suggestion && timing ? (
         <>
           <h3 className="mb-4 font-semibold text-lg">Request Parameters Calculator</h3>
 
@@ -139,41 +164,93 @@ export default function PricingCalculator() {
               />
             </div>
 
-            <div className="pt-4">
-              <h4 className="mb-2 font-medium">Suggested Parameters</h4>
-              <div className="rounded border border-[var(--vocs-color\_border);] bg-muted p-4">
-                <dl className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <dt>Minimum Price:</dt>
-                    <dd>{formatters.number("en-US").format(suggestion.minPrice)} ETH</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Maximum Price:</dt>
-                    <dd>{formatters.number("en-US").format(suggestion.maxPrice)} ETH</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Bidding Start Block:</dt>
-                    <dd>{formatters.number("en-US").format(suggestion.biddingStart)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Ramp-up Period:</dt>
-                    <dd>{formatters.number("en-US").format(suggestion.rampUpBlocks)} blocks</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Timeout:</dt>
-                    <dd>{formatters.number("en-US").format(suggestion.timeoutBlocks)} blocks</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Lock-in Stake:</dt>
-                    <dd>{formatters.number("en-US").format(suggestion.lockInStake)} ETH</dd>
-                  </div>
-                </dl>
+            <div className="pt-4 grid grid-cols-2 gap-4">
+              <div className="flex flex-col">
+                <h4 className="mb-2 font-medium">Suggested Parameters</h4>
+                <div className="rounded h-full border border-[var(--vocs-color\_border);] bg-muted p-4">
+                  <dl className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <dt>Minimum Price:</dt>
+                      <dd>
+                        <NumberFlow value={suggestion.minPrice} /> ETH
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Maximum Price:</dt>
+                      <dd>
+                        <NumberFlow value={suggestion.maxPrice} /> ETH
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Bidding Start Block:</dt>
+                      <dd>
+                        <NumberFlow value={suggestion.biddingStart} />
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Ramp-up Period:</dt>
+                      <dd>
+                        <NumberFlow value={suggestion.rampUpBlocks} /> blocks
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Timeout:</dt>
+                      <dd>
+                        <NumberFlow value={suggestion.timeoutBlocks} /> blocks
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Lock-in Stake:</dt>
+                      <dd>
+                        <NumberFlow value={suggestion.lockInStake} /> ETH
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+
+              <div className="flex flex-col">
+                <h4 className="mb-2 font-medium">Timing Breakdown</h4>
+                <div className="rounded h-full border border-[var(--vocs-color_border);] bg-muted p-4">
+                  <dl className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <dt>Total E2E Time:</dt>
+                      <dd>
+                        <NumberFlow value={timing.totalTimeMinutes} /> minutes
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Proof Generation:</dt>
+                      <dd>
+                        <NumberFlow value={timing.generationTimeMinutes} /> minutes
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Proof Submission:</dt>
+                      <dd>
+                        <NumberFlow value={timing.submissionTimeMinutes} /> minutes
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Proof Acceptance:</dt>
+                      <dd>
+                        <NumberFlow value={timing.acceptanceTimeMinutes} /> minutes
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>Required Blocks:</dt>
+                      <dd>
+                        <NumberFlow value={timing.requiredBlocks} /> blocks
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
               </div>
             </div>
           </div>
         </>
       ) : (
-        <Skeleton className="h-[514px] w-full" />
+        <Skeleton className="h-[532px] w-full" />
       )}
     </div>
   );
