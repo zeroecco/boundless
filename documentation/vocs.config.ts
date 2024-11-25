@@ -246,7 +246,7 @@ export default defineConfig({
   },
   theme: {
     accentColor: {
-      light: "#474444", // Forest - primary accent
+      light: "#537263", // Forest - primary accent
       dark: "#AED8C4", // Leaf - lighter accent for dark mode
     },
     variables: {
@@ -266,8 +266,8 @@ export default defineConfig({
     },
   },
   iconUrl: {
-    light: "/favicon.png",
-    dark: "/favicon-dark.png",
+    light: "/favicon.svg",
+    dark: "/favicon-dark.svg",
   },
   // banner: "Read the [Boundless Blog Article](https://risczero.com/blog/boundless-the-verifiable-compute-layer)",
   editLink: {

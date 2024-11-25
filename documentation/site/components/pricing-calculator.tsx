@@ -164,10 +164,10 @@ export default function PricingCalculator() {
               />
             </div>
 
-            <div className="pt-4 grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 pt-4">
               <div className="flex flex-col">
                 <h4 className="mb-2 font-medium">Suggested Parameters</h4>
-                <div className="rounded h-full border border-[var(--vocs-color\_border);] bg-muted p-4">
+                <div className="h-full rounded border border-[var(--vocs-color\_border);] bg-muted p-4">
                   <dl className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <dt>Minimum Price:</dt>
@@ -211,7 +211,7 @@ export default function PricingCalculator() {
 
               <div className="flex flex-col">
                 <h4 className="mb-2 font-medium">Timing Breakdown</h4>
-                <div className="rounded h-full border border-[var(--vocs-color_border);] bg-muted p-4">
+                <div className="h-full rounded border border-[var(--vocs-color_border);] bg-muted p-4">
                   <dl className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <dt>Total E2E Time:</dt>
