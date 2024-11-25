@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 use aggregation_set::{SetInclusionReceipt, SetInclusionReceiptVerifierParameters};
 use alloy::{
     network::Ethereum,
-    primitives::{aliases::U192, Address, B256, U256},
+    primitives::{Address, B256, U256},
     providers::{Provider, WalletProvider},
     transports::Transport,
 };
@@ -182,7 +182,7 @@ where
             };
 
             fulfillments.push(Fulfillment {
-                id: U192::from(*order_id),
+                id: *order_id,
                 imageId: order_img_id,
                 journal: order_journal.into(),
                 seal: seal.into(),
@@ -355,7 +355,7 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
-        primitives::{aliases::U96, FixedBytes, B256, U256},
+        primitives::{FixedBytes, B256, U256},
         providers::ProviderBuilder,
         signers::local::PrivateKeySigner,
         sol_types::SolValue,
@@ -402,8 +402,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let market_address =
-            deploy_proof_market(&signer, provider.clone(), *set_verifier.address()).await.unwrap();
+        let market_address = deploy_proof_market(
+            &signer,
+            provider.clone(),
+            *set_verifier.address(),
+            Some(prover_addr),
+        )
+        .await
+        .unwrap();
 
         let market = ProofMarketService::new(market_address, provider.clone(), prover_addr);
         market.deposit(U256::from(10000000000u64)).await.unwrap();
@@ -448,12 +454,12 @@ mod tests {
             "http://risczero.com/image".into(),
             Input { inputType: InputType::Inline, data: Default::default() },
             Offer {
-                minPrice: U96::from(2),
-                maxPrice: U96::from(4),
+                minPrice: U256::from(2),
+                maxPrice: U256::from(4),
                 biddingStart: 0,
                 timeout: 100,
                 rampUpPeriod: 1,
-                lockinStake: U96::from(10),
+                lockinStake: U256::from(10),
             },
         );
 

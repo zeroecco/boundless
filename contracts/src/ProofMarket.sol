@@ -132,7 +132,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     uint64 public constant VERSION = 1;
 
     // Mapping of request ID to lock-in state. Non-zero for requests that are locked in.
-    mapping(uint192 => RequestLock) public requestLocks;
+    mapping(uint256 => RequestLock) public requestLocks;
     // Mapping of address to account state.
     mapping(address => Account) internal accounts;
 
@@ -156,6 +156,24 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     uint256 public constant SLASHING_BURN_FRACTION_NUMERATOR = 1;
     uint256 public constant SLASHING_BURN_FRACTION_DENOMINATOR = 1;
 
+    /// @notice Allow list for the lock-in action for use in the appnet phase of public testing.
+    /// In order to focus on application developers, public prover participation is limited. In
+    /// particular, only the provers in this allow-list are able to lock-in jobs. This restriction
+    /// will be lifted, and this mapping removed, during the public testnet.
+    mapping(address => bool) appnetProverLockinAllowlist;
+
+    /// @notice When an order is fulfilled, the market takes a fee based on the price of the order.
+    /// This fraction is multiplied by the price to decide the fee.
+    /// @dev The fee is configured as a constant to avoid accessing storage and thus paying for the
+    /// gas of an SLOAD. This means the fee can only be changed by an implementation upgrade.
+    /// Note that it is currently set to zero.
+    uint256 public constant MARKET_FEE_NUMERATOR = 0;
+    uint256 public constant MARKET_FEE_DENOMINATOR = 1;
+
+    /// @notice Balance owned by the market contract itself. This balance is collected from fees,
+    /// when the fee rate is set to a non-zero value.
+    uint256 internal marketBalance;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(IRiscZeroVerifier verifier, bytes32 assessorId) {
         VERIFIER = verifier;
@@ -177,17 +195,31 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    function requestIsFulfilled(uint192 id) external view returns (bool) {
+    function addProverToAppnetAllowlist(address prover) external onlyOwner {
+        appnetProverLockinAllowlist[prover] = true;
+    }
+
+    function removeProverFromAppnetAllowlist(address prover) external onlyOwner {
+        appnetProverLockinAllowlist[prover] = false;
+    }
+
+    function requestIsFulfilled(uint256 id) external view returns (bool) {
+        if (id & (uint256(type(uint64).max) << 192) != 0) {
+            revert InvalidRequest();
+        }
         (, bool fulfilled) = accounts[address(uint160(id >> 32))].requestFlags(uint32(id));
         return fulfilled;
     }
 
-    function requestIsLocked(uint192 id) external view returns (bool) {
+    function requestIsLocked(uint256 id) external view returns (bool) {
+        if (id & (uint256(type(uint64).max) << 192) != 0) {
+            revert InvalidRequest();
+        }
         (bool locked,) = accounts[address(uint160(id >> 32))].requestFlags(uint32(id));
         return locked;
     }
 
-    function requestDeadline(uint192 id) external view returns (uint64) {
+    function requestDeadline(uint256 id) external view returns (uint64) {
         return requestLocks[id].deadline;
     }
 
@@ -198,7 +230,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
 
     /// Internal method for verifying signatures over requests. Reverts on failure.
     function verifyRequestSignature(address addr, ProvingRequest calldata request, bytes calldata signature)
-        internal
+        public
         view
     {
         bytes32 structHash = _hashTypedDataV4(request.eip712Digest());
@@ -222,7 +254,9 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
             accounts[msg.sender].balance -= value.toUint96();
         }
         (bool sent,) = msg.sender.call{value: value}("");
-        require(sent, "failed to send Ether");
+        if (!sent) {
+            revert TransferFailed();
+        }
         emit Withdrawal(msg.sender, value);
     }
 
@@ -276,7 +310,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         request.offer.requireValid();
 
         // Check the deadline and compute the current price offered by the reverse Dutch auction.
-        price = request.offer.priceAtBlock(uint64(block.number));
+        price = request.offer.priceAtBlock(uint64(block.number)).toUint96();
         deadline = request.offer.deadline();
         if (deadline < block.number) {
             revert RequestIsExpired({requestId: request.id, deadline: deadline});
@@ -298,6 +332,10 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     }
 
     function _lockinAuthed(ProvingRequest calldata request, address client, uint32 idx, address prover) internal {
+        if (!appnetProverLockinAllowlist[prover]) {
+            revert ProverNotInAppnetLockinAllowList({account: prover});
+        }
+
         (uint96 price, uint64 deadline) = _validateRequestForLockin(request, client, idx);
 
         // Deduct funds from the client and prover accounts.
@@ -311,12 +349,12 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         }
         unchecked {
             clientAccount.balance -= price;
-            proverAccount.balance -= request.offer.lockinStake;
+            proverAccount.balance -= request.offer.lockinStake.toUint96();
         }
 
         // Record the lock for the request and emit an event.
         requestLocks[request.id] =
-            RequestLock({prover: prover, price: price, deadline: deadline, stake: request.offer.lockinStake});
+            RequestLock({prover: prover, price: price, deadline: deadline, stake: request.offer.lockinStake.toUint96()});
 
         clientAccount.setRequestLocked(idx);
         emit RequestLockedin(request.id, prover);
@@ -329,13 +367,13 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         verifyRequestSignature(client, request, clientSignature);
 
         (uint96 price,) = _validateRequestForLockin(request, client, idx);
-        uint192 requestId = request.id;
 
         // Record the price in transient storage, such that the order can be filled in this same transaction.
         // NOTE: Since transient storage is cleared at the end of the transaction, we know that this
         // price will not become stale, and the request cannot expire, while this price is recorded.
         // TODO(#165): Also record a requirements checksum here when solving #165.
         uint256 packed = TransientPrice({valid: true, price: price}).pack();
+        uint256 requestId = request.id;
         assembly {
             tstore(requestId, packed)
         }
@@ -353,7 +391,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
 
         // Verify the assessor, which ensures the application proof fulfills a valid request with the given ID.
         // NOTE: Signature checks and recursive verification happen inside the assessor.
-        uint192[] memory ids = new uint192[](1);
+        uint256[] memory ids = new uint256[](1);
         ids[0] = fill.id;
         bytes32 assessorJournalDigest = sha256(
             abi.encode(
@@ -377,7 +415,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     {
         // TODO(victor): Figure out how much the memory here is costing. If it's significant, we can do some tricks to reduce memory pressure.
         bytes32[] memory claimDigests = new bytes32[](fills.length);
-        uint192[] memory ids = new uint192[](fills.length);
+        uint256[] memory ids = new uint256[](fills.length);
         for (uint256 i = 0; i < fills.length; i++) {
             ids[i] = fills[i].id;
             claimDigests[i] = ReceiptClaimLib.ok(fills[i].imageId, sha256(fills[i].journal)).digest();
@@ -438,7 +476,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     }
 
     /// Complete the fulfillment logic after having verified the app and assessor receipts.
-    function _fulfillVerified(uint192 id, address assessorProver, bool requirePayment) internal {
+    function _fulfillVerified(uint256 id, address assessorProver, bool requirePayment) internal {
         address client = ProofMarketLib.requestFrom(id);
         uint32 idx = ProofMarketLib.requestIndex(id);
 
@@ -460,7 +498,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         }
     }
 
-    function _fulfillVerifiedLocked(uint192 id, address client, uint32 idx, bool fulfilled, address assessorProver)
+    function _fulfillVerifiedLocked(uint256 id, address client, uint32 idx, bool fulfilled, address assessorProver)
         internal
         returns (bytes memory paymentError)
     {
@@ -490,10 +528,16 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         // Zero-out the lock to indicate that payment has been delivered and get a bit of a refund on gas.
         requestLocks[id] = RequestLock(address(0), uint96(0), uint64(0), uint96(0));
 
-        accounts[lock.prover].balance += lock.price + lock.stake;
+        uint96 valueToProver = lock.price + lock.stake;
+        if (MARKET_FEE_NUMERATOR > 0) {
+            uint256 fee = uint256(lock.price) * MARKET_FEE_NUMERATOR / MARKET_FEE_DENOMINATOR;
+            valueToProver -= fee.toUint96();
+            marketBalance += fee;
+        }
+        accounts[lock.prover].balance += valueToProver;
     }
 
-    function _fulfillVerifiedUnlocked(uint192 id, address client, uint32 idx, bool fulfilled, address assessorProver)
+    function _fulfillVerifiedUnlocked(uint256 id, address client, uint32 idx, bool fulfilled, address assessorProver)
         internal
         returns (bytes memory paymentError)
     {
@@ -531,10 +575,16 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         }
 
         // Pay the prover.
-        accounts[assessorProver].balance += tprice.price;
+        uint96 valueToProver = tprice.price;
+        if (MARKET_FEE_NUMERATOR > 0) {
+            uint256 fee = uint256(tprice.price) * MARKET_FEE_NUMERATOR / MARKET_FEE_DENOMINATOR;
+            valueToProver -= fee.toUint96();
+            marketBalance += fee;
+        }
+        accounts[assessorProver].balance += valueToProver;
     }
 
-    function slash(uint192 requestId) external {
+    function slash(uint256 requestId) external {
         address client = ProofMarketLib.requestFrom(requestId);
         uint32 idx = ProofMarketLib.requestIndex(requestId);
         (bool locked,) = accounts[client].requestFlags(idx);
@@ -566,7 +616,9 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
         // Return the price to the client, plus the transfer value. Then burn the burn value.
         accounts[client].balance += lock.price + transferValue.toUint96();
         (bool sent,) = payable(address(0)).call{value: uint256(burnValue)}("");
-        require(sent, "Failed to burn Ether");
+        if (!sent) {
+            revert TransferFailed();
+        }
 
         emit ProverSlashed(requestId, burnValue, transferValue);
     }
@@ -602,7 +654,9 @@ library MerkleProofish {
     // Compute the root of the Merkle tree given all of its leaves.
     // Assumes that the array of leaves is no longer needed, and can be overwritten.
     function processTree(bytes32[] memory leaves) internal pure returns (bytes32 root) {
-        require(leaves.length > 0, "Leaves array must contain at least one element");
+        if (leaves.length == 0) {
+            revert IProofMarket.InvalidRequest();
+        }
 
         // If there's only one leaf, the root is the leaf itself
         if (leaves.length == 1) {

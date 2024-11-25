@@ -253,7 +253,7 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
-        primitives::{aliases::U96, utils, Address, B256},
+        primitives::{utils, Address, B256, U256},
         providers::{ext::AnvilApi, ProviderBuilder},
         signers::local::PrivateKeySigner,
     };
@@ -277,12 +277,18 @@ mod tests {
         );
 
         let market_address =
-            deploy_proof_market(&signer, provider.clone(), Address::ZERO).await.unwrap();
+            deploy_proof_market(&signer, provider.clone(), Address::ZERO, Some(signer.address()))
+                .await
+                .unwrap();
         let proof_market = ProofMarketService::new(
             market_address,
             provider.clone(),
             provider.default_signer_address(),
         );
+        proof_market
+            .add_prover_to_appnet_allowlist(provider.default_signer_address())
+            .await
+            .unwrap();
         proof_market.deposit(utils::parse_ether("10").unwrap()).await.unwrap();
 
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
@@ -305,12 +311,12 @@ mod tests {
             "http://risczero.com/image".into(),
             Input { inputType: InputType::Inline, data: Default::default() },
             Offer {
-                minPrice: U96::from(min_price),
-                maxPrice: U96::from(max_price),
+                minPrice: U256::from(min_price),
+                maxPrice: U256::from(max_price),
                 biddingStart: 0,
                 rampUpPeriod: 1,
                 timeout: 100,
-                lockinStake: U96::from(0),
+                lockinStake: U256::from(0),
             },
         );
         let order_id = U256::from(request.id);
@@ -376,7 +382,9 @@ mod tests {
         );
 
         let market_address =
-            deploy_proof_market(&signer, provider.clone(), Address::ZERO).await.unwrap();
+            deploy_proof_market(&signer, provider.clone(), Address::ZERO, Some(signer.address()))
+                .await
+                .unwrap();
         let proof_market = ProofMarketService::new(
             market_address,
             provider.clone(),
@@ -404,12 +412,12 @@ mod tests {
             "http://risczero.com/image".into(),
             Input { inputType: InputType::Inline, data: Default::default() },
             Offer {
-                minPrice: U96::from(min_price),
-                maxPrice: U96::from(max_price),
+                minPrice: U256::from(min_price),
+                maxPrice: U256::from(max_price),
                 biddingStart: 0,
                 rampUpPeriod: 1,
                 timeout: 100,
-                lockinStake: U96::from(0),
+                lockinStake: U256::from(0),
             },
         );
         let order_id = U256::from(request.id);

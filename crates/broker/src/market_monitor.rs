@@ -258,7 +258,7 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
-        primitives::{aliases::U96, Address, B256, U256},
+        primitives::{Address, B256, U256},
         providers::{ext::AnvilApi, ProviderBuilder, WalletProvider},
         signers::local::PrivateKeySigner,
     };
@@ -277,7 +277,9 @@ mod tests {
             .on_http(anvil.endpoint().parse().unwrap());
 
         let market_address =
-            deploy_proof_market(&signer, provider.clone(), Address::ZERO).await.unwrap();
+            deploy_proof_market(&signer, provider.clone(), Address::ZERO, Some(signer.address()))
+                .await
+                .unwrap();
         let proof_market = ProofMarketService::new(
             market_address,
             provider.clone(),
@@ -298,12 +300,12 @@ mod tests {
             imageUrl: "test".to_string(),
             input: Input { inputType: InputType::Url, data: Default::default() },
             offer: Offer {
-                minPrice: U96::from(min_price),
-                maxPrice: U96::from(max_price),
+                minPrice: U256::from(min_price),
+                maxPrice: U256::from(max_price),
                 biddingStart: 0,
                 timeout: 1000,
                 rampUpPeriod: 1,
-                lockinStake: U96::from(0),
+                lockinStake: U256::from(0),
             },
         };
 
