@@ -23,7 +23,7 @@ use tokio_tungstenite::{
 };
 use utoipa::ToSchema;
 
-use crate::contracts::{ProvingRequest, RequestError};
+use crate::contracts::{ProofRequest, RequestError};
 
 pub const ORDER_SUBMISSION_PATH: &str = "/api/submit_order";
 pub const ORDER_LIST_PATH: &str = "/api/orders";
@@ -59,14 +59,14 @@ pub enum OrderError {
     RequestError(#[from] RequestError),
 }
 
-/// Order struct, containing a ProvingRequest and its Signature
+/// Order struct, containing a ProofRequest and its Signature
 ///
-/// The contents of this struct match the calldata of the `submitOrder` function in the `ProofMarket` contract.
+/// The contents of this struct match the calldata of the `submitOrder` function in the `BoundlessMarket` contract.
 #[derive(Serialize, Deserialize, ToSchema, Debug, Clone, PartialEq)]
 pub struct Order {
     /// Order request
     #[schema(value_type = Object)]
-    pub request: ProvingRequest,
+    pub request: ProofRequest,
     /// Order signature
     #[schema(value_type = Object)]
     pub signature: Signature,
@@ -100,7 +100,7 @@ pub struct SubmitOrderRes {
 
 impl Order {
     /// Create a new Order
-    pub fn new(request: ProvingRequest, signature: Signature) -> Self {
+    pub fn new(request: ProofRequest, signature: Signature) -> Self {
         Self { request, signature }
     }
 
@@ -173,8 +173,8 @@ pub struct Client {
     pub base_url: Url,
     /// Signer for signing requests
     pub signer: LocalSigner<SigningKey>,
-    /// Address of the proof market contract
-    pub proof_market_address: Address,
+    /// Address of the market contract
+    pub boundless_market_address: Address,
     /// Chain ID of the network
     pub chain_id: u64,
 }
@@ -184,19 +184,25 @@ impl Client {
     pub fn new(
         base_url: Url,
         signer: LocalSigner<SigningKey>,
-        proof_market_address: Address,
+        boundless_market_address: Address,
         chain_id: u64,
     ) -> Self {
-        Self { client: reqwest::Client::new(), base_url, signer, proof_market_address, chain_id }
+        Self {
+            client: reqwest::Client::new(),
+            base_url,
+            signer,
+            boundless_market_address,
+            chain_id,
+        }
     }
 
-    /// Submit a proving request to the order stream server
-    pub async fn submit_request(&self, request: &ProvingRequest) -> Result<Order> {
+    /// Submit a proof request to the order stream server
+    pub async fn submit_request(&self, request: &ProofRequest) -> Result<Order> {
         let url = self.base_url.join(ORDER_SUBMISSION_PATH)?;
         let signature =
-            request.sign_request(&self.signer, self.proof_market_address, self.chain_id)?;
+            request.sign_request(&self.signer, self.boundless_market_address, self.chain_id)?;
         let order = Order { request: request.clone(), signature };
-        order.validate(self.proof_market_address, self.chain_id)?;
+        order.validate(self.boundless_market_address, self.chain_id)?;
         let order_json = serde_json::to_value(&order)?;
         let response = self
             .client

@@ -107,9 +107,9 @@ pub struct Args {
     #[clap(long, env, default_value = "http://localhost:8545")]
     rpc_url: Url,
 
-    /// Address of the ProofMarket contract
+    /// Address of the BoundlessMarket contract
     #[clap(long, env)]
-    proof_market_address: Address,
+    boundless_market_address: Address,
 
     /// Minimum balance required to connect to the WebSocket
     #[clap(long, value_parser = parse_ether)]
@@ -137,7 +137,7 @@ pub struct Args {
 pub struct Config {
     /// RPC URL for the Ethereum node
     pub rpc_url: Url,
-    /// Address of the ProofMarket contract
+    /// Address of the BoundlessMarket contract
     pub market_address: Address,
     /// Minimum balance required to connect to the WebSocket
     pub min_balance: U256,
@@ -155,7 +155,7 @@ impl From<&Args> for Config {
     fn from(args: &Args) -> Self {
         Self {
             rpc_url: args.rpc_url.clone(),
-            market_address: args.proof_market_address,
+            market_address: args.boundless_market_address,
             min_balance: args.min_balance,
             max_connections: args.max_connections,
             queue_size: args.queue_size,
@@ -293,7 +293,7 @@ mod tests {
         primitives::{B256, U256},
     };
     use boundless_market::{
-        contracts::{test_utils::TestCtx, Input, Offer, Predicate, ProvingRequest, Requirements},
+        contracts::{test_utils::TestCtx, Input, Offer, Predicate, ProofRequest, Requirements},
         order_stream_client::Client,
     };
     use futures_util::StreamExt;
@@ -305,8 +305,8 @@ mod tests {
     };
     use tokio::task::JoinHandle;
 
-    fn new_request(idx: u32, addr: &Address) -> ProvingRequest {
-        ProvingRequest::new(
+    fn new_request(idx: u32, addr: &Address) -> ProofRequest {
+        ProofRequest::new(
             idx,
             addr,
             Requirements { imageId: B256::from([1u8; 32]), predicate: Predicate::default() },

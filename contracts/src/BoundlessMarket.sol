@@ -15,8 +15,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {IRiscZeroVerifier, Receipt, ReceiptClaim, ReceiptClaimLib} from "risc0/IRiscZeroVerifier.sol";
 import {IRiscZeroSetVerifier} from "./IRiscZeroSetVerifier.sol";
 
-import {IProofMarket, ProvingRequest, Offer, Fulfillment, AssessorJournal} from "./IProofMarket.sol";
-import {ProofMarketLib} from "./ProofMarketLib.sol";
+import {IBoundlessMarket, ProofRequest, Offer, Fulfillment, AssessorJournal} from "./IBoundlessMarket.sol";
+import {BoundlessMarketLib} from "./BoundlessMarketLib.sol";
 
 uint256 constant REQUEST_FLAGS_BITWIDTH = 2;
 
@@ -120,10 +120,16 @@ library TransientPriceLib {
     }
 }
 
-contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2StepUpgradeable, UUPSUpgradeable {
+contract BoundlessMarket is
+    IBoundlessMarket,
+    Initializable,
+    EIP712Upgradeable,
+    Ownable2StepUpgradeable,
+    UUPSUpgradeable
+{
     using AccountLib for Account;
-    using ProofMarketLib for Offer;
-    using ProofMarketLib for ProvingRequest;
+    using BoundlessMarketLib for Offer;
+    using BoundlessMarketLib for ProofRequest;
     using ReceiptClaimLib for ReceiptClaim;
     using SafeCast for uint256;
     using TransientPriceLib for TransientPrice;
@@ -185,7 +191,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     function initialize(address initialOwner, string calldata _imageUrl) external initializer {
         __Ownable_init(initialOwner);
         __UUPSUpgradeable_init();
-        __EIP712_init(ProofMarketLib.EIP712_DOMAIN, ProofMarketLib.EIP712_DOMAIN_VERSION);
+        __EIP712_init(BoundlessMarketLib.EIP712_DOMAIN, BoundlessMarketLib.EIP712_DOMAIN_VERSION);
         imageUrl = _imageUrl;
     }
 
@@ -229,7 +235,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     }
 
     /// Internal method for verifying signatures over requests. Reverts on failure.
-    function verifyRequestSignature(address addr, ProvingRequest calldata request, bytes calldata signature)
+    function verifyRequestSignature(address addr, ProofRequest calldata request, bytes calldata signature)
         public
         view
         returns (bytes32 requestDigest)
@@ -270,26 +276,28 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     // NOTE: We could verify the client signature here, but this adds about 18k gas (with a naive
     // implementation), doubling the cost of calling this method. It is not required for protocol
     // safety as the signature is checked during lockin, and during fulfillment (by the assessor).
-    function submitRequest(ProvingRequest calldata request, bytes calldata clientSignature) external payable {
+    function submitRequest(ProofRequest calldata request, bytes calldata clientSignature) external payable {
         if (msg.value > 0) {
             deposit();
         }
         emit RequestSubmitted(request.id, request, clientSignature);
     }
 
-    function lockin(ProvingRequest calldata request, bytes calldata clientSignature) external {
-        (address client, uint32 idx) = (ProofMarketLib.requestFrom(request.id), ProofMarketLib.requestIndex(request.id));
+    function lockin(ProofRequest calldata request, bytes calldata clientSignature) external {
+        (address client, uint32 idx) =
+            (BoundlessMarketLib.requestFrom(request.id), BoundlessMarketLib.requestIndex(request.id));
         (bytes32 requestDigest) = verifyRequestSignature(client, request, clientSignature);
 
         _lockinAuthed(request, requestDigest, client, idx, msg.sender);
     }
 
     function lockinWithSig(
-        ProvingRequest calldata request,
+        ProofRequest calldata request,
         bytes calldata clientSignature,
         bytes calldata proverSignature
     ) external {
-        (address client, uint32 idx) = (ProofMarketLib.requestFrom(request.id), ProofMarketLib.requestIndex(request.id));
+        (address client, uint32 idx) =
+            (BoundlessMarketLib.requestFrom(request.id), BoundlessMarketLib.requestIndex(request.id));
 
         // Recover the prover address and require the client address to equal the address part of the ID.
         bytes32 requestDigest = _hashTypedDataV4(request.eip712Digest());
@@ -303,7 +311,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
 
     /// Check that the request is valid, and not already locked or fulfilled by another prover.
     /// Returns the auction price and deadline for the request.
-    function _validateRequestForLockin(ProvingRequest calldata request, address client, uint32 idx)
+    function _validateRequestForLockin(ProofRequest calldata request, address client, uint32 idx)
         internal
         view
         returns (uint96 price, uint64 deadline)
@@ -334,7 +342,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     }
 
     function _lockinAuthed(
-        ProvingRequest calldata request,
+        ProofRequest calldata request,
         bytes32 requestDigest,
         address client,
         uint32 idx,
@@ -375,8 +383,9 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
 
     /// Validates the request and records the price to transient storage such that it can be
     /// fulfilled within the same transaction without taking a lock on it.
-    function priceRequest(ProvingRequest calldata request, bytes calldata clientSignature) public {
-        (address client, uint32 idx) = (ProofMarketLib.requestFrom(request.id), ProofMarketLib.requestIndex(request.id));
+    function priceRequest(ProofRequest calldata request, bytes calldata clientSignature) public {
+        (address client, uint32 idx) =
+            (BoundlessMarketLib.requestFrom(request.id), BoundlessMarketLib.requestIndex(request.id));
         (bytes32 requestDigest) = verifyRequestSignature(client, request, clientSignature);
 
         (uint96 price,) = _validateRequestForLockin(request, client, idx);
@@ -459,7 +468,7 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     }
 
     function priceAndFulfillBatch(
-        ProvingRequest[] calldata requests,
+        ProofRequest[] calldata requests,
         bytes[] calldata clientSignatures,
         Fulfillment[] calldata fills,
         bytes calldata assessorSeal,
@@ -475,8 +484,8 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     function _fulfillVerified(uint256 id, bytes32 requestDigest, address assessorProver, bool requirePayment)
         internal
     {
-        address client = ProofMarketLib.requestFrom(id);
-        uint32 idx = ProofMarketLib.requestIndex(id);
+        address client = BoundlessMarketLib.requestFrom(id);
+        uint32 idx = BoundlessMarketLib.requestIndex(id);
 
         (bool locked, bool fulfilled) = accounts[client].requestFlags(idx);
 
@@ -596,8 +605,8 @@ contract ProofMarket is IProofMarket, Initializable, EIP712Upgradeable, Ownable2
     }
 
     function slash(uint256 requestId) external {
-        address client = ProofMarketLib.requestFrom(requestId);
-        uint32 idx = ProofMarketLib.requestIndex(requestId);
+        address client = BoundlessMarketLib.requestFrom(requestId);
+        uint32 idx = BoundlessMarketLib.requestIndex(requestId);
         (bool locked,) = accounts[client].requestFlags(idx);
 
         // Ensure the request is locked, and fetch the lock.
@@ -666,7 +675,7 @@ library MerkleProofish {
     // Assumes that the array of leaves is no longer needed, and can be overwritten.
     function processTree(bytes32[] memory leaves) internal pure returns (bytes32 root) {
         if (leaves.length == 0) {
-            revert IProofMarket.InvalidRequest();
+            revert IBoundlessMarket.InvalidRequest();
         }
 
         // If there's only one leaf, the root is the leaf itself
