@@ -4,7 +4,7 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{serialize_obj, COPROC_CB_PATH, RECEIPT_PATH},
+    tasks::{serialize_obj, KECCAK_RECEIPT_PATH, RECEIPT_PATH},
     Agent,
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -27,11 +27,16 @@ fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
 pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result<()> {
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
 
-    let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
-    let keccak_input: Vec<u8> = conn
+    let keccak_input_path =
+        format!("job:{job_id}:{}:{}", KECCAK_RECEIPT_PATH, request.claim_digest);
+    let keccak_input_bytes: Vec<u8> = conn
         .get::<_, Vec<u8>>(&keccak_input_path)
         .await
         .with_context(|| format!("segment data not found for segment key: {keccak_input_path}"))?;
+
+    // Deserialize bytes back to the expected type
+    let keccak_input: Vec<[u64; 25]> =
+        bincode::deserialize(&keccak_input_bytes).context("Failed to deserialize keccak input")?;
 
     let keccak_req = ProveKeccakRequest {
         claim_digest: request.claim_digest,
@@ -61,11 +66,22 @@ pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result
     redis::set_key_with_expiry(
         &mut conn,
         &receipts_key,
-        keccak_receipt_bytes,
+        keccak_receipt_bytes.clone(),
         Some(agent.args.redis_ttl),
     )
     .await
     .context("Failed to write keccak receipt to redis")?;
+
+    let keccak_index_key =
+        format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{}", request.left_or_right_index);
+    redis::set_key_with_expiry(
+        &mut conn,
+        &keccak_index_key,
+        keccak_receipt_bytes,
+        Some(agent.args.redis_ttl),
+    )
+    .await
+    .context("Failed to write indexed keccak receipt to redis")?;
 
     tracing::info!("Completed keccak proving {}", request.claim_digest);
 
