@@ -5,16 +5,20 @@ version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
+publish = false
+
+[package.metadata.release]
+release = false
 
 [dependencies]
 alloy = { workspace = true, features = ["network", "providers", "transports", "sol-types", "contract", "signers", "signer-local", "rpc", "rpc-types"] }
 alloy-chains = "0.1"
 anyhow = { workspace = true }
-assessor = { workspace = true }
 async-channel = "2.3"
 async-trait = { workspace = true }
 bincode = { workspace = true }
 bonsai-sdk = { workspace = true }
+boundless-assessor = { workspace = true }
 boundless-market = { workspace = true }
 bytemuck = { workspace = true }
 chrono = { workspace = true }

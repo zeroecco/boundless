@@ -1070,23 +1070,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assessor"
-version = "0.4.0"
-dependencies = [
- "alloy",
- "alloy-primitives",
- "alloy-sol-types",
- "anyhow",
- "boundless-market",
- "guest-assessor",
- "guest-util",
- "postcard",
- "risc0-zkvm",
- "serde",
- "test-log",
-]
-
-[[package]]
 name = "async-attributes"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1909,6 +1892,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "boundless-assessor"
+version = "0.4.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "boundless-market",
+ "guest-assessor",
+ "guest-util",
+ "postcard",
+ "risc0-zkvm",
+ "serde",
+ "test-log",
+]
+
+[[package]]
+name = "boundless-cli"
+version = "0.4.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "boundless-assessor",
+ "boundless-market",
+ "bytemuck",
+ "clap",
+ "dotenvy",
+ "guest-assessor",
+ "guest-set-builder",
+ "guest-util",
+ "hex",
+ "libc",
+ "reqwest",
+ "risc0-aggregation",
+ "risc0-ethereum-contracts",
+ "risc0-zkvm",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "tracing-test",
+ "url",
+]
+
+[[package]]
 name = "boundless-market"
 version = "0.4.0"
 dependencies = [
@@ -1923,7 +1953,6 @@ dependencies = [
  "bytemuck",
  "chrono",
  "clap",
- "dotenvy",
  "futures-util",
  "guest-assessor",
  "guest-set-builder",
@@ -1936,7 +1965,6 @@ dependencies = [
  "risc0-zkvm",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2",
  "siwe",
  "tempfile",
@@ -1952,12 +1980,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "boundless-prover"
+name = "boundless-order-generator"
 version = "0.4.0"
 dependencies = [
  "alloy",
  "anyhow",
- "assessor",
  "boundless-market",
  "bytemuck",
  "clap",
@@ -1966,15 +1993,13 @@ dependencies = [
  "guest-set-builder",
  "guest-util",
  "hex",
- "libc",
  "reqwest",
- "risc0-aggregation",
- "risc0-ethereum-contracts",
  "risc0-zkvm",
  "serde",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "tracing-test",
  "url",
 ]
 
@@ -1985,11 +2010,11 @@ dependencies = [
  "alloy",
  "alloy-chains",
  "anyhow",
- "assessor",
  "async-channel 2.3.1",
  "async-trait",
  "bincode",
  "bonsai-sdk",
+ "boundless-assessor",
  "boundless-market",
  "broker",
  "bytemuck",

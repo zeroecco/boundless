@@ -1,10 +1,15 @@
 [package]
 name = "boundless-market"
+description = "SDK for the Boundless Market, part of the universal ZK protocol"
 resolver = "2"
 version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 alloy-primitives = { workspace = true }
@@ -23,8 +28,7 @@ async-stream = { workspace = true }
 async-trait = "0.1"
 aws-sdk-s3 = "1.34"
 bytemuck = { workspace = true }
-clap = { workspace = true, optional = true }
-dotenvy = { workspace = true, optional = true }
+clap = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
@@ -33,7 +37,6 @@ risc0-aggregation = { workspace = true }
 risc0-ethereum-contracts = { workspace = true, features = ["unstable"] }
 risc0-zkvm = { workspace = true, features = ["std", "client"] }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true, optional = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
@@ -43,14 +46,6 @@ siwe = { version = "0.6", features = ["serde"] }
 chrono = { workspace = true }
 time = "0.3"
 utoipa = { workspace = true }
-
-[[bin]]
-name = "cli"
-required-features = ["cli"]
-
-[[bin]]
-name = "order-generator"
-required-features = ["cli"]
 
 [dev-dependencies]
 boundless-market = { path = ".", features = ["test-utils"] }
@@ -63,6 +58,5 @@ tracing-test = { workspace = true }
 serde_json = { workspace = true }
 
 [features]
-cli = ["alloy/rpc-types", "dep:clap", "dep:dotenvy", "dep:serde_yaml", "tokio/rt-multi-thread"]
-default = ["cli"]
+default = []
 test-utils = []
