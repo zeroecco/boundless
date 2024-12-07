@@ -49,8 +49,8 @@ jobs:
       - name: forge build
         run: forge build
 
-      - name: cargo build
-        run: cargo build
+      - name: cargo install boundless-cli
+        run: cargo install boundless-cli --path crates/boundless-cli
 
       - name: forge test
         run: forge test -vvv --fork-url="$RPC_URL"

@@ -135,16 +135,9 @@ contract DeploymentTest is Test {
         (, string memory setBuilderUrl) = setVerifier.imageInfo();
         (, string memory assessorUrl) = boundlessMarket.imageInfo();
 
-        string[] memory argv = new string[](23);
+        string[] memory argv = new string[](15);
         uint256 i = 0;
-        argv[i++] = "cargo";
-        argv[i++] = "run";
-        argv[i++] = "--manifest-path";
-        argv[i++] = "Cargo.toml";
-        argv[i++] = "--bin";
         argv[i++] = "boundless-ffi";
-        argv[i++] = "-q";
-        argv[i++] = "--";
         argv[i++] = "--set-builder-url";
         argv[i++] = setBuilderUrl;
         argv[i++] = "--assessor-url";
@@ -168,7 +161,7 @@ contract DeploymentTest is Test {
         emit IBoundlessMarket.RequestFulfilled(request.id);
         vm.expectEmit(true, true, true, false);
         emit IBoundlessMarket.ProofDelivered(request.id, hex"", hex"");
-        
+
         boundlessMarket.priceAndFulfillBatch(
             requests, clientSignatures, result.fills, result.assessorSeal, address(testProver)
         );
