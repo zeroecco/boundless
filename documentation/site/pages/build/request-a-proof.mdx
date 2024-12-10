@@ -72,6 +72,10 @@ Similar to the program executable, the program inputs are uploaded to a public H
 let image_url = boundless_client.upload_input(&input_bytes).await?;
 ```
 
+Inputs can also be included directly into the request instead as in-line input.
+When submitting requests onchain, this will cost more gas if the inputs are large.
+The off-chain order-stream service also places limits on the size of in-line input.
+
 > Relevant links: [BuiltInStorageProvider](https://docs.rs/boundless-market/latest/boundless_market/storage/enum.BuiltinStorageProvider.html), [Pinata](https://pinata.cloud), [Get JWT Credentials from Pinata](https://docs.pinata.cloud/account-management/api-keys), [upload\_image for PinataStorageProvider](https://docs.rs/boundless-market/latest/boundless_market/storage/struct.PinataStorageProvider.html)
 
 ### 4. Execute the Program to Estimate Cycles and to Get the Journal
