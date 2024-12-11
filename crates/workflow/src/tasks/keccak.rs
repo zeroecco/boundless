@@ -16,7 +16,7 @@ use workflow_common::KeccakReq;
 pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result<()> {
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
 
-    let keccak_input_path = format!("{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
+    let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
     let keccak_input: Vec<u8> = conn
         .get::<_, Vec<u8>>(&keccak_input_path)
         .await
@@ -46,7 +46,7 @@ pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result
     let job_prefix = format!("job:{job_id}");
     let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}:{claim_digest}");
     let keccak_receipt_bytes =
-        serialize_obj(&keccak_receipt).context("Failed to seralize keccak receipt")?;
+        serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
     redis::set_key_with_expiry(
         &mut conn,
         &receipts_key,
