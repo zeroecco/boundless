@@ -14,8 +14,8 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use risc0_zkvm::{
-    compute_image_id, sha::Digestible, CoprocessorCallback, ExecutorEnv, ExecutorImpl, Journal,
-    NullSegmentRef, ProveKeccakRequest, ProveZkrRequest, Receipt, Segment,
+    compute_image_id, sha::Digestible, CoprocessorCallback, ExecutorEnv, ExecutorImpl,
+    InnerReceipt, Journal, NullSegmentRef, ProveKeccakRequest, ProveZkrRequest, Receipt, Segment,
 };
 use sqlx::postgres::PgPool;
 use taskdb::planner::{
@@ -274,17 +274,27 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
         let receipt: Receipt =
             bincode::deserialize(&receipt_bytes).context("Failed to decode assumption Receipt")?;
 
+        assumption_receipts.push(receipt.clone());
+
         let assumption_claim = receipt.inner.claim()?.digest().to_string();
+
+        let succinct_receipt = match receipt.inner {
+            InnerReceipt::Succinct(inner) => inner,
+            _ => bail!("Invalid assumption receipt, not succinct"),
+        };
+        let succinct_receipt = succinct_receipt.into_unknown();
+        let succinct_receipt_bytes = serialize_obj(&succinct_receipt)
+            .context("Failed to serialize succinct assumption receipt")?;
+
         let assumption_key = format!("{receipts_key}:{assumption_claim}");
         redis::set_key_with_expiry(
             &mut conn,
             &assumption_key,
-            receipt_bytes,
+            succinct_receipt_bytes,
             Some(agent.args.redis_ttl),
         )
         .await
         .context("Failed to put assumption claim in redis")?;
-        assumption_receipts.push(receipt);
     }
 
     // Set the exec limit in 1 million cycle increments
