@@ -119,6 +119,12 @@ enum Command {
         /// The image id of the original request
         image_id: B256,
     },
+    GetSetInclusionReceipt {
+        /// The proof request identifier
+        request_id: U256,
+        /// The image id of the request
+        image_id: B256,
+    },
     /// Get the status of a given request
     Status {
         /// The proof request identifier
@@ -371,6 +377,23 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 .await
                 .map_err(|_| anyhow::anyhow!("Verification failed"))?;
             tracing::info!("Proof for request id 0x{request_id:x} verified successfully.");
+        }
+        Command::GetSetInclusionReceipt { request_id, image_id } => {
+            let client = ClientBuilder::default()
+                .with_private_key(args.private_key.clone())
+                .with_rpc_url(args.rpc_url.clone())
+                .with_boundless_market_address(args.boundless_market_address)
+                .with_set_verifier_address(args.set_verifier_address)
+                .with_storage_provider_config(Some(StorageProviderConfig::dev_mode()))
+                .with_timeout(args.tx_timeout)
+                .build()
+                .await?;
+            let (journal, receipt) = client.get_set_inclusion_receipt(request_id, image_id).await?;
+            tracing::info!(
+                "Journal: {} - Receipt: {}",
+                serde_json::to_string_pretty(&journal)?,
+                serde_json::to_string_pretty(&receipt)?
+            );
         }
         Command::Status { request_id, expires_at } => {
             let status = boundless_market.get_status(request_id, expires_at).await?;
@@ -659,18 +682,13 @@ where
     );
 
     if wait {
-        let (journal, receipt) = client
-            .wait_for_set_inclusion_receipt(
-                request_id,
-                Duration::from_secs(5),
-                expires_at,
-                request.requirements.imageId,
-            )
+        let (journal, seal) = client
+            .wait_for_request_fulfillment(request_id, Duration::from_secs(5), expires_at)
             .await?;
         tracing::info!(
             "Journal: {} - Seal: {}",
             serde_json::to_string_pretty(&journal)?,
-            serde_json::to_string_pretty(&Bytes::from(receipt.without_root().abi_encode_seal()?))?
+            serde_json::to_string_pretty(&seal)?
         );
     };
     Ok(Some(request_id))

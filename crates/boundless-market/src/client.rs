@@ -372,17 +372,25 @@ where
     ///
     /// The check interval is the time between each check for fulfillment.
     /// The timeout is the maximum time to wait for the request to be fulfilled.
-    pub async fn wait_for_set_inclusion_receipt(
+    pub async fn wait_for_request_fulfillment(
         &self,
         request_id: U256,
         check_interval: std::time::Duration,
         expires_at: u64,
-        image_id: B256,
-    ) -> Result<(Bytes, SetInclusionReceipt<ReceiptClaim>), ClientError> {
-        let (journal, seal) = self
+    ) -> Result<(Bytes, Bytes), ClientError> {
+        Ok(self
             .boundless_market
             .wait_for_request_fulfillment(request_id, check_interval, expires_at)
-            .await?;
+            .await?)
+    }
+
+    /// Get the [SetInclusionReceipt] for a request.
+    pub async fn get_set_inclusion_receipt(
+        &self,
+        request_id: U256,
+        image_id: B256,
+    ) -> Result<(Bytes, SetInclusionReceipt<ReceiptClaim>), ClientError> {
+        let (journal, seal) = self.boundless_market.get_request_fulfillment(request_id).await?;
 
         let path = if seal.to_vec().len() > 4 {
             let agg_seal_bytes = seal.to_vec();
