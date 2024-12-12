@@ -41,7 +41,7 @@ use risc0_aggregation::{
 use risc0_ethereum_contracts::groth16;
 use risc0_zkvm::{
     sha::{Digest, Digestible},
-    MaybePruned, ReceiptClaim,
+    ReceiptClaim,
 };
 use url::Url;
 
@@ -422,8 +422,9 @@ where
 
         let root_receipt = groth16::decode_seal(
             root_seal,
-            MaybePruned::Value(aggregation_set_receipt_claim),
+            aggregation_set_receipt_claim,
             aggregation_set_journal,
+            None,
         )?;
 
         root_receipt.verify(set_builder_id).unwrap();
