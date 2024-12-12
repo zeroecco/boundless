@@ -23,10 +23,18 @@ use alloy::{
     network::Ethereum,
     primitives::{Address, Bytes, B256},
     providers::Provider,
+    sol_types::SolValue,
     transports::Transport,
 };
 use anyhow::{bail, Context, Result};
-use risc0_ethereum_contracts::IRiscZeroVerifier;
+use risc0_aggregation::{
+    merkle_path_root, GuestOutput, Seal, SetInclusionReceipt, SetInclusionReceiptVerifierParameters,
+};
+use risc0_ethereum_contracts::{groth16, IRiscZeroVerifier};
+use risc0_zkvm::{
+    sha::{Digest, Digestible},
+    Groth16ReceiptVerifierParameters, ReceiptClaim,
+};
 
 #[derive(Clone)]
 pub struct SetVerifierService<T, P> {
@@ -171,4 +179,57 @@ where
         // Return error if no logs are found after all iterations
         bail!("VerifiedRoot event not found for root {:?}", root);
     }
+
+    /// Decodes a seal into a [SetInclusionReceipt] including a [Grot16Receipt] as its root.
+    pub async fn decode_seal(
+        &self,
+        seal: Bytes,
+        claim: ReceiptClaim,
+        groth16_verifier_parameters: Option<Groth16ReceiptVerifierParameters>,
+    ) -> Result<SetInclusionReceipt<ReceiptClaim>> {
+        let set_builder_id = Digest::from_bytes(self.image_info().await?.0 .0);
+        let verifier_parameters =
+            SetInclusionReceiptVerifierParameters { image_id: set_builder_id };
+        let path = extract_path(&seal)?;
+        let root = merkle_path_root(&claim.digest(), &path);
+        let root_seal = self.get_verified_root_seal(<[u8; 32]>::from(root).into()).await?;
+
+        let aggregation_set_journal = GuestOutput::new(set_builder_id, root).abi_encode();
+        let aggregation_set_receipt_claim =
+            ReceiptClaim::ok(set_builder_id, aggregation_set_journal.clone());
+
+        let root_receipt = groth16::decode_seal(
+            root_seal,
+            aggregation_set_receipt_claim,
+            aggregation_set_journal,
+            groth16_verifier_parameters,
+        )?;
+
+        let receipt = SetInclusionReceipt::from_path_with_verifier_params(
+            claim.clone(),
+            path.clone(),
+            verifier_parameters.digest(),
+        )
+        .with_root(root_receipt);
+
+        Ok(receipt)
+    }
+}
+
+fn extract_path(seal: &[u8]) -> Result<Vec<Digest>> {
+    // Early return if seal is too short to contain a selector
+    if seal.len() <= 4 {
+        return Ok(Vec::new());
+    }
+
+    // Skip the first 4 bytes (selector) and decode the seal
+    let aggregation_seal = <Seal>::abi_decode(&seal[4..], true)
+        .context("Failed to decode aggregation seal from bytes")?;
+
+    // Convert each path element to a Digest
+    aggregation_seal
+        .path
+        .iter()
+        .map(|x| Digest::try_from(x.as_slice()).context("Invalid digest in path"))
+        .collect()
 }

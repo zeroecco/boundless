@@ -29,20 +29,13 @@ use alloy::{
         k256::ecdsa::SigningKey,
         local::{LocalSigner, PrivateKeySigner},
     },
-    sol_types::SolValue,
     transports::{http::Http, Transport},
 };
 use alloy_primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client as HttpClient;
-use risc0_aggregation::{
-    merkle_path_root, GuestOutput, Seal, SetInclusionReceipt, SetInclusionReceiptVerifierParameters,
-};
-use risc0_ethereum_contracts::groth16;
-use risc0_zkvm::{
-    sha::{Digest, Digestible},
-    ReceiptClaim,
-};
+use risc0_aggregation::SetInclusionReceipt;
+use risc0_zkvm::{sha::Digest, ReceiptClaim};
 use url::Url;
 
 use crate::{
@@ -390,52 +383,8 @@ where
         image_id: B256,
     ) -> Result<(Bytes, SetInclusionReceipt<ReceiptClaim>), ClientError> {
         let (journal, seal) = self.boundless_market.get_request_fulfillment(request_id).await?;
-
-        let path = if seal.to_vec().len() > 4 {
-            let agg_seal_bytes = seal.to_vec();
-            let (_selector, stripped_seal) = agg_seal_bytes.split_at(4);
-            let aggregation_seal = <Seal>::abi_decode(stripped_seal, true)
-                .map_err(|_| anyhow!("Failed to decode aggregation seal from bytes"))?;
-            let path = aggregation_seal
-                .path
-                .iter()
-                .map(|x| Digest::try_from(x.as_slice()).map_err(|_| anyhow!("Invalid digest")))
-                .collect::<Result<Vec<Digest>>>()?;
-            path
-        } else {
-            vec![]
-        };
         let claim = ReceiptClaim::ok(Digest::from(image_id.0), journal.to_vec());
-
-        let set_builder_id = Digest::from_bytes(self.set_verifier.image_info().await?.0 .0);
-        let verifier_parameters =
-            SetInclusionReceiptVerifierParameters { image_id: set_builder_id };
-
-        let root = merkle_path_root(&claim.digest(), &path);
-
-        let root_seal =
-            self.set_verifier.get_verified_root_seal(<[u8; 32]>::from(root).into()).await?;
-
-        let aggregation_set_journal = GuestOutput::new(set_builder_id, root).abi_encode();
-        let aggregation_set_receipt_claim =
-            ReceiptClaim::ok(set_builder_id, aggregation_set_journal.clone());
-
-        let root_receipt = groth16::decode_seal(
-            root_seal,
-            aggregation_set_receipt_claim,
-            aggregation_set_journal,
-            None,
-        )?;
-
-        root_receipt.verify(set_builder_id).unwrap();
-
-        let receipt = SetInclusionReceipt::from_path_with_verifier_params(
-            claim.clone(),
-            path.clone(),
-            verifier_parameters.digest(),
-        )
-        .with_root(root_receipt);
-
+        let receipt = self.set_verifier.decode_seal(seal, claim, None).await?;
         Ok((journal, receipt))
     }
 }
