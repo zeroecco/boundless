@@ -131,12 +131,11 @@ impl ClientBuilder {
             self.boundless_market_addr.context("Boundless market address not set")?,
             self.set_verifier_addr.context("Set verifier address not set")?,
             self.order_stream_url,
-            Some(
-                storage_provider_from_config(
-                    &self.storage_config.context("Storage Provider Config not set")?,
-                )
-                .await?,
-            ),
+            if let Some(storage_config) = self.storage_config {
+                Some(storage_provider_from_config(&storage_config).await?)
+            } else {
+                None
+            },
         )
         .await?;
         if let Some(timeout) = self.tx_timeout {

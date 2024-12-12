@@ -384,7 +384,6 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 .with_rpc_url(args.rpc_url.clone())
                 .with_boundless_market_address(args.boundless_market_address)
                 .with_set_verifier_address(args.set_verifier_address)
-                .with_storage_provider_config(Some(StorageProviderConfig::dev_mode()))
                 .with_timeout(args.tx_timeout)
                 .build()
                 .await?;
