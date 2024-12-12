@@ -372,7 +372,7 @@ where
     ///
     /// The check interval is the time between each check for fulfillment.
     /// The timeout is the maximum time to wait for the request to be fulfilled.
-    pub async fn wait_for_inclusion_proof(
+    pub async fn wait_for_set_inclusion_receipt(
         &self,
         request_id: U256,
         check_interval: std::time::Duration,

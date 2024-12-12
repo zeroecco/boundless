@@ -660,7 +660,7 @@ where
 
     if wait {
         let (journal, receipt) = client
-            .wait_for_inclusion_proof(
+            .wait_for_set_inclusion_receipt(
                 request_id,
                 Duration::from_secs(5),
                 expires_at,
