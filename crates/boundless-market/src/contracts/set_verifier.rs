@@ -217,7 +217,7 @@ where
 }
 
 fn extract_path(seal: &[u8]) -> Result<Vec<Digest>> {
-    // Early return if seal is too short to contain a selector
+    // Early return if seal is too short to contain a path
     if seal.len() <= 4 {
         return Ok(Vec::new());
     }
