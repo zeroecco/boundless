@@ -172,31 +172,3 @@ where
         bail!("VerifiedRoot event not found for root {:?}", root);
     }
 }
-
-// TODO(Angelo): Move to risc0-ethereum
-alloy::sol!(
-    /// @notice A Groth16 seal over the claimed receipt claim.
-    struct Groth16Seal {
-        uint256[2] a;
-        uint256[2][2] b;
-        uint256[2] c;
-    }
-);
-
-// TODO(Angelo): Move to risc0-ethereum
-pub fn flatten_seal(seal: Groth16Seal) -> Vec<u8> {
-    let mut result = Vec::new();
-    for x in seal.a {
-        result.extend_from_slice(&x.to_le_bytes_vec());
-    }
-    for x in seal.b {
-        for y in x {
-            result.extend_from_slice(&y.to_le_bytes_vec());
-        }
-    }
-    for x in seal.c {
-        result.extend_from_slice(&x.to_le_bytes_vec());
-    }
-
-    result.clone()
-}

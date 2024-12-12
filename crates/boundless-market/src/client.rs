@@ -38,17 +38,17 @@ use reqwest::Client as HttpClient;
 use risc0_aggregation::{
     merkle_path_root, GuestOutput, Seal, SetInclusionReceipt, SetInclusionReceiptVerifierParameters,
 };
+use risc0_ethereum_contracts::groth16;
 use risc0_zkvm::{
     sha::{Digest, Digestible},
-    FakeReceipt, Groth16Receipt, Groth16ReceiptVerifierParameters, InnerReceipt, MaybePruned,
-    Receipt, ReceiptClaim,
+    MaybePruned, ReceiptClaim,
 };
 use url::Url;
 
 use crate::{
     contracts::{
         boundless_market::{BoundlessMarketService, MarketError},
-        set_verifier::{flatten_seal, Groth16Seal, SetVerifierService},
+        set_verifier::SetVerifierService,
         ProofRequest, RequestError,
     },
     order_stream_client::Client as OrderStreamClient,
@@ -420,34 +420,13 @@ where
         let aggregation_set_receipt_claim =
             ReceiptClaim::ok(set_builder_id, aggregation_set_journal.clone());
 
-        let root_seal_bytes = root_seal.to_vec();
-        let (selector, stripped_seal) = root_seal_bytes.split_at(4);
+        let root_receipt = groth16::decode_seal(
+            root_seal,
+            MaybePruned::Value(aggregation_set_receipt_claim),
+            aggregation_set_journal,
+        )?;
 
-        // Fake receipt seal is 32 bytes
-        let root_receipt = if stripped_seal.len() == 32 {
-            assert_eq!(selector, &[0u8; 4]);
-            let receipt = Receipt::new(
-                InnerReceipt::Fake(FakeReceipt::new(aggregation_set_receipt_claim)),
-                aggregation_set_journal,
-            );
-            // verification of fake receipts is only allowed in dev mode
-            if risc0_zkvm::is_dev_mode() {
-                receipt.verify(set_builder_id).unwrap();
-            };
-            receipt
-        } else {
-            let groth16_seal = Groth16Seal::abi_decode(stripped_seal, true).unwrap();
-            let receipt = Receipt::new(
-                InnerReceipt::Groth16(Groth16Receipt::new(
-                    flatten_seal(groth16_seal),
-                    MaybePruned::Value(aggregation_set_receipt_claim),
-                    Groth16ReceiptVerifierParameters::default().digest(),
-                )),
-                aggregation_set_journal,
-            );
-            receipt.verify(set_builder_id).unwrap();
-            receipt
-        };
+        root_receipt.verify(set_builder_id).unwrap();
 
         let receipt = SetInclusionReceipt::from_path_with_verifier_params(
             claim.clone(),
