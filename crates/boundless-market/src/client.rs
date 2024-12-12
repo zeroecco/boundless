@@ -29,16 +29,26 @@ use alloy::{
         k256::ecdsa::SigningKey,
         local::{LocalSigner, PrivateKeySigner},
     },
+    sol_types::SolValue,
     transports::{http::Http, Transport},
 };
+use alloy_primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client as HttpClient;
+use risc0_aggregation::{
+    merkle_path_root, GuestOutput, Seal, SetInclusionReceipt, SetInclusionReceiptVerifierParameters,
+};
+use risc0_zkvm::{
+    sha::{Digest, Digestible},
+    FakeReceipt, Groth16Receipt, Groth16ReceiptVerifierParameters, InnerReceipt, MaybePruned,
+    Receipt, ReceiptClaim,
+};
 use url::Url;
 
 use crate::{
     contracts::{
         boundless_market::{BoundlessMarketService, MarketError},
-        set_verifier::SetVerifierService,
+        set_verifier::{flatten_seal, Groth16Seal, SetVerifierService},
         ProofRequest, RequestError,
     },
     order_stream_client::Client as OrderStreamClient,
@@ -362,16 +372,84 @@ where
     ///
     /// The check interval is the time between each check for fulfillment.
     /// The timeout is the maximum time to wait for the request to be fulfilled.
-    pub async fn wait_for_request_fulfillment(
+    pub async fn wait_for_inclusion_proof(
         &self,
         request_id: U256,
         check_interval: std::time::Duration,
         expires_at: u64,
-    ) -> Result<(Bytes, Bytes), ClientError> {
-        Ok(self
+        image_id: B256,
+    ) -> Result<(Bytes, SetInclusionReceipt<ReceiptClaim>), ClientError> {
+        let (journal, seal) = self
             .boundless_market
             .wait_for_request_fulfillment(request_id, check_interval, expires_at)
-            .await?)
+            .await?;
+
+        let path = if seal.to_vec().len() > 4 {
+            let agg_seal_bytes = seal.to_vec();
+            let (_selector, stripped_seal) = agg_seal_bytes.split_at(4);
+            let aggregation_seal = <Seal>::abi_decode(stripped_seal, true)
+                .map_err(|_| anyhow!("Failed to decode aggregation seal from bytes"))?;
+            let path = aggregation_seal
+                .path
+                .iter()
+                .map(|x| Digest::try_from(x.as_slice()).map_err(|_| anyhow!("Invalid digest")))
+                .collect::<Result<Vec<Digest>>>()?;
+            path
+        } else {
+            vec![]
+        };
+        let claim = ReceiptClaim::ok(Digest::from(image_id.0), journal.to_vec());
+
+        let set_builder_id = Digest::from_bytes(self.set_verifier.image_info().await?.0 .0);
+        let verifier_parameters =
+            SetInclusionReceiptVerifierParameters { image_id: set_builder_id };
+
+        let root = merkle_path_root(&claim.digest(), &path);
+
+        let root_seal =
+            self.set_verifier.get_verified_root_seal(<[u8; 32]>::from(root).into()).await?;
+
+        let aggregation_set_journal = GuestOutput::new(set_builder_id, root).abi_encode();
+        let aggregation_set_receipt_claim =
+            ReceiptClaim::ok(set_builder_id, aggregation_set_journal.clone());
+
+        let root_seal_bytes = root_seal.to_vec();
+        let (selector, stripped_seal) = root_seal_bytes.split_at(4);
+
+        // Fake receipt seal is 32 bytes
+        let root_receipt = if stripped_seal.len() == 32 {
+            assert_eq!(selector, &[0u8; 4]);
+            let receipt = Receipt::new(
+                InnerReceipt::Fake(FakeReceipt::new(aggregation_set_receipt_claim)),
+                aggregation_set_journal,
+            );
+            // verification of fake receipts is only allowed in dev mode
+            if risc0_zkvm::is_dev_mode() {
+                receipt.verify(set_builder_id).unwrap();
+            };
+            receipt
+        } else {
+            let groth16_seal = Groth16Seal::abi_decode(stripped_seal, true).unwrap();
+            let receipt = Receipt::new(
+                InnerReceipt::Groth16(Groth16Receipt::new(
+                    flatten_seal(groth16_seal),
+                    MaybePruned::Value(aggregation_set_receipt_claim),
+                    Groth16ReceiptVerifierParameters::default().digest(),
+                )),
+                aggregation_set_journal,
+            );
+            receipt.verify(set_builder_id).unwrap();
+            receipt
+        };
+
+        let receipt = SetInclusionReceipt::from_path_with_verifier_params(
+            claim.clone(),
+            path.clone(),
+            verifier_parameters.digest(),
+        )
+        .with_root(root_receipt);
+
+        Ok((journal, receipt))
     }
 }
 

@@ -403,6 +403,8 @@ impl Predicate {
 #[cfg(not(target_os = "zkvm"))]
 pub mod boundless_market;
 #[cfg(not(target_os = "zkvm"))]
+pub mod event_query;
+#[cfg(not(target_os = "zkvm"))]
 pub mod set_verifier;
 
 #[cfg(not(target_os = "zkvm"))]

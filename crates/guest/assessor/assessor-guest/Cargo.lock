@@ -3803,8 +3803,7 @@ dependencies = [
 [[package]]
 name = "risc0-ethereum-contracts"
 version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08f4076772c0ce926e414f9e7c53b799b2d4e25cacdbff0d98a61d45f2576229"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=angelo/release-1.2.1#d1069fc4a0b40e5ea611d18a0536f8dd9baf4023"
 dependencies = [
  "alloy",
  "anyhow",

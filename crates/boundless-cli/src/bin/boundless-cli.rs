@@ -659,14 +659,18 @@ where
     );
 
     if wait {
-        let (journal, seal) = client
-            .boundless_market
-            .wait_for_request_fulfillment(request_id, Duration::from_secs(5), expires_at)
+        let (journal, receipt) = client
+            .wait_for_inclusion_proof(
+                request_id,
+                Duration::from_secs(5),
+                expires_at,
+                request.requirements.imageId,
+            )
             .await?;
         tracing::info!(
             "Journal: {} - Seal: {}",
             serde_json::to_string_pretty(&journal)?,
-            serde_json::to_string_pretty(&seal)?
+            serde_json::to_string_pretty(&Bytes::from(receipt.without_root().abi_encode_seal()?))?
         );
     };
     Ok(Some(request_id))

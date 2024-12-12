@@ -15,6 +15,7 @@
 use std::time::Duration;
 
 use super::{
+    event_query::EventQueryConfig,
     IRiscZeroSetVerifier::{self, IRiscZeroSetVerifierErrors, IRiscZeroSetVerifierInstance},
     TXN_CONFIRM_TIMEOUT,
 };
@@ -24,7 +25,7 @@ use alloy::{
     providers::Provider,
     transports::Transport,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use risc0_ethereum_contracts::IRiscZeroVerifier;
 
 #[derive(Clone)]
@@ -32,6 +33,7 @@ pub struct SetVerifierService<T, P> {
     instance: IRiscZeroSetVerifierInstance<T, P, Ethereum>,
     caller: Address,
     tx_timeout: Duration,
+    event_query_config: EventQueryConfig,
 }
 
 impl<T, P> SetVerifierService<T, P>
@@ -42,7 +44,12 @@ where
     pub fn new(address: Address, provider: P, caller: Address) -> Self {
         let instance = IRiscZeroSetVerifier::new(address, provider);
 
-        Self { instance, caller, tx_timeout: TXN_CONFIRM_TIMEOUT }
+        Self {
+            instance,
+            caller,
+            tx_timeout: TXN_CONFIRM_TIMEOUT,
+            event_query_config: EventQueryConfig::default(),
+        }
     }
 
     pub fn instance(&self) -> &IRiscZeroSetVerifierInstance<T, P, Ethereum> {
@@ -51,6 +58,11 @@ where
 
     pub fn with_timeout(self, tx_timeout: Duration) -> Self {
         Self { tx_timeout, ..self }
+    }
+
+    /// Sets the event query configuration.
+    pub fn with_event_query_config(self, config: EventQueryConfig) -> Self {
+        Self { event_query_config: config, ..self }
     }
 
     pub async fn contains_root(&self, root: B256) -> Result<bool> {
@@ -96,4 +108,95 @@ where
 
         Ok((image_id, image_url))
     }
+
+    /// Returns journal and seal if the request is fulfilled.
+    pub async fn get_verified_root_seal(&self, root: B256) -> Result<Bytes> {
+        self.query_verified_root_event(root, None, None).await
+    }
+
+    async fn get_latest_block(&self) -> Result<u64> {
+        Ok(self
+            .instance
+            .provider()
+            .get_block_number()
+            .await
+            .context("Failed to get latest block number")?)
+    }
+
+    /// Query the VerifiedRoot event based on the root and block options.
+    /// For each iteration, we query a range of blocks.
+    /// If the event is not found, we move the range down and repeat until we find the event.
+    /// If the event is not found after the configured max iterations, we return an error.
+    /// The default range is set to 100 blocks for each iteration, and the default maximum number of
+    /// iterations is 100. This means that the search will cover a maximum of 10,000 blocks.
+    /// Optionally, you can specify a lower and upper bound to limit the search range.
+    async fn query_verified_root_event(
+        &self,
+        root: B256,
+        lower_bound: Option<u64>,
+        upper_bound: Option<u64>,
+    ) -> Result<Bytes> {
+        let mut upper_block = upper_bound.unwrap_or(self.get_latest_block().await?);
+        let start_block = lower_bound.unwrap_or(upper_block.saturating_sub(
+            self.event_query_config.block_range * self.event_query_config.max_iterations,
+        ));
+
+        // Loop to progressively search through blocks
+        for _ in 0..self.event_query_config.max_iterations {
+            // If the current end block is less than or equal to the starting block, stop searching
+            if upper_block <= start_block {
+                break;
+            }
+
+            // Calculate the block range to query: from [lower_block] to [upper_block]
+            let lower_block = upper_block.saturating_sub(self.event_query_config.block_range);
+
+            // Set up the event filter for the specified block range
+            let mut event_filter = self.instance.VerifiedRoot_filter();
+            event_filter.filter =
+                event_filter.filter.topic1(root).from_block(lower_block).to_block(upper_block);
+
+            // Query the logs for the event
+            let logs = event_filter.query().await?;
+
+            // If we find a log, return the seal
+            if let Some((verified_root, _)) = logs.first() {
+                let seal = verified_root.seal.clone();
+                return Ok(seal);
+            }
+            // Move the upper_block down for the next iteration
+            upper_block = lower_block.saturating_sub(1);
+        }
+
+        // Return error if no logs are found after all iterations
+        bail!("VerifiedRoot event not found for root {:?}", root);
+    }
+}
+
+// TODO(Angelo): Move to risc0-ethereum
+alloy::sol!(
+    /// @notice A Groth16 seal over the claimed receipt claim.
+    struct Groth16Seal {
+        uint256[2] a;
+        uint256[2][2] b;
+        uint256[2] c;
+    }
+);
+
+// TODO(Angelo): Move to risc0-ethereum
+pub fn flatten_seal(seal: Groth16Seal) -> Vec<u8> {
+    let mut result = Vec::new();
+    for x in seal.a {
+        result.extend_from_slice(&x.to_le_bytes_vec());
+    }
+    for x in seal.b {
+        for y in x {
+            result.extend_from_slice(&y.to_le_bytes_vec());
+        }
+    }
+    for x in seal.c {
+        result.extend_from_slice(&x.to_le_bytes_vec());
+    }
+
+    result.clone()
 }
