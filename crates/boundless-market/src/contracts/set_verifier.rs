@@ -117,7 +117,7 @@ where
         Ok((image_id, image_url))
     }
 
-    /// Returns journal and seal if the request is fulfilled.
+    /// Returns the seal if of the given verified root.
     pub async fn get_verified_root_seal(&self, root: B256) -> Result<Bytes> {
         self.query_verified_root_event(root, None, None).await
     }
