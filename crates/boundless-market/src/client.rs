@@ -377,6 +377,22 @@ where
     }
 
     /// Get the [SetInclusionReceipt] for a request.
+    ///
+    /// Example:
+    /// ```
+    /// use anyhow::Result;
+    /// use alloy::primitives::{B256, Bytes, U256};
+    /// use boundless_market::client::ClientBuilder;
+    /// use risc0_aggregation::SetInclusionReceipt;
+    /// use risc0_zkvm::ReceiptClaim;
+    ///
+    /// async fn get_set_inclusion_receipt(request_id: U256, image_id: B256) -> Result<(Bytes, SetInclusionReceipt<ReceiptClaim>)> {
+    ///     let client = ClientBuilder::default().build().await?;
+    ///     let (journal, receipt) = client.get_set_inclusion_receipt(request_id, image_id).await?;
+    ///     Ok((journal, receipt))
+    /// }
+    /// ```
+    ///
     pub async fn get_set_inclusion_receipt(
         &self,
         request_id: U256,
