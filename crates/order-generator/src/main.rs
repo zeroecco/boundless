@@ -9,6 +9,7 @@ use std::{
 
 use alloy::{
     primitives::{utils::parse_ether, Address, U256},
+    providers::Provider,
     signers::local::PrivateKeySigner,
 };
 use anyhow::{bail, Result};
@@ -32,7 +33,7 @@ struct MainArgs {
     /// Optional URL of the offchain order stream endpoint.
     ///
     /// If set, the order-generator will submit requests off-chain.
-    #[clap(short, long)]
+    #[clap(short, long, env)]
     order_stream_url: Option<Url>,
     // Storage provider to use.
     #[clap(flatten)]
@@ -61,7 +62,7 @@ struct MainArgs {
     #[clap(long = "max", value_parser = parse_ether, default_value = "0.002")]
     max_price_per_mcycle: U256,
     /// Lockin stake amount in ether.
-    #[clap(short, long, value_parser = parse_ether, default_value = "0.0")]
+    #[clap(short, long, value_parser = parse_ether, default_value = "0.01")]
     lockin_stake: U256,
     /// Number of blocks, from the current block, before the bid starts.
     #[clap(long, default_value = "5")]
@@ -120,6 +121,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Lowest value used as the starting point of the gas price backoff mechanism.
+const GAS_PRICE_BACKOFF_FLOOR: u128 = 30 * 1_000_000_000; // 30 GWei
+
 async fn run(args: &MainArgs) -> Result<()> {
     let boundless_client = ClientBuilder::default()
         .with_rpc_url(args.rpc_url.clone())
@@ -145,8 +149,8 @@ async fn run(args: &MainArgs) -> Result<()> {
     let image_url = boundless_client.upload_image(&elf).await?;
     tracing::info!("Uploaded image to {}", image_url);
 
-    let mut i = 0u64;
-    loop {
+    let mut gas_price_backoff_level = GAS_PRICE_BACKOFF_FLOOR;
+    for i in 0u64.. {
         if let Some(count) = args.count {
             if i >= count {
                 break;
@@ -191,15 +195,36 @@ async fn run(args: &MainArgs) -> Result<()> {
             )
             .build()?;
 
-        let (request_id, _) = if args.order_stream_url.is_some() {
+        // Skip one transaction for every power of two over the gas price floor the gas price is.
+        let gas_price = boundless_client.provider().get_gas_price().await?;
+        tracing::info!("Current gas price is {} GWei", gas_price.div_ceil(1_000_000_000));
+        let gas_price_is_too_damn_high = gas_price > gas_price_backoff_level;
+        if gas_price_is_too_damn_high {
+            gas_price_backoff_level *= 2;
+            tracing::info!(
+                "Backing off; new gas price max is {} GWei",
+                gas_price_backoff_level.div_ceil(1_000_000_000)
+            );
+            tokio::time::sleep(Duration::from_secs(args.interval)).await;
+            continue;
+        } else if gas_price_backoff_level > GAS_PRICE_BACKOFF_FLOOR {
+            tracing::info!(
+                "Resetting gas price backoff level to {} GWei",
+                gas_price_backoff_level.div_ceil(1_000_000_000)
+            );
+            gas_price_backoff_level = GAS_PRICE_BACKOFF_FLOOR;
+        }
+
+        let (request_id, _) = if args.order_stream_url.is_some() && (i % 2 == 1) {
+            tracing::info!("Submitting a request offchain");
             boundless_client.submit_request_offchain(&request).await?
         } else {
+            tracing::info!("Submitting a request onchain");
             boundless_client.submit_request(&request).await?
         };
 
         tracing::info!("Request 0x{request_id:x} submitted");
 
-        i += 1;
         tokio::time::sleep(Duration::from_secs(args.interval)).await;
     }
 
@@ -218,9 +243,7 @@ async fn fetch_http(url: &Url) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use alloy::{
-        node_bindings::Anvil, providers::Provider, rpc::types::Filter, sol_types::SolEvent,
-    };
+    use alloy::{node_bindings::Anvil, rpc::types::Filter, sol_types::SolEvent};
     use boundless_market::contracts::{test_utils::TestCtx, IBoundlessMarket};
     use guest_assessor::ASSESSOR_GUEST_ID;
     use guest_set_builder::SET_BUILDER_ID;
