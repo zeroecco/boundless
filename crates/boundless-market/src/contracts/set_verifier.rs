@@ -180,7 +180,7 @@ where
         bail!("VerifiedRoot event not found for root {:?}", root);
     }
 
-    /// Decodes a seal into a [SetInclusionReceipt] including a [risc0_zkvm::Grot16Receipt] as its root.
+    /// Decodes a seal into a [SetInclusionReceipt] including a [risc0_zkvm::Groth16Receipt] as its root.
     pub async fn decode_seal(
         &self,
         seal: Bytes,
