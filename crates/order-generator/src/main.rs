@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
 }
 
 /// Lowest value used as the starting point of the gas price backoff mechanism.
-const GAS_PRICE_BACKOFF_FLOOR: u128 = 30 * 1_000_000_000; // 30 GWei
+const GAS_PRICE_BACKOFF_FLOOR: u128 = 10 * 1_000_000_000; // 10 GWei
 
 async fn run(args: &MainArgs) -> Result<()> {
     let boundless_client = ClientBuilder::default()
