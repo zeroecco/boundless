@@ -686,7 +686,7 @@ dependencies = [
  "alloy-transport",
  "futures",
  "http 1.2.0",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
@@ -1434,9 +1434,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-async"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62220bc6e97f946ddd51b5f1361f78996e704677afc518a4ff66b7a72ea1378c"
+checksum = "8aa8ff1492fd9fb99ae28e8467af0dbbb7c31512b16fabf1a0f10d7bb6ef78bb"
 dependencies = [
  "futures-util",
  "pin-project-lite",
@@ -1507,9 +1507,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-runtime"
-version = "1.7.4"
+version = "1.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f20685047ca9d6f17b994a07f629c813f08b5bce65523e47124879e60103d45"
+checksum = "431a10d0e07e09091284ef04453dae4069283aa108d209974d67e77ae1caa658"
 dependencies = [
  "aws-smithy-async",
  "aws-smithy-http",
@@ -1522,7 +1522,7 @@ dependencies = [
  "http-body 0.4.6",
  "http-body 1.0.1",
  "httparse",
- "hyper 0.14.31",
+ "hyper 0.14.32",
  "hyper-rustls 0.24.2",
  "once_cell",
  "pin-project-lite",
@@ -1551,9 +1551,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-types"
-version = "1.2.9"
+version = "1.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fbd94a32b3a7d55d3806fe27d98d3ad393050439dd05eb53ece36ec5e3d3510"
+checksum = "8ecbf4d5dfb169812e2b240a4350f15ad3c6b03a54074e5712818801615f2dc5"
 dependencies = [
  "base64-simd",
  "bytes",
@@ -1612,7 +1612,7 @@ dependencies = [
  "http 1.2.0",
  "http-body 1.0.1",
  "http-body-util",
- "hyper 1.5.1",
+ "hyper 1.5.2",
  "hyper-util",
  "itoa",
  "matchit",
@@ -1626,7 +1626,7 @@ dependencies = [
  "serde_path_to_error",
  "serde_urlencoded",
  "sha1",
- "sync_wrapper 1.0.2",
+ "sync_wrapper",
  "tokio",
  "tokio-tungstenite",
  "tower",
@@ -1650,7 +1650,7 @@ dependencies = [
  "mime",
  "pin-project-lite",
  "rustversion",
- "sync_wrapper 1.0.2",
+ "sync_wrapper",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -1857,7 +1857,7 @@ dependencies = [
 [[package]]
 name = "bonsai-sdk"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "duplicate",
  "maybe-async",
@@ -2144,7 +2144,7 @@ checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
 dependencies = [
  "camino",
  "cargo-platform",
- "semver 1.0.23",
+ "semver 1.0.24",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2158,9 +2158,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.3"
+version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27f657647bcff5394bf56c7317665bbf790a137a50eaaa5c6bfbb9e27a518f2d"
+checksum = "9157bbaa6b165880c27a4293a474c91cdcf265cc68cc829bf10be0964a391caf"
 dependencies = [
  "jobserver",
  "libc",
@@ -2452,18 +2452,18 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.13"
+version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33480d6946193aa8033910124896ca395333cae7e2d1113d1fef6c3272217df2"
+checksum = "06ba6d68e24814cb8de6bb986db8222d3a027d15872cabc0d18817bc3c0e4471"
 dependencies = [
  "crossbeam-utils",
 ]
 
 [[package]]
 name = "crossbeam-deque"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613f8cc01fe9cf1a3eb3d7f488fd2fa8388403e97039e2f73692932e291a770d"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
 dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
@@ -2480,18 +2480,18 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-queue"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df0346b5d5e76ac2fe4e327c5fd1118d6be7c51dfb18f9b7922923f287471e35"
+checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
 dependencies = [
  "crossbeam-utils",
 ]
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.20"
+version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crunchy"
@@ -3089,6 +3089,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrlp"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce8dba4714ef14b8274c371879b175aa55b16b30f269663f19d576f380018dc4"
+dependencies = [
+ "arrayvec",
+ "auto_impl",
+ "bytes",
+]
+
+[[package]]
 name = "ff"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3485,7 +3496,7 @@ dependencies = [
 [[package]]
 name = "guest-set-builder"
 version = "0.1.0"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#6b65dfe1813921a97a550cee3142f170027e9850"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#06239c64706bcfcefb05e5c1ccb5c2afee89e2b0"
 dependencies = [
  "risc0-build",
  "risc0-build-ethereum",
@@ -3673,11 +3684,11 @@ dependencies = [
 
 [[package]]
 name = "home"
-version = "0.5.9"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3d1354bf6b7235cb4a0576c2619fd4ed18183f689b12b006a0ee7329eeff9a5"
+checksum = "589533453244b0995c858700322199b2becb13b627df2851f64a2775d024abcf"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3763,7 +3774,7 @@ dependencies = [
  "crossbeam-utils",
  "form_urlencoded",
  "futures-util",
- "hyper 0.14.31",
+ "hyper 0.14.32",
  "lazy_static",
  "levenshtein",
  "log",
@@ -3778,9 +3789,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "0.14.31"
+version = "0.14.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c08302e8fa335b151b788c775ff56e7a03ae64ff85c548ee820fecb70356e85"
+checksum = "41dfc780fdec9373c01bae43289ea34c972e40ee3c9f6b3c8801a35f35586ce7"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -3802,9 +3813,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.5.1"
+version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97818827ef4f364230e16705d4706e2897df2bb60617d6ca15d598025a3c481f"
+checksum = "256fb8d4bd6413123cc9d91832d78325c48ff41677595be797d90f42969beae0"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -3829,7 +3840,7 @@ checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
 dependencies = [
  "futures-util",
  "http 0.2.12",
- "hyper 0.14.31",
+ "hyper 0.14.32",
  "log",
  "rustls 0.21.12",
  "rustls-native-certs 0.6.3",
@@ -3845,9 +3856,9 @@ checksum = "08afdbb5c31130e3034af566421053ab03787c640246a446327f550d11bcb333"
 dependencies = [
  "futures-util",
  "http 1.2.0",
- "hyper 1.5.1",
+ "hyper 1.5.2",
  "hyper-util",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.1",
@@ -3863,7 +3874,7 @@ checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
 dependencies = [
  "bytes",
  "http-body-util",
- "hyper 1.5.1",
+ "hyper 1.5.2",
  "hyper-util",
  "native-tls",
  "tokio",
@@ -3882,7 +3893,7 @@ dependencies = [
  "futures-util",
  "http 1.2.0",
  "http-body 1.0.1",
- "hyper 1.5.1",
+ "hyper 1.5.2",
  "pin-project-lite",
  "socket2",
  "tokio",
@@ -5013,7 +5024,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b7cafe60d6cf8e62e1b9b2ea516a089c008945bb5a275416789e7db0bc199dc"
 dependencies = [
  "memchr",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "ucd-trie",
 ]
 
@@ -5336,7 +5347,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "157c5a9d7ea5c2ed2d9fb8f495b64759f7816c7eaea54ba3978f0d63000162e3"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.90",
@@ -5373,9 +5384,9 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "socket2",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tracing",
 ]
@@ -5391,10 +5402,10 @@ dependencies = [
  "rand",
  "ring",
  "rustc-hash",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tinyvec",
  "tracing",
  "web-time",
@@ -5529,9 +5540,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b6dfecf2c74bce2466cabf93f6664d6998a69eb21e39f4207930065b27b771f"
+checksum = "03a862b389f93e68874fbf580b9de08dd02facb9a788ebadaf4a3fd33cf58834"
 dependencies = [
  "bitflags 2.6.0",
 ]
@@ -5613,7 +5624,7 @@ dependencies = [
  "http 1.2.0",
  "http-body 1.0.1",
  "http-body-util",
- "hyper 1.5.1",
+ "hyper 1.5.2",
  "hyper-rustls 0.27.3",
  "hyper-tls",
  "hyper-util",
@@ -5627,13 +5638,13 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sync_wrapper 1.0.2",
+ "sync_wrapper",
  "system-configuration",
  "tokio",
  "tokio-native-tls",
@@ -5688,7 +5699,7 @@ dependencies = [
 [[package]]
 name = "risc0-aggregation"
 version = "0.1.0"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#6b65dfe1813921a97a550cee3142f170027e9850"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#06239c64706bcfcefb05e5c1ccb5c2afee89e2b0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5697,13 +5708,13 @@ dependencies = [
  "risc0-zkp",
  "risc0-zkvm",
  "serde",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
 ]
 
 [[package]]
 name = "risc0-binfmt"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5717,7 +5728,7 @@ dependencies = [
 [[package]]
 name = "risc0-build"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -5735,7 +5746,7 @@ dependencies = [
 [[package]]
 name = "risc0-build-ethereum"
 version = "1.2.0"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#6b65dfe1813921a97a550cee3142f170027e9850"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#06239c64706bcfcefb05e5c1ccb5c2afee89e2b0"
 dependencies = [
  "anyhow",
  "hex",
@@ -5746,7 +5757,7 @@ dependencies = [
 [[package]]
 name = "risc0-build-kernel"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "cc",
  "directories",
@@ -5760,7 +5771,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-keccak"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -5780,7 +5791,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-keccak-sys"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "cc",
  "cust",
@@ -5795,7 +5806,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-recursion"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -5820,7 +5831,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-recursion-sys"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "glob",
  "risc0-build-kernel",
@@ -5832,7 +5843,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-rv32im"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "auto_ops",
@@ -5865,7 +5876,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-rv32im-sys"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "glob",
  "risc0-build-kernel",
@@ -5877,7 +5888,7 @@ dependencies = [
 [[package]]
 name = "risc0-core"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "bytemuck",
  "nvtx",
@@ -5888,20 +5899,20 @@ dependencies = [
 [[package]]
 name = "risc0-ethereum-contracts"
 version = "1.2.0"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#6b65dfe1813921a97a550cee3142f170027e9850"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=parker/rel-1.2.1#06239c64706bcfcefb05e5c1ccb5c2afee89e2b0"
 dependencies = [
  "alloy",
  "anyhow",
  "cfg-if",
  "risc0-zkvm",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tracing",
 ]
 
 [[package]]
 name = "risc0-groth16"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "ark-bn254",
@@ -5925,7 +5936,7 @@ dependencies = [
 [[package]]
 name = "risc0-sys"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "cust",
@@ -5936,7 +5947,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkp"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "anyhow",
  "blake2",
@@ -5966,7 +5977,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkvm"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "addr2line 0.22.0",
  "anyhow",
@@ -5997,7 +6008,7 @@ dependencies = [
  "risc0-zkvm-platform",
  "rrs-lib",
  "rustc-demangle",
- "semver 1.0.23",
+ "semver 1.0.24",
  "serde",
  "sha2",
  "stability",
@@ -6009,7 +6020,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkvm-platform"
 version = "1.3.0-alpha.1"
-source = "git+https://github.com/risc0/risc0?rev=17ed98c3243258ad912fd52a289fef6725f17c90#17ed98c3243258ad912fd52a289fef6725f17c90"
+source = "git+https://github.com/risc0/risc0?rev=f74920596c745a8bb7e8a6f1dfdefb44d03ed06f#f74920596c745a8bb7e8a6f1dfdefb44d03ed06f"
 dependencies = [
  "bytemuck",
  "getrandom",
@@ -6059,16 +6070,18 @@ dependencies = [
 
 [[package]]
 name = "ruint"
-version = "1.12.3"
+version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c3cc4c2511671f327125da14133d0c5c5d137f006a1017a16f557bc85b16286"
+checksum = "f5ef8fb1dd8de3870cb8400d51b4c2023854bbafd5431a3ac7e7317243e22d2f"
 dependencies = [
  "alloy-rlp",
  "ark-ff 0.3.0",
  "ark-ff 0.4.2",
  "bytes",
- "fastrlp",
+ "fastrlp 0.3.1",
+ "fastrlp 0.4.0",
  "num-bigint 0.4.6",
+ "num-integer",
  "num-traits",
  "parity-scale-codec",
  "primitive-types",
@@ -6154,7 +6167,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
- "semver 1.0.23",
+ "semver 1.0.24",
 ]
 
 [[package]]
@@ -6198,9 +6211,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.19"
+version = "0.23.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "934b404430bb06b3fae2cba809eb45a1ab1aecd64491213d7c3301b88393f8d1"
+checksum = "5065c3f250cbd332cd894be57c40fa52387247659b14a2d6041d121547903b1b"
 dependencies = [
  "once_cell",
  "ring",
@@ -6255,9 +6268,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.10.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16f1201b3c9a7ee8039bcadc17b7e605e2945b27eee7631788c1bd2b0643674b"
+checksum = "d2bf47e6ff922db3825eb750c4e2ff784c6ff8fb9e13046ef6a1d1c5401b0b37"
 dependencies = [
  "web-time",
 ]
@@ -6425,9 +6438,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.23"
+version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
+checksum = "3cb6eb87a131f756572d7fb904f6e7b68633f09cca868c5df1c4b8d1a694bbba"
 dependencies = [
  "serde",
 ]
@@ -6449,18 +6462,18 @@ checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
 
 [[package]]
 name = "serde"
-version = "1.0.215"
+version = "1.0.216"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6513c1ad0b11a9376da888e3e0baa0077f1aed55c17f50e7b2397136129fb88f"
+checksum = "0b9781016e935a97e8beecf0c933758c97a5520d32930e460142b4cd80c6338e"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.215"
+version = "1.0.216"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad1e866f866923f252f05c889987993144fb74e722403468a4ebd70c3cd756c0"
+checksum = "46f859dbbf73865c6627ed570e78961cd3ac92407a2d117204c49232485da55e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6726,9 +6739,9 @@ dependencies = [
 
 [[package]]
 name = "sppark"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac5090642d9ae844edd9a5c23cb1fce6724ca88d50c55178ee8d1f656df5826b"
+checksum = "16bf457036c0a778140ce4c3bcf9ff30c5c70a9d9c0bb04fe513af025b647b2c"
 dependencies = [
  "cc",
  "which",
@@ -7069,12 +7082,6 @@ dependencies = [
 
 [[package]]
 name = "sync_wrapper"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2047c6ded9c721764247e62cd3b03c09ffc529b2ba5b10ec482ae507a4a70160"
-
-[[package]]
-name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
@@ -7194,11 +7201,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.6"
+version = "2.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec2a1820ebd077e2b90c4df007bebf344cd394098a13c563957d0afc83ea47"
+checksum = "93605438cbd668185516ab499d589afb7ee1859ea3d5fc8f6b0755e1c7443767"
 dependencies = [
- "thiserror-impl 2.0.6",
+ "thiserror-impl 2.0.7",
 ]
 
 [[package]]
@@ -7214,9 +7221,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.6"
+version = "2.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
+checksum = "e1d8749b4531af2117677a5fcd12b1348a3fe2b81e36e61ffeac5c4aa3273e36"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7382,7 +7389,7 @@ version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f6d0975eaace0cf0fcadee4e4aaa5da15b5c079146f2cffb67c113be122bf37"
 dependencies = [
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "tokio",
 ]
 
@@ -7406,7 +7413,7 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.1",
@@ -7465,14 +7472,14 @@ dependencies = [
 
 [[package]]
 name = "tower"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2873938d487c3cfb9aed7546dc9f2711d867c9f90c46b889989a2cb84eba6b4f"
+checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
 dependencies = [
  "futures-core",
  "futures-util",
  "pin-project-lite",
- "sync_wrapper 0.1.2",
+ "sync_wrapper",
  "tokio",
  "tower-layer",
  "tower-service",
@@ -7620,7 +7627,7 @@ dependencies = [
  "httparse",
  "log",
  "rand",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
@@ -7705,9 +7712,9 @@ checksum = "7e51b68083f157f853b6379db119d1c1be0e6e4dec98101079dec41f6f5cf6df"
 
 [[package]]
 name = "unicode-bidi"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ab17db44d7388991a428b2ee655ce0c212e862eff1768a455c58f9aad6e7893"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-ident"
@@ -8519,9 +8526,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99d52293fc86ea7cf13971b3bb81eb21683636e7ae24c729cdaf1b7c4157a352"
+checksum = "ae9c1ea7b3a5e1f4b922ff856a129881167511563dc219869afe3787fc0c1a45"
 dependencies = [
  "arbitrary",
  "crc32fast",
@@ -8530,7 +8537,7 @@ dependencies = [
  "flate2",
  "indexmap",
  "memchr",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "zopfli",
 ]
 

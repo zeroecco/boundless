@@ -12,7 +12,7 @@ boundless-assessor = { path = "../../../assessor" }
 boundless-market = { path = "../../../boundless-market", default-features = false }
 postcard = "1.0"
 risc0-aggregation = { git = "https://github.com/risc0/risc0-ethereum", branch = "parker/rel-1.2.1", default-features = false, features = ["verify"] }
-risc0-zkvm = { git = "https://github.com/risc0/risc0", rev = "17ed98c3243258ad912fd52a289fef6725f17c90", default-features = false, features = ["std"] }
+risc0-zkvm = { git = "https://github.com/risc0/risc0", rev = "f74920596c745a8bb7e8a6f1dfdefb44d03ed06f", default-features = false, features = ["std"] }
 
 [patch.crates-io]
 # use optimized risc0 circuit
