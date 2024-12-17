@@ -389,7 +389,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     writer_tasks.spawn(async move {
         while let Ok(mut keccak_req) = keccak_rx.recv().await {
             let keccak_count_tmp = keccak_count.load(Ordering::Relaxed);
-            let redis_key = format!("{coproc_prefix}:{}", keccak_req.claim_digest.to_string());
+            let redis_key = format!("{coproc_prefix}:{}", keccak_req.claim_digest);
             redis::set_key_with_expiry(
                 &mut coproc_redis,
                 &redis_key,
