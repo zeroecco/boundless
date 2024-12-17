@@ -212,7 +212,6 @@ impl Coprocessor {
 
 impl CoprocessorCallback for Coprocessor {
     fn prove_keccak(&mut self, request: ProveKeccakRequest) -> Result<()> {
-        tracing::info!("TACOS");
         self.tx.send_blocking(request)?;
         Ok(())
     }
