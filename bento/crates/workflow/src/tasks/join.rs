@@ -25,28 +25,28 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .get::<_, Vec<u8>>(&left_path_key)
         .await
         .with_context(|| format!("segment data not found for segment key: {left_path_key}"))?;
-    let left_receipt =
+    let left_segment_receipt =
         deserialize_obj(&left_receipt).context("Failed to deserialize left receipt")?;
 
     let lifted_left_receipt = agent
         .prover
         .as_ref()
         .context("Missing prover from resolve task")?
-        .lift(&left_receipt)
+        .lift(&left_segment_receipt)
         .with_context(|| format!("Failed to lift segment"))?;
 
     let right_receipt: Vec<u8> = conn
         .get::<_, Vec<u8>>(&right_path_key)
         .await
         .with_context(|| format!("segment data not found for segment key: {right_path_key}"))?;
-    let right_receipt =
+    let right_segment_receipt =
         deserialize_obj(&right_receipt).context("Failed to deserialize right receipt")?;
 
     let lifted_right_receipt = agent
         .prover
         .as_ref()
         .context("Missing prover from resolve task")?
-        .lift(&right_receipt)
+        .lift(&right_segment_receipt)
         .with_context(|| format!("Failed to lift segment"))?;
 
     tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
