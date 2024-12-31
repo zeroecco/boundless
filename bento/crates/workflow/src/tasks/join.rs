@@ -9,10 +9,16 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use risc0_zkvm::ReceiptClaim;
+use risc0_zkvm::SegmentReceipt;
 use risc0_zkvm::SuccinctReceipt;
 use uuid::Uuid;
 use workflow_common::JoinReq;
 
+
+enum Receipt {
+    Segment(SegmentReceipt),
+    Succinct(SuccinctReceipt<ReceiptClaim>)
+}
 
 async fn lift_receipt(
     agent: &Agent,
@@ -21,22 +27,34 @@ async fn lift_receipt(
 ) -> Result<SuccinctReceipt<ReceiptClaim>> {
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
     let key = format!("{prefix}:{idx}");
-    let receipt: Vec<u8> = conn
+    let receipt_bytes: Vec<u8> = conn
         .get(&key)
         .await
         .with_context(|| format!("segment data not found for key: {key}"))?;
 
-    let segment_receipt = deserialize_obj(&receipt)
-        .with_context(|| format!("Failed to deserialize receipt for {key}"))?;
-
-    agent
-        .prover
-        .as_ref()
-        .context("Missing prover from resolve task")?
-        .lift(&segment_receipt)
-        .with_context(|| format!("Failed to lift segment {key}"))
+    // Attempt to parse as SegmentReceipt
+    match deserialize_obj::<SegmentReceipt>(&receipt_bytes) {
+        Ok(segment_receipt) => {
+            // If it's a SegmentReceipt, lift it
+            let succinct = agent
+                .prover
+                .as_ref()
+                .context("Missing prover from resolve task")?
+                .lift(&segment_receipt)
+                .with_context(|| format!("Failed to lift segment {key}"))?;
+            Ok(succinct)
+        }
+        Err(_) => {
+            // Otherwise parse as a SuccinctReceipt<ReceiptClaim> directly
+            let succinct = deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(&receipt_bytes)
+                .with_context(|| format!(
+                    "Failed to deserialize as either SegmentReceipt or \
+                     SuccinctReceipt<ReceiptClaim> for {key}"
+                ))?;
+            Ok(succinct)
+        }
+    }
 }
-
 /// Run the join operation
 pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()> {
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
