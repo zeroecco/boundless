@@ -14,12 +14,6 @@ use risc0_zkvm::SuccinctReceipt;
 use uuid::Uuid;
 use workflow_common::JoinReq;
 
-
-enum Receipt {
-    Segment(SegmentReceipt),
-    Succinct(SuccinctReceipt<ReceiptClaim>)
-}
-
 async fn lift_receipt(
     agent: &Agent,
     prefix: &str,
