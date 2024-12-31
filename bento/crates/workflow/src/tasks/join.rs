@@ -8,8 +8,34 @@ use crate::{
     Agent,
 };
 use anyhow::{Context, Result};
+use risc0_zkvm::ReceiptClaim;
+use risc0_zkvm::SuccinctReceipt;
 use uuid::Uuid;
 use workflow_common::JoinReq;
+
+
+async fn lift_receipt(
+    agent: &Agent,
+    prefix: &str,
+    idx: usize,
+) -> Result<SuccinctReceipt<ReceiptClaim>> {
+    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let key = format!("{prefix}:{idx}");
+    let receipt: Vec<u8> = conn
+        .get(&key)
+        .await
+        .with_context(|| format!("segment data not found for key: {key}"))?;
+
+    let segment_receipt = deserialize_obj(&receipt)
+        .with_context(|| format!("Failed to deserialize receipt for {key}"))?;
+
+    agent
+        .prover
+        .as_ref()
+        .context("Missing prover from resolve task")?
+        .lift(&segment_receipt)
+        .with_context(|| format!("Failed to lift segment {key}"))
+}
 
 /// Run the join operation
 pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()> {
@@ -18,36 +44,11 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let job_prefix = format!("job:{job_id}");
     let recur_receipts_prefix = format!("{job_prefix}:{RECUR_RECEIPT_PATH}");
 
-    let left_path_key = format!("{recur_receipts_prefix}:{}", request.left);
-    let right_path_key = format!("{recur_receipts_prefix}:{}", request.right);
+    let (lifted_left, lifted_right) = tokio::try_join!(
+        lift_receipt(&agent, &recur_receipts_prefix, request.left),
+        lift_receipt(&agent, &recur_receipts_prefix, request.right)
+    )?;
 
-    let left_receipt: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&left_path_key)
-        .await
-        .with_context(|| format!("segment data not found for segment key: {left_path_key}"))?;
-    let left_segment_receipt =
-        deserialize_obj(&left_receipt).context("Failed to deserialize left receipt")?;
-
-    let lifted_left_receipt = agent
-        .prover
-        .as_ref()
-        .context("Missing prover from resolve task")?
-        .lift(&left_segment_receipt)
-        .with_context(|| format!("Failed to lift segment"))?;
-
-    let right_receipt: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&right_path_key)
-        .await
-        .with_context(|| format!("segment data not found for segment key: {right_path_key}"))?;
-    let right_segment_receipt =
-        deserialize_obj(&right_receipt).context("Failed to deserialize right receipt")?;
-
-    let lifted_right_receipt = agent
-        .prover
-        .as_ref()
-        .context("Missing prover from resolve task")?
-        .lift(&right_segment_receipt)
-        .with_context(|| format!("Failed to lift segment"))?;
 
     tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
 
@@ -55,10 +56,12 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .prover
         .as_ref()
         .context("Missing prover from join task")?
-        .join(&lifted_left_receipt, &lifted_right_receipt)?;
-    let join_result = serialize_obj(&joined).expect("Failed to serialize the segment");
+        .join(&lifted_left, &lifted_right)?;
+
+    let join_result = serialize_obj(&joined)?;
     let output_key = format!("{recur_receipts_prefix}:{}", request.idx);
-    redis::set_key_with_expiry(&mut conn, &output_key, join_result, Some(agent.args.redis_ttl))
+
+    redis::set_key_with_expiry::<Vec<u8>>(&mut conn, &output_key, join_result, Some(agent.args.redis_ttl))
         .await?;
 
     tracing::info!("Join Complete {job_id} - {}", request.left);
