@@ -45,13 +45,15 @@ async fn lift_receipt(
 
 /// Run the join operation
 pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()> {
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    // Get two separate connections
+    let mut conn_left = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn_right = redis::get_connection(&agent.redis_pool).await?;
     let recur_receipts_prefix = format!("job:{job_id}:{RECUR_RECEIPT_PATH}");
 
     // Get both receipts concurrently using the same connection
     let (lifted_left, lifted_right) = tokio::try_join!(
-        lift_receipt(&agent, &mut conn, &recur_receipts_prefix, request.left),
-        lift_receipt(&agent, &mut conn, &recur_receipts_prefix, request.right)
+        lift_receipt(&agent, &mut conn_left, &recur_receipts_prefix, request.left),
+        lift_receipt(&agent, &mut conn_right, &recur_receipts_prefix, request.right)
     )?;
 
     tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
@@ -65,7 +67,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let output_key = format!("{recur_receipts_prefix}:{}", request.idx);
     let join_result = serialize_obj(&joined)?;
 
-    redis::set_key_with_expiry::<Vec<u8>>(&mut conn, &output_key, &join_result, Some(agent.args.redis_ttl))
+    redis::set_key_with_expiry::<Vec<u8>>(&mut conn_left, &output_key, join_result, Some(agent.args.redis_ttl))
         .await?;
 
     tracing::info!("Join Complete {job_id} - {}", request.left);
