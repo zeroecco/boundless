@@ -68,8 +68,9 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 
     let output_key = format!("{recur_receipts_prefix}:{}", request.idx);
     let join_result = serialize_obj(&joined)?;
-
-    redis::set_key_with_expiry::<Vec<u8>>(&mut conn_left, &output_key, join_result, Some(agent.args.redis_ttl))
+    let compressed_join = zstd::encode_all(&join_result[..], 0)
+        .context("Failed to compress the segment receipt")?;
+    redis::set_key_with_expiry::<Vec<u8>>(&mut conn_left, &output_key, compressed_join, Some(agent.args.redis_ttl))
         .await?;
 
     tracing::info!("Join Complete {job_id} - {}", request.left);
