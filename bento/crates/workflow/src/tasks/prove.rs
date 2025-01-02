@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{Context, Result};
 use uuid::Uuid;
 use workflow_common::ProveReq;
+use zstd;
 
 /// Run a prove request
 pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
@@ -38,7 +39,10 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
     let output_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{task_id}");
     // Write out lifted receipt
     let segment_asset = serialize_obj(&segment_receipt).expect("Failed to serialize the segment");
-    redis::set_key_with_expiry(&mut conn, &output_key, segment_asset, Some(agent.args.redis_ttl))
+    let compressed_receipt = zstd::encode_all(&segment_asset[..], 0)
+        .context("Failed to compress the segment receipt")?;
+
+    redis::set_key_with_expiry(&mut conn, &output_key, compressed_receipt, Some(agent.args.redis_ttl))
         .await?;
 
     Ok(())

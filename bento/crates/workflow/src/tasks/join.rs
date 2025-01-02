@@ -16,11 +16,13 @@ async fn lift_receipt(
     idx: usize,
 ) -> Result<SuccinctReceipt<ReceiptClaim>> {
     let key = format!("{prefix}:{idx}");
-    let receipt_bytes: Vec<u8> = conn
+    let compressed_segment: Vec<u8> = conn
         .get(&key)
         .await
         .with_context(|| format!("segment data not found for key: {key}"))?;
 
+    let receipt_bytes = zstd::decode_all(&compressed_segment[..])
+        .context("Failed to decompress segment data")?;
     // Attempt to parse as SegmentReceipt
     match deserialize_obj::<SegmentReceipt>(&receipt_bytes) {
         Ok(segment_receipt) => {
