@@ -8,6 +8,7 @@ use deadpool_redis::Connection;
 use risc0_zkvm::{ReceiptClaim, SegmentReceipt, SuccinctReceipt};
 use uuid::Uuid;
 use workflow_common::JoinReq;
+use zstd;
 
 async fn lift_receipt(
     agent: &Agent,

@@ -13,6 +13,7 @@ use workflow_common::FinalizeReq;
 use risc0_zkvm::{InnerReceipt, Receipt, ReceiptClaim, SuccinctReceipt};
 use uuid::Uuid;
 use workflow_common::s3::{RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR};
+use zstd;
 
 /// Run finalize tasks / cleanup
 ///
@@ -26,11 +27,12 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
     let root_receipt_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{max_id}");
 
     // pull the root receipt from redis
-    let root_receipt: Vec<u8> = conn
+    let root_receipt_compressed: Vec<u8> = conn
         .get::<_, Vec<u8>>(&root_receipt_key)
         .await
         .with_context(|| format!("failed to get the root receipt key: {root_receipt_key}"))?;
-
+    let root_receipt = zstd::decode_all(&root_receipt_compressed[..])
+    .context("Failed to decompress segment data")?;
     let root_receipt: SuccinctReceipt<ReceiptClaim> =
         deserialize_obj(&root_receipt).context("could not deseriailize the root receipt")?;
 
