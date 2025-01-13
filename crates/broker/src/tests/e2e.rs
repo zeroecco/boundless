@@ -62,6 +62,7 @@ async fn simple_e2e() {
         boundless_market_addr: ctx.boundless_market_addr,
         set_verifier_addr: ctx.set_verifier_addr,
         rpc_url: anvil.endpoint_url(),
+        broker_api: None,
         order_stream_url: None,
         private_key: ctx.prover_signer,
         bento_api_url: None,
