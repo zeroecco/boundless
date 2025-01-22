@@ -40,6 +40,7 @@ pub(crate) mod order_monitor;
 pub(crate) mod order_picker;
 pub(crate) mod provers;
 pub(crate) mod proving;
+pub mod rpc_retry_policy;
 pub(crate) mod storage;
 pub(crate) mod submitter;
 pub(crate) mod task;
