@@ -8,7 +8,7 @@ members = [
     "crates/guest/assessor",
     "crates/guest/util",
     "crates/order-generator",
-    "crates/order-stream",
+    "crates/order-stream", "crates/rpc-test-proxy",
     "documentation/doc-test",
 ]
 
