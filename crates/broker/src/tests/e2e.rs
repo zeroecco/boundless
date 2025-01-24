@@ -140,9 +140,9 @@ async fn recover_rpc_104_disconnection() {
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
 
     let outage_layer = NetworkTestingLayer::new(BlanketOutagePolicy::new(
-        30,
-        1000000,
-        vec!["eth_getBlockByNumber", "eth_getFilterChanges", "eth_getLogs"],
+        30,      // wait 30 requests to allow broker to start up
+        1000000, // after that error for 1_000_000 requests
+        vec!["eth_getBlockByNumber", "eth_getFilterChanges", "eth_getLogs"], // only on these RPC methods
     ));
 
     let client = RpcClient::builder().layer(outage_layer).http(anvil.endpoint_url()).boxed();
@@ -190,5 +190,17 @@ async fn recover_rpc_104_disconnection() {
 
     let broker = Broker::new(args, provider).await.unwrap();
 
-    broker.start_service().await.unwrap();
+    let broker_task = tokio::spawn(async move {
+        broker.start_service().await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    if broker_task.is_finished() {
+        broker_task.await.unwrap();
+    } else {
+        broker_task.abort();
+    }
+
+    assert!(logs_contain("Recoverable failure detected: State not recoverable (os error 104)"))
 }
