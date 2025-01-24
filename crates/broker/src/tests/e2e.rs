@@ -3,18 +3,24 @@
 // All rights reserved.
 
 use alloy::{
+    network::EthereumWallet,
     node_bindings::Anvil,
-    primitives::{utils, B256, U256},
-    providers::Provider,
+    primitives::{utils, Address, B256, U256},
+    providers::{Provider, ProviderBuilder},
+    rpc::client::RpcClient,
+    signers::local::PrivateKeySigner,
 };
+use alloy_chains::NamedChain;
 use httpmock::prelude::*;
+use network_test_layer::{BlanketOutagePolicy, NetworkTestingLayer};
 use risc0_zkvm::sha::Digest;
 use tempfile::NamedTempFile;
 // use broker::Broker;
 use crate::{config::Config, provers::encode_input, Args, Broker};
 use boundless_market::contracts::{
-    hit_points::default_allowance, test_utils::TestCtx, Input, InputType, Offer, Predicate,
-    PredicateType, ProofRequest, Requirements,
+    hit_points::default_allowance,
+    test_utils::{deploy_boundless_market, TestCtx},
+    Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
 };
 use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
 use guest_set_builder::{SET_BUILDER_ID, SET_BUILDER_PATH};
@@ -125,4 +131,64 @@ async fn simple_e2e() {
         broker_task.abort();
     }
     get_mock.assert();
+}
+
+#[tokio::test]
+#[traced_test]
+async fn recover_rpc_104_disconnection() {
+    let anvil = Anvil::new().chain_id(888833888).spawn();
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+
+    let outage_layer = NetworkTestingLayer::new(BlanketOutagePolicy::new(
+        30,
+        1000000,
+        vec!["eth_getBlockByNumber", "eth_getFilterChanges", "eth_getLogs"],
+    ));
+
+    let client = RpcClient::builder().layer(outage_layer).http(anvil.endpoint_url()).boxed();
+    let provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .wallet(EthereumWallet::from(signer.clone()))
+        .with_chain(NamedChain::Dev)
+        .on_client(client);
+
+    let market_address = deploy_boundless_market(
+        &signer,
+        provider.clone(),
+        Address::ZERO,
+        Address::ZERO,
+        Digest::from(ASSESSOR_GUEST_ID),
+        Some(signer.address()),
+    )
+    .await
+    .unwrap();
+
+    let config_file = NamedTempFile::new().unwrap();
+    let mut config = Config::default();
+    config.prover.set_builder_guest_path = Some(SET_BUILDER_PATH.into());
+    config.prover.assessor_set_guest_path = Some(ASSESSOR_GUEST_PATH.into());
+    config.market.mcycle_price = "0.00001".into();
+    config.batcher.batch_size = Some(1);
+    config.write(config_file.path()).await.unwrap();
+
+    let args = Args {
+        db_url: "sqlite::memory:".into(),
+        config_file: config_file.path().to_path_buf(),
+        boundless_market_addr: market_address,
+        set_verifier_addr: Address::default(),
+        rpc_url: anvil.endpoint_url(),
+        order_stream_url: None,
+        private_key: signer,
+        bento_api_url: None,
+        bonsai_api_key: None,
+        bonsai_api_url: None,
+        deposit_amount: None,
+        rpc_retry_max: 0,
+        rpc_retry_backoff: 200,
+        rpc_retry_cu: 1000,
+    };
+
+    let broker = Broker::new(args, provider).await.unwrap();
+
+    broker.start_service().await.unwrap();
 }

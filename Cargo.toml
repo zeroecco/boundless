@@ -6,9 +6,9 @@ members = [
     "crates/boundless-market",
     "crates/broker",
     "crates/guest/assessor",
-    "crates/guest/util",
+    "crates/guest/util", "crates/network-test-layer",
     "crates/order-generator",
-    "crates/order-stream", "crates/rpc-test-proxy",
+    "crates/order-stream",
     "documentation/doc-test",
 ]
 
@@ -26,6 +26,7 @@ boundless-market = { version = "0.6.0", path = "crates/boundless-market" }
 guest-assessor = { path = "crates/guest/assessor" }
 guest-util = { path = "crates/guest/util" }
 order-stream = { path = "crates/order-stream" }
+network-test-layer = { path = "crates/network-test-layer" }
 
 alloy = { version = "0.9" }
 alloy-primitives = { version = "0.8" }

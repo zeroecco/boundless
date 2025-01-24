@@ -3,7 +3,7 @@
 // All rights reserved.
 
 use alloy::rpc::json_rpc::ErrorPayload;
-use alloy::transports::{layers::RetryPolicy, HttpError, TransportError, TransportErrorKind};
+use alloy::transports::{layers::RetryPolicy, TransportError, TransportErrorKind};
 use std::time::Duration;
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -12,15 +12,15 @@ pub struct CustomRetryPolicy;
 /// The retry policy for the RPC provider used throughout
 ///
 /// This 'extends' the default retry policy to include a retry for
-/// HTTP status code 104 which is believed to be behind a number of issues
+/// OS error 104 which is believed to be behind a number of issues
 /// https://github.com/boundless-xyz/boundless/issues/240
 impl RetryPolicy for CustomRetryPolicy {
     fn should_retry(&self, error: &TransportError) -> bool {
         match error {
-            TransportError::Transport(TransportErrorKind::HttpError(HttpError {
-                status: 104,
-                ..
-            })) => true,
+            TransportError::Transport(TransportErrorKind::Custom(err)) => {
+                let msg = err.to_string();
+                msg.contains("os error 104)")
+            }
             TransportError::Transport(e) => e.is_retry_err(),
             TransportError::DeserError { text, .. } => {
                 if let Ok(resp) = serde_json::from_str::<ErrorPayload>(text) {

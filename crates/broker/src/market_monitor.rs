@@ -251,10 +251,7 @@ where
                 chain_monitor,
             )
             .await
-            .map_err(|err| {
-                tracing::error!("Monitor failed to find open orders on startup: {err:?}");
-                SupervisorErr::Recover(err)
-            })?;
+            .map_err(SupervisorErr::Fault)?;
 
             Self::monitor_orders(market_addr, provider, db).await.map_err(|err| {
                 tracing::error!("Monitor for new blocks failed, restarting: {err:?}");
