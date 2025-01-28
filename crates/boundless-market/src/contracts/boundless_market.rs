@@ -30,14 +30,13 @@ use alloy::{
 };
 use alloy_sol_types::SolEvent;
 use anyhow::{anyhow, Context, Result};
+use risc0_ethereum_contracts::event_query::EventQueryConfig;
 use thiserror::Error;
 
 use crate::contracts::token::{IERC20Permit, IHitPoints::IHitPointsErrors, Permit, IERC20};
 
 use super::{
-    eip712_domain,
-    event_query::EventQueryConfig,
-    request_id, EIP721DomainSaltless, Fulfillment,
+    eip712_domain, request_id, EIP721DomainSaltless, Fulfillment,
     IBoundlessMarket::{self, IBoundlessMarketInstance},
     Offer, ProofRequest, ProofStatus, RequestError, TxnErr, TXN_CONFIRM_TIMEOUT,
 };

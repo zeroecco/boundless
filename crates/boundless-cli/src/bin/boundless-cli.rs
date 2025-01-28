@@ -35,7 +35,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use boundless_cli::{DefaultProver, OrderFulfilled};
 use clap::{Args, Parser, Subcommand};
 use hex::FromHex;
-use risc0_ethereum_contracts::IRiscZeroVerifier;
+use risc0_ethereum_contracts::{set_verifier::SetVerifierService, IRiscZeroVerifier};
 use risc0_zkvm::{
     default_executor,
     sha::{Digest, Digestible},
@@ -48,8 +48,8 @@ use url::Url;
 use boundless_market::{
     client::{Client, ClientBuilder},
     contracts::{
-        boundless_market::BoundlessMarketService, set_verifier::SetVerifierService, Input,
-        InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        boundless_market::BoundlessMarketService, Input, InputType, Offer, Predicate,
+        PredicateType, ProofRequest, Requirements,
     },
     input::{GuestEnv, InputBuilder},
     order_stream_client::Order,
@@ -431,7 +431,8 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 .with_timeout(args.tx_timeout)
                 .build()
                 .await?;
-            let (journal, receipt) = client.get_set_inclusion_receipt(request_id, image_id).await?;
+            let (journal, receipt) =
+                client.fetch_set_inclusion_receipt(request_id, image_id).await?;
             tracing::info!(
                 "Journal: {} - Receipt: {}",
                 serde_json::to_string_pretty(&journal)?,
