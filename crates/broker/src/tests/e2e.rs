@@ -16,11 +16,10 @@ use network_test_layer::{BlanketOutagePolicy, NetworkTestingLayer};
 use risc0_zkvm::sha::Digest;
 use tempfile::NamedTempFile;
 // use broker::Broker;
-use crate::{config::Config, provers::encode_input, Args, Broker};
+use crate::{config::Config, Args, Broker};
 use boundless_market::contracts::{
-    hit_points::default_allowance,
-    test_utils::{deploy_boundless_market, TestCtx},
-    Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+    hit_points::default_allowance, test_utils::TestCtx, Input, Offer, Predicate, PredicateType,
+    ProofRequest, Requirements,
 };
 use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
 use guest_set_builder::{SET_BUILDER_ID, SET_BUILDER_PATH};
@@ -99,10 +98,7 @@ async fn simple_e2e() {
             },
         },
         &image_uri,
-        Input {
-            inputType: InputType::Inline,
-            data: encode_input(&vec![0x41, 0x41, 0x41, 0x41]).unwrap().into(),
-        },
+        Input::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
         Offer {
             minPrice: U256::from(20000000000000u64),
             maxPrice: U256::from(40000000000000u64),
