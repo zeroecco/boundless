@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,19 +15,19 @@
 use std::{env, str::FromStr, time::Duration};
 
 use alloy::{
-    network::Ethereum,
+    network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, U256},
     providers::{
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
         },
-        network::EthereumWallet,
         Identity, Provider, ProviderBuilder, RootProvider,
     },
     signers::{
         k256::ecdsa::SigningKey,
         local::{LocalSigner, PrivateKeySigner},
+        Signer,
     },
     transports::{http::Http, Transport},
 };
@@ -71,12 +71,16 @@ type ProviderWallet = FillProvider<
 #[non_exhaustive]
 /// Client error
 pub enum ClientError {
+    /// Storage provider error
     #[error("Storage provider error {0}")]
     StorageProviderError(#[from] BuiltinStorageProviderError),
+    /// Market error
     #[error("Market error {0}")]
     MarketError(#[from] MarketError),
+    /// Request error
     #[error("RequestError {0}")]
     RequestError(#[from] RequestError),
+    /// General error
     #[error("Error {0}")]
     Error(#[from] anyhow::Error),
 }
@@ -86,7 +90,8 @@ pub struct ClientBuilder {
     boundless_market_addr: Option<Address>,
     set_verifier_addr: Option<Address>,
     rpc_url: Option<Url>,
-    private_key: Option<PrivateKeySigner>,
+    wallet: Option<EthereumWallet>,
+    local_signer: Option<PrivateKeySigner>,
     order_stream_url: Option<Url>,
     storage_config: Option<StorageProviderConfig>,
     tx_timeout: Option<std::time::Duration>,
@@ -99,7 +104,8 @@ impl Default for ClientBuilder {
             boundless_market_addr: None,
             set_verifier_addr: None,
             rpc_url: None,
-            private_key: None,
+            wallet: None,
+            local_signer: None,
             order_stream_url: None,
             storage_config: None,
             tx_timeout: None,
@@ -119,7 +125,7 @@ impl ClientBuilder {
         self,
     ) -> Result<Client<Http<HttpClient>, ProviderWallet, BuiltinStorageProvider>> {
         let mut client = Client::from_parts(
-            self.private_key.context("Private key not set")?,
+            self.wallet.context("Wallet not set")?,
             self.rpc_url.context("RPC URL not set")?,
             self.boundless_market_addr.context("Boundless market address not set")?,
             self.set_verifier_addr.context("Set verifier address not set")?,
@@ -133,6 +139,9 @@ impl ClientBuilder {
         .await?;
         if let Some(timeout) = self.tx_timeout {
             client = client.with_timeout(timeout);
+        }
+        if let Some(local_signer) = self.local_signer {
+            client = client.with_local_signer(local_signer);
         }
         client = client.with_bidding_start_offset(self.bidding_start_offset);
         Ok(client)
@@ -155,7 +164,16 @@ impl ClientBuilder {
 
     /// Set the private key
     pub fn with_private_key(self, private_key: PrivateKeySigner) -> Self {
-        Self { private_key: Some(private_key), ..self }
+        Self {
+            wallet: Some(EthereumWallet::from(private_key.clone())),
+            local_signer: Some(private_key),
+            ..self
+        }
+    }
+
+    /// Set the wallet
+    pub fn with_wallet(self, wallet: EthereumWallet) -> Self {
+        Self { wallet: Some(wallet), ..self }
     }
 
     /// Set the order stream URL
@@ -183,13 +201,19 @@ impl ClientBuilder {
 }
 
 #[derive(Clone)]
-/// Client for interacting with the boundless market
+/// Client for interacting with the boundless market.
 pub struct Client<T, P, S> {
+    /// Boundless market service.
     pub boundless_market: BoundlessMarketService<T, P>,
+    /// Set verifier service.
     pub set_verifier: SetVerifierService<T, P>,
-    pub signer: LocalSigner<SigningKey>,
+    /// Storage provider to upload ELFs and inputs.
     pub storage_provider: Option<S>,
+    /// Order stream client to submit requests off-chain.
     pub offchain_client: Option<OrderStreamClient>,
+    /// Local signer for signing requests.
+    pub local_signer: Option<LocalSigner<SigningKey>>,
+    /// Bidding start offset wrt the current block (in blocks).
     pub bidding_start_offset: u64,
 }
 
@@ -203,16 +227,15 @@ where
     pub fn new(
         boundless_market: BoundlessMarketService<T, P>,
         set_verifier: SetVerifierService<T, P>,
-        signer: LocalSigner<SigningKey>,
     ) -> Self {
         let boundless_market = boundless_market.clone();
         let set_verifier = set_verifier.clone();
         Self {
             boundless_market,
             set_verifier,
-            signer: signer.clone(),
             storage_provider: None,
             offchain_client: None,
+            local_signer: None,
             bidding_start_offset: BIDDING_START_OFFSET,
         }
     }
@@ -224,7 +247,7 @@ where
 
     /// Get the caller address
     pub fn caller(&self) -> Address {
-        self.signer.address()
+        self.boundless_market.caller()
     }
 
     /// Set the Boundless market service
@@ -235,11 +258,6 @@ where
     /// Set the set verifier service
     pub fn with_set_verifier(self, set_verifier: SetVerifierService<T, P>) -> Self {
         Self { set_verifier, ..self }
-    }
-
-    /// Set the signer
-    pub fn with_signer(self, signer: LocalSigner<SigningKey>) -> Self {
-        Self { signer, ..self }
     }
 
     /// Set the storage provider
@@ -261,13 +279,18 @@ where
         }
     }
 
+    /// Set the local signer
+    pub fn with_local_signer(self, local_signer: LocalSigner<SigningKey>) -> Self {
+        Self { local_signer: Some(local_signer), ..self }
+    }
+
     /// Set the bidding start offset
     pub fn with_bidding_start_offset(self, bidding_start_offset: u64) -> Self {
         Self { bidding_start_offset, ..self }
     }
 
     /// Upload an image to the storage provider
-    pub async fn upload_image(&self, elf: &[u8]) -> Result<String, ClientError> {
+    pub async fn upload_image(&self, elf: &[u8]) -> Result<Url, ClientError> {
         Ok(self
             .storage_provider
             .as_ref()
@@ -278,7 +301,7 @@ where
     }
 
     /// Upload input to the storage provider
-    pub async fn upload_input(&self, input: &[u8]) -> Result<String, ClientError> {
+    pub async fn upload_input(&self, input: &[u8]) -> Result<Url, ClientError> {
         Ok(self
             .storage_provider
             .as_ref()
@@ -290,9 +313,27 @@ where
 
     /// Submit a proof request.
     ///
+    /// Requires a local signer to be set to sign the request.
     /// If the request ID is not set, a random ID will be generated.
     /// If the bidding start is not set, the current block number will be used.
     pub async fn submit_request(&self, request: &ProofRequest) -> Result<(U256, u64), ClientError>
+    where
+        <S as StorageProvider>::Error: std::fmt::Debug,
+    {
+        let signer = self.local_signer.as_ref().context("Local signer not set")?;
+        self.submit_request_with_signer(request, signer).await
+    }
+
+    /// Submit a proof request.
+    ///
+    /// Accepts a signer to sign the request.
+    /// If the request ID is not set, a random ID will be generated.
+    /// If the bidding start is not set, the current block number will be used.
+    pub async fn submit_request_with_signer(
+        &self,
+        request: &ProofRequest,
+        signer: &impl Signer,
+    ) -> Result<(U256, u64), ClientError>
     where
         <S as StorageProvider>::Error: std::fmt::Debug,
     {
@@ -300,6 +341,10 @@ where
 
         if request.id == U256::ZERO {
             request.id = self.boundless_market.request_id_from_rand().await?;
+        };
+        let client_address = request.client_address()?;
+        if client_address != signer.address() {
+            return Err(MarketError::AddressMismatch(client_address, signer.address()))?;
         };
         if request.offer.biddingStart == 0 {
             request.offer.biddingStart = self
@@ -312,18 +357,19 @@ where
 
         request.validate()?;
 
-        let request_id =
-            self.boundless_market.submit_request(&request, &self.signer.clone()).await?;
+        let request_id = self.boundless_market.submit_request(&request, signer).await?;
         Ok((request_id, request.expires_at()))
     }
 
     /// Submit a proof request offchain via the order stream service.
     ///
+    /// Accepts a signer to sign the request.
     /// If the request ID is not set, a random ID will be generated.
     /// If the bidding start is not set, the current block number will be used.
-    pub async fn submit_request_offchain(
+    pub async fn submit_request_offchain_with_signer(
         &self,
         request: &ProofRequest,
+        signer: &impl Signer,
     ) -> Result<(U256, u64), ClientError>
     where
         <S as StorageProvider>::Error: std::fmt::Debug,
@@ -336,6 +382,10 @@ where
 
         if request.id == U256::ZERO {
             request.id = self.boundless_market.request_id_from_rand().await?;
+        };
+        let client_address = request.client_address()?;
+        if client_address != signer.address() {
+            return Err(MarketError::AddressMismatch(client_address, signer.address()))?;
         };
         if request.offer.biddingStart == 0 {
             request.offer.biddingStart = self
@@ -355,9 +405,25 @@ where
             )));
         }
 
-        let order = offchain_client.submit_request(&request).await?;
+        let order = offchain_client.submit_request(&request, signer).await?;
 
         Ok((order.request.id, request.expires_at()))
+    }
+
+    /// Submit a proof request offchain via the order stream service.
+    ///
+    /// Requires a local signer to be set to sign the request.
+    /// If the request ID is not set, a random ID will be generated.
+    /// If the bidding start is not set, the current block number will be used.
+    pub async fn submit_request_offchain(
+        &self,
+        request: &ProofRequest,
+    ) -> Result<(U256, u64), ClientError>
+    where
+        <S as StorageProvider>::Error: std::fmt::Debug,
+    {
+        let signer = self.local_signer.as_ref().context("Local signer not set")?;
+        self.submit_request_offchain_with_signer(request, signer).await
     }
 
     /// Wait for a request to be fulfilled.
@@ -430,10 +496,11 @@ impl Client<Http<HttpClient>, ProviderWallet, BuiltinStorageProvider> {
             Address::from_str(&set_verifier_address_str).context("Invalid SET_VERIFIER_ADDRESS")?;
 
         let caller = private_key.address();
-        let signer = private_key.clone();
         let wallet = EthereumWallet::from(private_key.clone());
-        let provider =
-            ProviderBuilder::new().with_recommended_fillers().wallet(wallet).on_http(rpc_url);
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet.clone())
+            .on_http(rpc_url);
 
         let boundless_market =
             BoundlessMarketService::new(boundless_market_address, provider.clone(), caller);
@@ -450,7 +517,6 @@ impl Client<Http<HttpClient>, ProviderWallet, BuiltinStorageProvider> {
         let offchain_client = match order_stream_url {
             Ok(url) => Some(OrderStreamClient::new(
                 Url::parse(&url).context("Invalid ORDER_STREAM_URL")?,
-                signer.clone(),
                 boundless_market_address,
                 chain_id,
             )),
@@ -460,45 +526,43 @@ impl Client<Http<HttpClient>, ProviderWallet, BuiltinStorageProvider> {
         Ok(Self {
             boundless_market,
             set_verifier,
-            signer,
             storage_provider,
             offchain_client,
+            local_signer: Some(private_key),
             bidding_start_offset: BIDDING_START_OFFSET,
         })
     }
 
     /// Create a new client from parts
     pub async fn from_parts(
-        private_key: PrivateKeySigner,
+        wallet: EthereumWallet,
         rpc_url: Url,
         boundless_market_address: Address,
         set_verifier_address: Address,
         order_stream_url: Option<Url>,
         storage_provider: Option<BuiltinStorageProvider>,
     ) -> Result<Self, ClientError> {
-        let caller = private_key.address();
-        let signer = private_key.clone();
-        let wallet = EthereumWallet::from(private_key.clone());
-        let provider =
-            ProviderBuilder::new().with_recommended_fillers().wallet(wallet).on_http(rpc_url);
+        let caller = wallet.default_signer().address();
+
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet.clone())
+            .on_http(rpc_url);
 
         let boundless_market =
             BoundlessMarketService::new(boundless_market_address, provider.clone(), caller);
         let set_verifier = SetVerifierService::new(set_verifier_address, provider.clone(), caller);
 
         let chain_id = provider.get_chain_id().await.context("Failed to get chain ID")?;
-        let offchain_client = if let Some(url) = order_stream_url {
-            Some(OrderStreamClient::new(url, signer.clone(), boundless_market_address, chain_id))
-        } else {
-            None
-        };
+        let offchain_client = order_stream_url
+            .map(|url| OrderStreamClient::new(url, boundless_market_address, chain_id));
 
         Ok(Self {
             boundless_market,
             set_verifier,
-            signer,
             storage_provider,
             offchain_client,
+            local_signer: None,
             bidding_start_offset: BIDDING_START_OFFSET,
         })
     }

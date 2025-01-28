@@ -1,4 +1,4 @@
-// Copyright (c) 2024 RISC Zero, Inc.
+// Copyright (c) 2025 RISC Zero, Inc.
 //
 // All rights reserved.
 
@@ -317,7 +317,11 @@ mod tests {
         primitives::{B256, U256},
     };
     use boundless_market::{
-        contracts::{test_utils::TestCtx, Input, Offer, Predicate, ProofRequest, Requirements},
+        contracts::{
+            hit_points::default_allowance, test_utils::TestCtx, Offer, Predicate, ProofRequest,
+            Requirements,
+        },
+        input::InputBuilder,
         order_stream_client::Client,
     };
     use futures_util::StreamExt;
@@ -336,16 +340,16 @@ mod tests {
         ProofRequest::new(
             idx,
             addr,
-            Requirements { imageId: B256::from([1u8; 32]), predicate: Predicate::default() },
+            Requirements { imageId: B256::from([1u8; 32]), predicate: Predicate::prefix_match([]) },
             "http://image_uri.null",
-            Input::default(),
+            InputBuilder::new().build_inline().unwrap(),
             Offer {
                 minPrice: U256::from(20000000000000u64),
                 maxPrice: U256::from(40000000000000u64),
                 biddingStart: 1,
                 timeout: 100,
                 rampUpPeriod: 1,
-                lockinStake: U256::from(10),
+                lockStake: U256::from(10),
             },
         )
     }
@@ -360,7 +364,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        ctx.prover_market.deposit(parse_ether("2").unwrap()).await.unwrap();
+        ctx.prover_market
+            .deposit_stake_with_permit(default_allowance(), &ctx.prover_signer)
+            .await
+            .unwrap();
 
         let config = Config {
             rpc_url,
@@ -389,14 +396,15 @@ mod tests {
 
         let client = Client::new(
             Url::parse(&format!("http://{addr}", addr = addr)).unwrap(),
-            ctx.prover_signer.clone(),
             config.market_address,
             app_state.chain_id,
         );
 
         // 2. Requestor submits a request
-        let order =
-            client.submit_request(&new_request(1, &ctx.prover_signer.address())).await.unwrap();
+        let order = client
+            .submit_request(&new_request(1, &ctx.prover_signer.address()), &ctx.prover_signer)
+            .await
+            .unwrap();
 
         // 3. Broker receives the request
         let db_order = task.await.unwrap().unwrap();

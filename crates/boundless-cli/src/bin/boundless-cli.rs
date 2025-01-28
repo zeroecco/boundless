@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ use alloy::{
         Address, Bytes, PrimitiveSignature, B256, U256,
     },
     providers::{network::EthereumWallet, Provider, ProviderBuilder},
-    signers::local::PrivateKeySigner,
+    signers::{local::PrivateKeySigner, Signer},
     transports::Transport,
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -41,6 +41,8 @@ use risc0_zkvm::{
     sha::{Digest, Digestible},
     ExecutorEnv, Journal, SessionInfo,
 };
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use url::Url;
 
 use boundless_market::{
@@ -49,7 +51,7 @@ use boundless_market::{
         boundless_market::BoundlessMarketService, set_verifier::SetVerifierService, Input,
         InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
     },
-    input::InputBuilder,
+    input::{GuestEnv, InputBuilder},
     order_stream_client::Order,
     storage::{StorageProvider, StorageProviderConfig},
 };
@@ -72,6 +74,22 @@ enum Command {
     },
     /// Check the balance of an account in the market
     Balance {
+        /// Address to check the balance of;
+        /// if not provided, defaults to the wallet address
+        address: Option<Address>,
+    },
+    /// Deposit stake funds into the market
+    DepositStake {
+        /// Amount in ether to deposit
+        amount: U256,
+    },
+    /// Withdraw stake funds from the market
+    WithdrawStake {
+        /// Amount in ether to withdraw
+        amount: U256,
+    },
+    /// Check the stake balance of an account in the market
+    BalanceOfStake {
         /// Address to check the balance of;
         /// if not provided, defaults to the wallet address
         address: Option<Address>,
@@ -165,6 +183,8 @@ enum Command {
         #[arg(long, default_value = "false")]
         require_payment: bool,
     },
+    /// Unfreeze a prover's account after being slashed
+    Unfreeze,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -253,8 +273,11 @@ struct MainArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(
+            EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy(),
+        )
         .init();
 
     match dotenvy::dotenv() {
@@ -299,6 +322,19 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
             let balance = boundless_market.balance_of(addr).await?;
             tracing::info!("Balance of {addr}: {}", format_ether(balance));
         }
+        Command::DepositStake { amount } => {
+            boundless_market.deposit_stake_with_permit(amount, &args.private_key).await?;
+            tracing::info!("Deposited stake: {}", amount);
+        }
+        Command::WithdrawStake { amount } => {
+            boundless_market.withdraw_stake(amount).await?;
+            tracing::info!("Withdrew stake: {}", amount);
+        }
+        Command::BalanceOfStake { address } => {
+            let addr = address.unwrap_or(caller);
+            let balance = boundless_market.balance_of_stake(addr).await?;
+            tracing::info!("Stake balance of {addr}: {}", balance);
+        }
         Command::SubmitOffer(offer_args) => {
             let order_stream_url = offer_args
                 .offchain
@@ -320,7 +356,7 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 .build()
                 .await?;
 
-            request_id = submit_offer(client, &offer_args).await?;
+            request_id = submit_offer(client, &args.private_key, &offer_args).await?;
         }
         Command::SubmitRequest {
             storage_config,
@@ -352,8 +388,16 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 .build()
                 .await?;
 
-            request_id =
-                submit_request(id, yaml_request, client, wait, offchain, !no_preflight).await?;
+            request_id = submit_request(
+                id,
+                yaml_request,
+                client,
+                &args.private_key,
+                wait,
+                offchain,
+                !no_preflight,
+            )
+            .await?;
         }
         Command::Slash { request_id } => {
             boundless_market.slash(request_id).await?;
@@ -453,7 +497,7 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
             // and assigns a price. Otherwise, we don't. This vec will be a singleton if not locked
             // and empty if the request is locked.
             let requests_to_price: Vec<ProofRequest> =
-                (!boundless_market.is_locked_in(request_id).await?)
+                (!boundless_market.is_locked(request_id).await?)
                     .then_some(order.request)
                     .into_iter()
                     .collect();
@@ -477,6 +521,10 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
                 }
             }
         }
+        Command::Unfreeze => {
+            boundless_market.unfreeze_account().await?;
+            tracing::info!("Account unfrozen");
+        }
     };
 
     Ok(request_id)
@@ -484,6 +532,7 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
 
 async fn submit_offer<T, P, S>(
     client: Client<T, P, S>,
+    signer: &impl Signer,
     args: &SubmitOfferArgs,
 ) -> Result<Option<U256>>
 where
@@ -519,8 +568,12 @@ where
         (None, Some(input_file)) => std::fs::read(input_file)?,
         _ => bail!("exactly one of input or input-file args must be provided"),
     };
-    let encoded_input =
-        if args.encode_input { InputBuilder::new().write(&input)?.build() } else { input };
+    let input_env = InputBuilder::new();
+    let encoded_input = if args.encode_input {
+        input_env.write(&input)?.build_vec()?
+    } else {
+        input_env.write_slice(&input).build_vec()?
+    };
 
     // Resolve the predicate from the command line arguments.
     let predicate: Predicate = match (&args.reqs.journal_digest, &args.reqs.journal_prefix) {
@@ -541,11 +594,8 @@ where
 
     // Upload the input.
     let requirements_input = match args.inline_input {
-        false => {
-            let input_url = client.upload_input(&encoded_input).await?;
-            Input { inputType: InputType::Url, data: input_url.into() }
-        }
-        true => Input { inputType: InputType::Inline, data: encoded_input.into() },
+        false => client.upload_input(&encoded_input).await?.into(),
+        true => Input::inline(encoded_input),
     };
 
     // Set request id
@@ -557,9 +607,9 @@ where
     // Construct the request from its individual parts.
     let request = ProofRequest::new(
         id,
-        &client.signer.address(),
+        &client.caller(),
         Requirements { imageId: image_id, predicate },
-        &elf_url,
+        elf_url,
         requirements_input,
         offer.clone(),
     );
@@ -578,9 +628,9 @@ where
     }
 
     let (request_id, expires_at) = if args.offchain {
-        client.submit_request_offchain(&request).await?
+        client.submit_request_offchain_with_signer(&request, signer).await?
     } else {
-        client.submit_request(&request).await?
+        client.submit_request_with_signer(&request, signer).await?
     };
     tracing::info!(
         "Submitted request ID 0x{request_id:x}, bidding start at block number {}",
@@ -605,6 +655,7 @@ async fn submit_request<T, P, S>(
     id: u32,
     request_path: impl AsRef<Path>,
     client: Client<T, P, S>,
+    signer: &impl Signer,
     wait: bool,
     offchain: bool,
     preflight: bool,
@@ -637,7 +688,7 @@ where
 
     let mut request = ProofRequest::new(
         id,
-        &client.signer.address(),
+        &client.caller(),
         request_yaml.requirements.clone(),
         &request_yaml.imageUrl,
         request_yaml.input,
@@ -671,9 +722,9 @@ where
     }
 
     let (request_id, expires_at) = if offchain {
-        client.submit_request_offchain(&request).await?
+        client.submit_request_offchain_with_signer(&request, signer).await?
     } else {
-        client.submit_request(&request).await?
+        client.submit_request_with_signer(&request, signer).await?
     };
     tracing::info!(
         "Request ID 0x{request_id:x}, bidding start at block number {}",
@@ -694,10 +745,18 @@ where
 }
 
 async fn execute(request: &ProofRequest) -> Result<SessionInfo> {
-    let elf = fetch_url(&request.imageUrl.to_string()).await?;
+    let elf = fetch_url(&request.imageUrl).await?;
     let input = match request.input.inputType {
-        InputType::Inline => request.input.data.clone(),
-        InputType::Url => fetch_url(&request.input.data.to_string()).await?.into(),
+        InputType::Inline => GuestEnv::decode(&request.input.data)?.stdin,
+        InputType::Url => {
+            GuestEnv::decode(
+                &fetch_url(
+                    std::str::from_utf8(&request.input.data).context("input url is not utf8")?,
+                )
+                .await?,
+            )?
+            .stdin
+        }
         _ => bail!("Unsupported input type"),
     };
     let env = ExecutorEnv::builder().write_slice(&input).build()?;
@@ -735,7 +794,7 @@ mod tests {
     use super::*;
 
     use alloy::node_bindings::Anvil;
-    use boundless_market::contracts::test_utils::TestCtx;
+    use boundless_market::contracts::{hit_points::default_allowance, test_utils::TestCtx};
     use guest_assessor::ASSESSOR_GUEST_ID;
     use guest_set_builder::SET_BUILDER_ID;
     use risc0_zkvm::sha::Digest;
@@ -759,15 +818,15 @@ mod tests {
             boundless_market_address: ctx.boundless_market_addr,
             set_verifier_address: ctx.set_verifier_addr,
             tx_timeout: None,
-            command: Command::Deposit { amount: U256::from(100) },
+            command: Command::Deposit { amount: default_allowance() },
         };
 
         run(&args).await.unwrap();
 
         let balance = ctx.prover_market.balance_of(ctx.prover_signer.address()).await.unwrap();
-        assert_eq!(balance, U256::from(100));
+        assert_eq!(balance, default_allowance());
 
-        args.command = Command::Withdraw { amount: U256::from(100) };
+        args.command = Command::Withdraw { amount: default_allowance() };
         run(&args).await.unwrap();
 
         let balance = ctx.prover_market.balance_of(ctx.prover_signer.address()).await.unwrap();
@@ -784,7 +843,10 @@ mod tests {
             TestCtx::new(&anvil, Digest::from(SET_BUILDER_ID), Digest::from(ASSESSOR_GUEST_ID))
                 .await
                 .unwrap();
-        ctx.prover_market.deposit(parse_ether("2").unwrap()).await.unwrap();
+        ctx.prover_market
+            .deposit_stake_with_permit(default_allowance(), &ctx.prover_signer)
+            .await
+            .unwrap();
 
         let mut args = MainArgs {
             rpc_url: anvil.endpoint_url(),

@@ -1,4 +1,4 @@
-// Copyright (c) 2024 RISC Zero, Inc.
+// Copyright (c) 2025 RISC Zero, Inc.
 //
 // All rights reserved.
 
@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
 
     let retry_layer =
         RetryBackoffLayer::new(args.rpc_retry_max, args.rpc_retry_backoff, args.rpc_retry_cu);
-    let client = RpcClient::builder().layer(retry_layer).http(args.rpc_url.clone());
+    let client = RpcClient::builder().layer(retry_layer).http(args.rpc_url.clone()).boxed();
 
     let provider = ProviderBuilder::new()
         .with_recommended_fillers()
@@ -41,9 +41,11 @@ async fn main() -> Result<()> {
             provider.default_signer_address(),
         );
 
-        let amount = alloy::primitives::utils::parse_ether(&deposit_amount).unwrap();
-        tracing::info!("pre-depositing {deposit_amount} ETH into the market contract");
-        boundless_market.deposit(amount).await.context("Failed to deposit to market")?;
+        tracing::info!("pre-depositing {deposit_amount} HP into the market contract");
+        boundless_market
+            .deposit_stake_with_permit(*deposit_amount, &args.private_key)
+            .await
+            .context("Failed to deposit to market")?;
     }
 
     let broker = Broker::new(args, provider).await?;

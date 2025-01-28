@@ -36,6 +36,7 @@ use risc0_zkvm::{
     Groth16ReceiptVerifierParameters, ReceiptClaim,
 };
 
+/// SetVerifierService provides a high-level interface to the SetVerifier contract.
 #[derive(Clone)]
 pub struct SetVerifierService<T, P> {
     instance: IRiscZeroSetVerifierInstance<T, P, Ethereum>,
@@ -49,6 +50,7 @@ where
     T: Transport + Clone,
     P: Provider<T, Ethereum> + 'static + Clone,
 {
+    /// Creates a new SetVerifierService.
     pub fn new(address: Address, provider: P, caller: Address) -> Self {
         let instance = IRiscZeroSetVerifier::new(address, provider);
 
@@ -60,19 +62,17 @@ where
         }
     }
 
+    /// Returns the underlying IRiscZeroSetVerifierInstance.
     pub fn instance(&self) -> &IRiscZeroSetVerifierInstance<T, P, Ethereum> {
         &self.instance
     }
 
+    /// Sets the timeout for transaction confirmation.
     pub fn with_timeout(self, tx_timeout: Duration) -> Self {
         Self { tx_timeout, ..self }
     }
 
-    /// Sets the event query configuration.
-    pub fn with_event_query_config(self, config: EventQueryConfig) -> Self {
-        Self { event_query_config: config, ..self }
-    }
-
+    /// Returns whether `root` has been submitted.
     pub async fn contains_root(&self, root: B256) -> Result<bool> {
         tracing::debug!("Calling containsRoot({:?})", root);
         let call = self.instance.containsRoot(root);
@@ -80,6 +80,7 @@ where
         Ok(call.call().await.context("call failed")?._0)
     }
 
+    /// Publishes a new root of a proof aggregation.
     pub async fn submit_merkle_root(&self, root: B256, seal: Bytes) -> Result<()> {
         tracing::debug!("Calling submitMerkleRoot({:?},{:?})", root, seal);
         let call = self.instance.submitMerkleRoot(root, seal).from(self.caller);
@@ -96,6 +97,16 @@ where
         Ok(())
     }
 
+    /// Verifies a RISC Zero proof of execution against an image ID and journal digest.
+    ///
+    /// # Arguments
+    /// * `seal` - The encoded cryptographic proof (SNARK)
+    /// * `image_id` - Guest program identifier
+    /// * `journal_digest` - SHA-256 digest of the journal bytes
+    ///
+    /// # Returns
+    /// * `Ok(())` if the proof is valid
+    /// * `Err(_)` if verification fails
     pub async fn verify(&self, seal: Bytes, image_id: B256, journal_digest: B256) -> Result<()> {
         tracing::debug!("Calling verify({:?},{:?},{:?})", seal, image_id, journal_digest);
         let verifier =
@@ -109,6 +120,7 @@ where
         Ok(())
     }
 
+    /// Returns the set builder image ID and its url.
     pub async fn image_info(&self) -> Result<(B256, String)> {
         tracing::debug!("Calling imageInfo()");
         let (image_id, image_url) =

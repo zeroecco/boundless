@@ -1,4 +1,4 @@
-// Copyright (c) 2024 RISC Zero, Inc.
+// Copyright (c) 2025 RISC Zero, Inc.
 //
 // All rights reserved.
 
@@ -13,13 +13,27 @@ use bonsai_sdk::{
     non_blocking::{Client as BonsaiClient, SessionId, SnarkId},
     SdkErr,
 };
+use boundless_market::input::InputBuilder;
 use risc0_zkvm::{
     compute_image_id, sha::Digestible, FakeReceipt, InnerReceipt, MaybePruned, Receipt,
     ReceiptClaim,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
-use workflow_common::ExecutorResp;
+
+/// Executor output
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ExecutorResp {
+    /// Total segments output
+    pub segments: u64,
+    /// risc0-zkvm user cycles
+    pub user_cycles: u64,
+    /// risc0-zkvm total cycles
+    pub total_cycles: u64,
+    /// Count of assumptions included
+    pub assumption_count: u64,
+}
 
 // For mock prover:
 use risc0_zkvm::{default_executor, ExecutorEnv};
@@ -55,9 +69,8 @@ pub struct ProofResult {
 }
 
 /// Encode inputs for Prover::upload_slice()
-pub fn encode_input(input: &impl serde::Serialize) -> Result<Vec<u8>, risc0_zkvm::serde::Error> {
-    let input_data = risc0_zkvm::serde::to_vec(input)?;
-    Ok(bytemuck::cast_slice(&input_data).to_vec())
+pub fn encode_input(input: &impl serde::Serialize) -> Result<Vec<u8>, anyhow::Error> {
+    Ok(InputBuilder::new().write(input)?.stdin)
 }
 
 #[async_trait]

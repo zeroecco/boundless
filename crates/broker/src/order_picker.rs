@@ -1,9 +1,10 @@
-// Copyright (c) 2024 RISC Zero, Inc.
+// Copyright (c) 2025 RISC Zero, Inc.
 //
 // All rights reserved.
 
 use std::sync::Arc;
 
+use crate::chain_monitor::ChainMonitorService;
 use alloy::{
     network::Ethereum,
     primitives::{
@@ -11,7 +12,7 @@ use alloy::{
         Address, U256,
     },
     providers::{Provider, WalletProvider},
-    transports::Transport,
+    transports::BoxTransport,
 };
 use anyhow::{Context, Result};
 use boundless_market::contracts::{boundless_market::BoundlessMarketService, RequestError};
@@ -45,19 +46,19 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct OrderPicker<T, P> {
+pub struct OrderPicker<P> {
     db: DbObj,
     config: ConfigLock,
     prover: ProverObj,
     provider: Arc<P>,
+    chain_monitor: Arc<ChainMonitorService<P>>,
     block_time: u64,
-    market: BoundlessMarketService<T, Arc<P>>,
+    market: BoundlessMarketService<BoxTransport, Arc<P>>,
 }
 
-impl<T, P> OrderPicker<T, P>
+impl<P> OrderPicker<P>
 where
-    T: Transport + Clone,
-    P: Provider<T, Ethereum> + 'static + Clone + WalletProvider,
+    P: Provider<BoxTransport, Ethereum> + 'static + Clone + WalletProvider,
 {
     pub fn new(
         db: DbObj,
@@ -66,13 +67,14 @@ where
         block_time: u64,
         market_addr: Address,
         provider: Arc<P>,
+        chain_monitor: Arc<ChainMonitorService<P>>,
     ) -> Self {
         let market = BoundlessMarketService::new(
             market_addr,
             provider.clone(),
             provider.default_signer_address(),
         );
-        Self { db, config, prover, block_time, provider, market }
+        Self { db, config, prover, chain_monitor, block_time, provider, market }
     }
 
     async fn price_order(&self, order_id: U256, order: &Order) -> Result<(), PriceOrderErr> {
@@ -83,8 +85,7 @@ where
             (config.market.min_deadline, config.market.allow_client_addresses.clone())
         };
 
-        let current_block =
-            self.provider.get_block_number().await.context("Failed to get current block")?;
+        let current_block = self.chain_monitor.current_block_number().await?;
 
         // Initial sanity checks:
         if let Some(allow_addresses) = allowed_addresses_opt {
@@ -114,16 +115,13 @@ where
             return Ok(());
         }
 
-        let expire_block: u64 =
-            expire_block.try_into().context("Failed to cast U256 block to u64")?;
-
         // Check if the stake is sane and if we can afford it
         let max_stake = {
             let config = self.config.lock_all().context("Failed to read config")?;
             parse_ether(&config.market.max_stake).context("Failed to parse max_stake")?
         };
 
-        let lockin_stake = U256::from(order.request.offer.lockinStake);
+        let lockin_stake = U256::from(order.request.offer.lockStake);
         if lockin_stake > max_stake {
             tracing::warn!("Removing high stake order {order_id:x}");
             self.db.skip_order(order_id).await.context("Failed to delete order")?;
@@ -287,7 +285,7 @@ where
             proof_res.stats.total_cycles,
             format_ether(mcycle_price_min),
             format_ether(mcycle_price_max),
-            order.request.offer.lockinStake,
+            order.request.offer.lockStake,
         );
 
         // Skip the order if it will never be worth it
@@ -319,9 +317,7 @@ where
             let target_block: u64 = self
                 .market
                 .block_at_price(&order.request.offer, target_min_price)
-                .context("Failed to get target price block")?
-                .try_into()
-                .context("Block number unable to cast to u64")?;
+                .context("Failed to get target price block")?;
             tracing::info!(
                 "Selecting order {order_id:x} at price {} - at block {}",
                 format_ether(target_min_price),
@@ -366,10 +362,9 @@ where
     }
 }
 
-impl<T, P> RetryTask for OrderPicker<T, P>
+impl<P> RetryTask for OrderPicker<P>
 where
-    T: Transport + Clone,
-    P: Provider<T, Ethereum> + 'static + Clone + WalletProvider,
+    P: Provider<BoxTransport, Ethereum> + 'static + Clone + WalletProvider,
 {
     fn spawn(&self) -> RetryRes {
         let picker_copy = self.clone();
@@ -422,11 +417,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        db::SqliteDb,
-        provers::{encode_input, MockProver},
-        OrderStatus,
-    };
+    use crate::{db::SqliteDb, provers::MockProver, OrderStatus};
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
@@ -435,8 +426,8 @@ mod tests {
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
-        test_utils::deploy_boundless_market, Input, InputType, Offer, Predicate, PredicateType,
-        ProofRequest, Requirements,
+        test_utils::deploy_boundless_market, Input, Offer, Predicate, PredicateType, ProofRequest,
+        Requirements,
     };
     use chrono::Utc;
     use guest_assessor::ASSESSOR_GUEST_ID;
@@ -457,7 +448,9 @@ mod tests {
             ProviderBuilder::new()
                 .with_recommended_fillers()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_http(anvil.endpoint().parse().unwrap()),
+                .on_builtin(&anvil.endpoint())
+                .await
+                .unwrap(),
         );
 
         provider.anvil_mine(Some(U256::from(4)), Some(U256::from(2))).await.unwrap();
@@ -465,6 +458,7 @@ mod tests {
         let market_address = deploy_boundless_market(
             &signer,
             provider.clone(),
+            Address::ZERO,
             Address::ZERO,
             Digest::from(ASSESSOR_GUEST_ID),
             Some(signer.address()),
@@ -486,9 +480,18 @@ mod tests {
 
         let prover: ProverObj = Arc::new(MockProver::default());
         let image_id = Digest::from(ECHO_ID);
-        let input_buf = encode_input(&vec![0x41, 0x41, 0x41, 0x41]).unwrap();
 
-        let picker = OrderPicker::new(db.clone(), config, prover, 2, market_address, provider);
+        let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
+        tokio::spawn(chain_monitor.spawn());
+        let picker = OrderPicker::new(
+            db.clone(),
+            config,
+            prover,
+            2,
+            market_address,
+            provider.clone(),
+            chain_monitor,
+        );
 
         let server = MockServer::start();
         let get_mock = server.mock(|when, then| {
@@ -515,14 +518,14 @@ mod tests {
                     },
                 },
                 &image_uri,
-                Input { inputType: InputType::Inline, data: input_buf.into() },
+                Input::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
                 Offer {
                     minPrice: U256::from(min_price),
                     maxPrice: U256::from(max_price),
                     biddingStart: 0,
                     timeout: 100,
                     rampUpPeriod: 1,
-                    lockinStake: U256::from(0),
+                    lockStake: U256::from(0),
                 },
             ),
             target_block: None,
@@ -530,7 +533,6 @@ mod tests {
             input_id: None,
             proof_id: None,
             expire_block: None,
-            path: None,
             client_sig: Bytes::new(),
             lock_price: None,
             error_msg: None,
@@ -557,7 +559,9 @@ mod tests {
             ProviderBuilder::new()
                 .with_recommended_fillers()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_http(anvil.endpoint().parse().unwrap()),
+                .on_builtin(&anvil.endpoint())
+                .await
+                .unwrap(),
         );
 
         provider.anvil_mine(Some(U256::from(4)), Some(U256::from(2))).await.unwrap();
@@ -565,6 +569,7 @@ mod tests {
         let market_address = deploy_boundless_market(
             &signer,
             provider.clone(),
+            Address::ZERO,
             Address::ZERO,
             Digest::from(ASSESSOR_GUEST_ID),
             Some(signer.address()),
@@ -586,9 +591,19 @@ mod tests {
 
         let prover: ProverObj = Arc::new(MockProver::default());
         let image_id = Digest::from(ECHO_ID);
-        let input_buf = encode_input(&vec![0x41, 0x41, 0x41, 0x41]).unwrap();
 
-        let picker = OrderPicker::new(db.clone(), config, prover, 2, market_address, provider);
+        let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
+        tokio::spawn(chain_monitor.spawn());
+
+        let picker = OrderPicker::new(
+            db.clone(),
+            config,
+            prover,
+            2,
+            market_address,
+            provider,
+            chain_monitor,
+        );
 
         let server = MockServer::start();
         let get_mock = server.mock(|when, then| {
@@ -616,21 +631,20 @@ mod tests {
                     },
                 },
                 &image_uri,
-                Input { inputType: InputType::Inline, data: input_buf.into() },
+                Input::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
                 Offer {
                     minPrice: U256::from(min_price),
                     maxPrice: U256::from(max_price),
                     biddingStart: 0,
                     timeout: 100,
                     rampUpPeriod: 1,
-                    lockinStake: U256::from(0),
+                    lockStake: U256::from(0),
                 },
             ),
             image_id: None,
             input_id: None,
             proof_id: None,
             expire_block: None,
-            path: None,
             client_sig: Bytes::new(),
             lock_price: None,
             error_msg: None,
@@ -658,7 +672,9 @@ mod tests {
             ProviderBuilder::new()
                 .with_recommended_fillers()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_http(anvil.endpoint().parse().unwrap()),
+                .on_builtin(&anvil.endpoint())
+                .await
+                .unwrap(),
         );
 
         provider.anvil_mine(Some(U256::from(4)), Some(U256::from(2))).await.unwrap();
@@ -666,6 +682,7 @@ mod tests {
         let market_address = deploy_boundless_market(
             &signer,
             provider.clone(),
+            Address::ZERO,
             Address::ZERO,
             Digest::from(ASSESSOR_GUEST_ID),
             Some(signer.address()),
@@ -687,9 +704,18 @@ mod tests {
 
         let prover: ProverObj = Arc::new(MockProver::default());
         let image_id = Digest::from(ECHO_ID);
-        let input_buf = encode_input(&vec![0x41, 0x41, 0x41, 0x41]).unwrap();
 
-        let picker = OrderPicker::new(db.clone(), config, prover, 2, market_address, provider);
+        let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
+        tokio::spawn(chain_monitor.spawn());
+        let picker = OrderPicker::new(
+            db.clone(),
+            config,
+            prover,
+            2,
+            market_address,
+            provider,
+            chain_monitor,
+        );
 
         let order_id = U256::from(boundless_market.request_id_from_nonce().await.unwrap());
         let min_price = 200000000000u64;
@@ -710,21 +736,20 @@ mod tests {
                     },
                 },
                 "",
-                Input { inputType: InputType::Inline, data: input_buf.into() },
+                Input::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
                 Offer {
                     minPrice: U256::from(min_price),
                     maxPrice: U256::from(max_price),
                     biddingStart: 0,
                     timeout: 100,
                     rampUpPeriod: 1,
-                    lockinStake: U256::from(0),
+                    lockStake: U256::from(0),
                 },
             ),
             image_id: None,
             input_id: None,
             proof_id: None,
             expire_block: None,
-            path: None,
             client_sig: Bytes::new(),
             lock_price: None,
             error_msg: None,
@@ -750,13 +775,16 @@ mod tests {
             ProviderBuilder::new()
                 .with_recommended_fillers()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_http(anvil.endpoint().parse().unwrap()),
+                .on_builtin(&anvil.endpoint())
+                .await
+                .unwrap(),
         );
 
         provider.anvil_mine(Some(U256::from(4)), Some(U256::from(2))).await.unwrap();
         let market_address = deploy_boundless_market(
             &signer,
             provider.clone(),
+            Address::ZERO,
             Address::ZERO,
             Digest::from(ASSESSOR_GUEST_ID),
             Some(signer.address()),
@@ -778,9 +806,18 @@ mod tests {
 
         let prover: ProverObj = Arc::new(MockProver::default());
         let image_id = Digest::from(ECHO_ID);
-        let input_buf = encode_input(&vec![0x41, 0x41, 0x41, 0x41]).unwrap();
 
-        let picker = OrderPicker::new(db.clone(), config, prover, 2, market_address, provider);
+        let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
+        tokio::spawn(chain_monitor.spawn());
+        let picker = OrderPicker::new(
+            db.clone(),
+            config,
+            prover,
+            2,
+            market_address,
+            provider,
+            chain_monitor,
+        );
 
         let server = MockServer::start();
         let get_mock = server.mock(|when, then| {
@@ -807,14 +844,14 @@ mod tests {
                     },
                 },
                 &image_uri,
-                Input { inputType: InputType::Inline, data: input_buf.into() },
+                Input::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
                 Offer {
                     minPrice: U256::from(min_price),
                     maxPrice: U256::from(max_price),
                     biddingStart: 0,
                     timeout: 100,
                     rampUpPeriod: 1,
-                    lockinStake: U256::from(0),
+                    lockStake: U256::from(0),
                 },
             ),
             target_block: None,
@@ -822,7 +859,6 @@ mod tests {
             input_id: None,
             proof_id: None,
             expire_block: None,
-            path: None,
             client_sig: Bytes::new(),
             lock_price: None,
             error_msg: None,

@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy::{
-    primitives::Address,
-    sol_types::{SolStruct, SolValue},
-};
+//! The Boundless CLI is a command-line interface for interacting with the Boundless Market API.
+
+#![deny(missing_docs)]
+
+use alloy::{primitives::Address, sol_types::SolStruct};
 use anyhow::{bail, Context, Result};
 use boundless_assessor::{AssessorInput, Fulfillment};
 use risc0_aggregation::{
-    merkle_path, GuestInput, GuestOutput, SetInclusionReceipt,
-    SetInclusionReceiptVerifierParameters,
+    merkle_path, GuestState, SetInclusionReceipt, SetInclusionReceiptVerifierParameters,
 };
 use risc0_ethereum_contracts::encode_seal;
 use risc0_zkvm::{
@@ -32,16 +32,23 @@ use url::Url;
 
 use boundless_market::{
     contracts::{EIP721DomainSaltless, Fulfillment as BoundlessFulfillment, InputType},
+    input::GuestEnv,
     order_stream_client::Order,
 };
 
 alloy::sol!(
     #[sol(all_derives)]
+    /// The fulfillment of an order.
     struct OrderFulfilled {
+        /// The root of the set.
         bytes32 root;
+        /// The seal of the root.
         bytes seal;
+        /// The fulfillments of the order.
         BoundlessFulfillment[] fills;
+        /// The seal of the assessor.
         bytes assessorSeal;
+        /// The prover address.
         address prover;
     }
 );
@@ -54,7 +61,9 @@ impl OrderFulfilled {
         assessor_receipt: SetInclusionReceipt<ReceiptClaim>,
         prover: Address,
     ) -> Result<Self> {
-        let root = <GuestOutput>::abi_decode(&root_receipt.journal.bytes, true)?.root();
+        let state = GuestState::decode(&root_receipt.journal.bytes)?;
+        let root = state.mmr.finalized_root().context("failed to get finalized root")?;
+
         let root_seal = encode_seal(&root_receipt)?;
         let assessor_seal = assessor_receipt.abi_encode_seal()?;
 
@@ -158,41 +167,19 @@ impl DefaultProver {
         Ok(receipt)
     }
 
-    // Proves the join of two sets.
-    // The [left] and [right] parameters are the receipts of the sets to join.
-    // TODO: Consider using a more generic approach to join sets. Here we always assume
-    //       that the join is the last operation in the set builder, and so we use the
-    //       [ProverOpts::groth16] options.
-    pub(crate) async fn join(&self, left: Receipt, right: Receipt) -> Result<Receipt> {
-        let left_output = <GuestOutput>::abi_decode(&left.journal.bytes, true)?;
-        let right_output = <GuestOutput>::abi_decode(&right.journal.bytes, true)?;
-        let input = GuestInput::Join {
-            self_image_id: self.set_builder_image_id,
-            left_set_root: left_output.root(),
-            right_set_root: right_output.root(),
-        };
+    // Finalizes the set builder.
+    pub(crate) async fn finalize(
+        &self,
+        claims: Vec<ReceiptClaim>,
+        assumptions: Vec<Receipt>,
+    ) -> Result<Receipt> {
+        let input = GuestState::initial(self.set_builder_image_id)
+            .into_input(claims, true)
+            .context("Failed to build set builder input")?;
         let encoded_input = bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(&input)?);
-        self.prove(
-            self.set_builder_elf.clone(),
-            encoded_input,
-            vec![left, right],
-            ProverOpts::groth16(),
-        )
-        .await
-    }
 
-    // Proves a singleton set.
-    pub(crate) async fn singleton(&self, receipt: Receipt) -> Result<Receipt> {
-        let claim = receipt.inner.claim()?.value()?;
-        let input = GuestInput::Singleton { self_image_id: self.set_builder_image_id, claim };
-        let encoded_input = bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(&input)?);
-        self.prove(
-            self.set_builder_elf.clone(),
-            encoded_input,
-            vec![receipt],
-            ProverOpts::succinct(),
-        )
-        .await
+        self.prove(self.set_builder_elf.clone(), encoded_input, assumptions, ProverOpts::succinct())
+            .await
     }
 
     // Proves the assessor.
@@ -230,19 +217,23 @@ impl DefaultProver {
         let request = order.request.clone();
         let order_elf = fetch_url(&request.imageUrl).await?;
         let order_input: Vec<u8> = match request.input.inputType {
-            InputType::Inline => request.input.data.into(),
-            InputType::Url => fetch_url(
-                std::str::from_utf8(&request.input.data).context("input url is not utf8")?,
-            )
-            .await?
-            .into(),
+            InputType::Inline => GuestEnv::decode(&request.input.data)?.stdin,
+            InputType::Url => {
+                GuestEnv::decode(
+                    &fetch_url(
+                        std::str::from_utf8(&request.input.data)
+                            .context("input url is not utf8")?,
+                    )
+                    .await?,
+                )?
+                .stdin
+            }
             _ => bail!("Unsupported input type"),
         };
         let order_receipt =
             self.prove(order_elf.clone(), order_input, vec![], ProverOpts::succinct()).await?;
         let order_journal = order_receipt.journal.bytes.clone();
         let order_image_id = compute_image_id(&order_elf)?;
-        let order_singleton = self.singleton(order_receipt.clone()).await?;
 
         let fill = Fulfillment {
             request: order.request.clone(),
@@ -251,16 +242,20 @@ impl DefaultProver {
             require_payment,
         };
 
-        let assessor_receipt = self.assessor(vec![fill], vec![order_receipt]).await?;
+        let assessor_receipt = self.assessor(vec![fill], vec![order_receipt.clone()]).await?;
         let assessor_journal = assessor_receipt.journal.bytes.clone();
         let assessor_image_id = compute_image_id(&self.assessor_elf)?;
-        let assessor_singleton = self.singleton(assessor_receipt).await?;
 
         let order_claim = ReceiptClaim::ok(order_image_id, order_journal.clone());
         let order_claim_digest = order_claim.digest();
         let assessor_claim = ReceiptClaim::ok(assessor_image_id, assessor_journal);
         let assessor_claim_digest = assessor_claim.digest();
-        let root_receipt = self.join(order_singleton, assessor_singleton).await?;
+        let root_receipt = self
+            .finalize(
+                vec![order_claim.clone(), assessor_claim.clone()],
+                vec![order_receipt, assessor_receipt],
+            )
+            .await?;
 
         let order_path = merkle_path(&[order_claim_digest, assessor_claim_digest], 0);
         let assessor_path = merkle_path(&[order_claim_digest, assessor_claim_digest], 1);
@@ -306,7 +301,7 @@ mod tests {
     use guest_util::{ECHO_ID, ECHO_PATH};
     use risc0_zkvm::VerifierContext;
 
-    fn setup_proving_request_and_signature(
+    async fn setup_proving_request_and_signature(
         signer: &PrivateKeySigner,
     ) -> (ProofRequest, PrimitiveSignature) {
         let request = ProofRequest::new(
@@ -316,12 +311,12 @@ mod tests {
                 imageId: <[u8; 32]>::from(Digest::from(ECHO_ID)).into(),
                 predicate: Predicate::prefix_match(vec![1]),
             },
-            &format!("file://{ECHO_PATH}"),
+            format!("file://{ECHO_PATH}"),
             Input::inline(vec![1, 2, 3, 4]),
             Offer::default(),
         );
 
-        let signature = request.sign_request(signer, Address::ZERO, 1).unwrap();
+        let signature = request.sign_request(signer, Address::ZERO, 1).await.unwrap();
         (request, signature)
     }
 
@@ -329,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn test_fulfill() {
         let signer = PrivateKeySigner::random();
-        let (request, signature) = setup_proving_request_and_signature(&signer);
+        let (request, signature) = setup_proving_request_and_signature(&signer).await;
 
         let domain = eip712_domain(Address::ZERO, 1);
         let prover = DefaultProver::new(

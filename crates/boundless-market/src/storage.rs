@@ -1,4 +1,4 @@
-// Copyright 2024 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,9 +35,12 @@ use reqwest::{
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
+use url::ParseError;
 
 #[async_trait]
+/// A trait for uploading risc0-zkvm ELF binaries and input files to a storage provider.
 pub trait StorageProvider {
+    /// Error type for the storage provider.
     type Error: Debug;
 
     // TODO(victor): Should this be upload_elf?
@@ -45,47 +48,62 @@ pub trait StorageProvider {
     ///
     /// Returns the URL which can be used to publicly access the uploaded ELF. This URL can be
     /// included in a request sent to Boundless.
-    async fn upload_image(&self, elf: &[u8]) -> Result<String, Self::Error>;
+    async fn upload_image(&self, elf: &[u8]) -> Result<Url, Self::Error>;
 
     /// Upload the input for use in a proof request.
     ///
     /// Returns the URL which can be used to publicly access the uploaded input. This URL can be
     /// included in a request sent to Boundless.
-    async fn upload_input(&self, input: &[u8]) -> Result<String, Self::Error>;
+    async fn upload_input(&self, input: &[u8]) -> Result<Url, Self::Error>;
 }
 
 #[derive(Clone, Debug)]
 #[non_exhaustive]
+/// A storage provider that can be used to upload images and inputs to a public URL.
 pub enum BuiltinStorageProvider {
+    /// S3 storage provider.
     S3(S3StorageProvider),
+    /// Pinata storage provider.
     Pinata(PinataStorageProvider),
+    /// Temporary file storage provider, used for local testing.
     File(TempFileStorageProvider),
 }
 
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
+/// Error type for the builtin storage providers.
 pub enum BuiltinStorageProviderError {
+    /// Error type for the S3 storage provider.
     #[error("S3 storage provider error")]
     S3(#[from] S3StorageProviderError),
+    /// Error type for the Pinata storage provider.
     #[error("Pinata storage provider error")]
     Pinata(#[from] PinataStorageProviderError),
+    /// Error type for the temporary file storage provider.
     #[error("temp file storage provider error")]
     File(#[from] TempFileStorageProviderError),
+    /// Error type for an invalid storage provider.
     #[error("Invalid storage provider: {0}")]
     InvalidProvider(String),
+    /// Error type for when no storage provider is configured.
     #[error("no storage provider is configured")]
     NoProvider,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
 #[non_exhaustive]
+/// The type of storage provider to use.
 pub enum StorageProviderType {
+    /// S3 storage provider.
     S3,
+    /// Pinata storage provider.
     Pinata,
+    /// Temporary file storage provider.
     File,
 }
 
 #[derive(Clone, Debug, Parser)]
+/// Configuration for the storage provider.
 pub struct StorageProviderConfig {
     /// Storage provider to use [possible values: s3, pinata, file]
     ///
@@ -132,6 +150,7 @@ pub struct StorageProviderConfig {
 }
 
 impl StorageProviderConfig {
+    /// Create a new configuration for a [StorageProviderType::File].
     pub fn dev_mode() -> Self {
         Self {
             storage_provider: StorageProviderType::File,
@@ -152,7 +171,7 @@ impl StorageProviderConfig {
 impl StorageProvider for BuiltinStorageProvider {
     type Error = BuiltinStorageProviderError;
 
-    async fn upload_image(&self, elf: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_image(&self, elf: &[u8]) -> Result<Url, Self::Error> {
         Ok(match self {
             Self::S3(provider) => provider.upload_image(elf).await?,
             Self::Pinata(provider) => provider.upload_image(elf).await?,
@@ -160,7 +179,7 @@ impl StorageProvider for BuiltinStorageProvider {
         })
     }
 
-    async fn upload_input(&self, input: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_input(&self, input: &[u8]) -> Result<Url, Self::Error> {
         Ok(match self {
             Self::S3(provider) => provider.upload_input(input).await?,
             Self::Pinata(provider) => provider.upload_input(input).await?,
@@ -202,19 +221,25 @@ pub struct PinataStorageProvider {
 }
 
 #[derive(thiserror::Error, Debug)]
+/// Error type for the Pinata storage provider.
 pub enum PinataStorageProviderError {
+    /// Error type for reqwest errors.
     #[error("request error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
+    /// Error type for URL parsing errors.
     #[error("url parse error: {0}")]
     UrlParse(#[from] url::ParseError),
 
+    /// Error type for environment variable errors.
     #[error("environment variable error: {0}")]
     EnvVar(#[from] VarError),
 
+    /// Error type for missing configuration parameters.
     #[error("missing config parameter: {0}")]
     Config(String),
 
+    /// Error type for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
@@ -223,6 +248,7 @@ const DEFAULT_PINATA_API_URL: &str = "https://api.pinata.cloud";
 const DEFAULT_GATEWAY_URL: &str = "https://gateway.pinata.cloud";
 
 impl PinataStorageProvider {
+    /// Creates a new Pinata storage provider from the environment variables.
     pub async fn from_env() -> Result<Self, PinataStorageProviderError> {
         let jwt = std::env::var("PINATA_JWT")
             .context("failed to fetch environment variable 'PINATA_JWT'")?;
@@ -253,6 +279,7 @@ impl PinataStorageProvider {
         Ok(Self { pinata_jwt: jwt, pinata_api_url: api_url, ipfs_gateway_url: gateway_url, client })
     }
 
+    /// Creates a new Pinata storage provider from the given parts.
     pub async fn from_parts(
         jwt: String,
         api_url: String,
@@ -265,6 +292,7 @@ impl PinataStorageProvider {
         Ok(Self { pinata_jwt: jwt, pinata_api_url: api_url, ipfs_gateway_url: gateway_url, client })
     }
 
+    /// Creates a new Pinata storage provider from the given configuration.
     pub async fn from_config(
         config: &StorageProviderConfig,
     ) -> Result<Self, PinataStorageProviderError> {
@@ -331,44 +359,56 @@ impl PinataStorageProvider {
 impl StorageProvider for PinataStorageProvider {
     type Error = PinataStorageProviderError;
 
-    async fn upload_image(&self, elf: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_image(&self, elf: &[u8]) -> Result<Url, Self::Error> {
         let image_id = risc0_zkvm::compute_image_id(elf)?;
         let filename = format!("{}.elf", image_id);
-        self.upload(elf, filename).await.map(|url| url.clone().into())
+        self.upload(elf, filename).await
     }
 
-    async fn upload_input(&self, input: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_input(&self, input: &[u8]) -> Result<Url, Self::Error> {
         let digest = Sha256::digest(input);
         let filename = format!("{}.input", hex::encode(digest.as_slice()));
-        self.upload(input, filename).await.map(|url| url.clone().into())
+        self.upload(input, filename).await
     }
 }
 
 #[derive(Clone, Debug)]
+/// Storage provider that uploads ELFs and inputs to S3.
 pub struct S3StorageProvider {
     s3_bucket: String,
     client: aws_sdk_s3::Client,
 }
 
 #[derive(thiserror::Error, Debug)]
+/// Error type for the S3 storage provider.
 pub enum S3StorageProviderError {
+    /// Error type for S3 errors.
     #[error("AWS S3 error: {0}")]
     S3Error(#[from] S3Error),
 
+    /// Error type for S3 presigning errors.
     #[error("S3 presigning error: {0}")]
     PresigningConfigError(#[from] PresigningConfigError),
 
+    /// Error type for environment variable errors.
     #[error("environment variable error: {0}")]
     EnvVar(#[from] VarError),
 
+    /// Error type for missing configuration parameters.
     #[error("missing config parameter: {0}")]
     Config(String),
 
+    /// Error type for when S3 returns a string that fails to parse as a URL.
+    #[error("failed to parse URL returned by S3: {0}")]
+    UrlParseError(#[from] ParseError),
+
+    /// Error type for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
 
 impl S3StorageProvider {
+    /// Creates a new S3 storage provider from the environment variables.
     pub async fn from_env() -> Result<Self, S3StorageProviderError> {
         let access_key = std::env::var("S3_ACCESS_KEY")?;
         let secret_key = std::env::var("S3_SECRET_KEY")?;
@@ -379,6 +419,7 @@ impl S3StorageProvider {
         Self::from_parts(access_key, secret_key, bucket, url, region).await
     }
 
+    /// Creates a new S3 storage provider from the given parts.
     pub async fn from_parts(
         access_key: String,
         secret_key: String,
@@ -424,6 +465,7 @@ impl S3StorageProvider {
         Ok(Self { s3_bucket: bucket, client })
     }
 
+    /// Creates a new S3 storage provider from the given configuration.
     pub async fn from_config(
         config: &StorageProviderConfig,
     ) -> Result<Self, S3StorageProviderError> {
@@ -458,7 +500,7 @@ impl S3StorageProvider {
         &self,
         data: impl AsRef<[u8]>,
         key: &str,
-    ) -> Result<String, S3StorageProviderError> {
+    ) -> Result<Url, S3StorageProviderError> {
         let byte_stream = ByteStream::from(data.as_ref().to_vec());
 
         self.client
@@ -481,7 +523,7 @@ impl S3StorageProvider {
             .await
             .map_err(|e| S3Error::from(e.into_service_error()))?;
 
-        Ok(presigned_request.uri().to_string())
+        Ok(Url::parse(presigned_request.uri())?)
     }
 }
 
@@ -489,13 +531,13 @@ impl S3StorageProvider {
 impl StorageProvider for S3StorageProvider {
     type Error = S3StorageProviderError;
 
-    async fn upload_image(&self, elf: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_image(&self, elf: &[u8]) -> Result<Url, Self::Error> {
         let image_id = risc0_zkvm::compute_image_id(elf)?;
         let key = format!("image/{}", image_id);
         self.upload(elf, &key).await
     }
 
-    async fn upload_input(&self, input: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_input(&self, input: &[u8]) -> Result<Url, Self::Error> {
         let digest = Sha256::digest(input);
         let key = format!("input/{}", hex::encode(digest.as_slice()));
         self.upload(input, &key).await
@@ -503,31 +545,39 @@ impl StorageProvider for S3StorageProvider {
 }
 
 #[derive(Clone, Debug)]
+/// Storage provider that uploads ELFs and inputs to a temporary directory.
 pub struct TempFileStorageProvider {
     temp_dir: Arc<TempDir>,
 }
 
 #[derive(thiserror::Error, Debug)]
+/// Error type for the temporary file storage provider.
 pub enum TempFileStorageProviderError {
+    /// Error type for IO errors.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Error type for URL parsing errors.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
 
+    /// Error type for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
 
 impl TempFileStorageProvider {
+    /// Creates a new temporary file storage provider.
     pub fn new() -> Result<Self, TempFileStorageProviderError> {
         Ok(Self { temp_dir: Arc::new(tempfile::tempdir()?) })
     }
 
+    /// Creates a new temporary file storage provider from the given parts.
     pub fn from_parts(path: &PathBuf) -> Result<Self, TempFileStorageProviderError> {
         Ok(Self { temp_dir: Arc::new(tempfile::tempdir_in(path)?) })
     }
 
+    /// Creates a new temporary file storage provider from the given configuration.
     pub fn from_config(
         config: &StorageProviderConfig,
     ) -> Result<Self, TempFileStorageProviderError> {
@@ -555,21 +605,22 @@ impl TempFileStorageProvider {
 impl StorageProvider for TempFileStorageProvider {
     type Error = TempFileStorageProviderError;
 
-    async fn upload_image(&self, elf: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_image(&self, elf: &[u8]) -> Result<Url, Self::Error> {
         let image_id = risc0_zkvm::compute_image_id(elf)?;
         let filename = format!("{}.elf", image_id);
         let file_url = self.save_file(elf, &filename).await?;
-        Ok(file_url.to_string())
+        Ok(file_url)
     }
 
-    async fn upload_input(&self, input: &[u8]) -> Result<String, Self::Error> {
+    async fn upload_input(&self, input: &[u8]) -> Result<Url, Self::Error> {
         let digest = Sha256::digest(input);
         let filename = format!("{}.input", hex::encode(digest.as_slice()));
         let file_url = self.save_file(input, &filename).await?;
-        Ok(file_url.to_string())
+        Ok(file_url)
     }
 }
 
+/// Creates a storage provider based on the given configuration.
 pub async fn storage_provider_from_config(
     config: &StorageProviderConfig,
 ) -> Result<BuiltinStorageProvider, BuiltinStorageProviderError> {

@@ -1,8 +1,9 @@
-// Copyright (c) 2024 RISC Zero, Inc.
+// Copyright (c) 2025 RISC Zero, Inc.
 //
 // All rights reserved.
 
 use crate::{
+    chain_monitor::ChainMonitorService,
     config::ConfigLock,
     db::DbObj,
     task::{RetryRes, RetryTask, SupervisorErr},
@@ -12,7 +13,7 @@ use alloy::{
     network::Ethereum,
     primitives::{Address, U256},
     providers::{Provider, WalletProvider},
-    transports::Transport,
+    transports::BoxTransport,
 };
 use anyhow::{Context, Result};
 use boundless_market::contracts::{
@@ -38,22 +39,22 @@ pub enum LockOrderErr {
 }
 
 #[derive(Clone)]
-pub struct OrderMonitor<T, P> {
+pub struct OrderMonitor<P> {
     db: DbObj,
-    provider: Arc<P>,
+    chain_monitor: Arc<ChainMonitorService<P>>,
     block_time: u64,
     config: ConfigLock,
-    market: BoundlessMarketService<T, Arc<P>>,
+    market: BoundlessMarketService<BoxTransport, Arc<P>>,
 }
 
-impl<T, P> OrderMonitor<T, P>
+impl<P> OrderMonitor<P>
 where
-    T: Transport + Clone,
-    P: Provider<T, Ethereum> + WalletProvider + 'static + Clone,
+    P: Provider<BoxTransport, Ethereum> + WalletProvider + 'static + Clone,
 {
     pub fn new(
         db: DbObj,
         provider: Arc<P>,
+        chain_monitor: Arc<ChainMonitorService<P>>,
         config: ConfigLock,
         block_time: u64,
         market_addr: Address,
@@ -72,7 +73,7 @@ where
             market = market.with_timeout(Duration::from_secs(txn_timeout));
         }
 
-        Ok(Self { db, provider, block_time, config, market })
+        Ok(Self { db, chain_monitor, block_time, config, market })
     }
 
     async fn lock_order(&self, order_id: U256, order: &Order) -> Result<(), LockOrderErr> {
@@ -97,13 +98,10 @@ where
             conf.market.lockin_priority_gas
         };
 
-        tracing::info!(
-            "Locking order: {order_id:x} for stake: {}",
-            order.request.offer.lockinStake
-        );
+        tracing::info!("Locking order: {order_id:x} for stake: {}", order.request.offer.lockStake);
         let lock_block = self
             .market
-            .lockin_request(&order.request, &order.client_sig, conf_priority_gas)
+            .lock_request(&order.request, &order.client_sig, conf_priority_gas)
             .await
             .map_err(LockOrderErr::OrderLockedInBlock)?;
 
@@ -164,11 +162,7 @@ where
         // back scan if we have an existing block we last updated from
         // TODO: spawn a side thread to avoid missing new blocks while this is running:
         let order_count = if let Some(last_monitor_block) = opt_last_block {
-            let current_block = self
-                .provider
-                .get_block_number()
-                .await
-                .context("Failed to get current block in back scan")?;
+            let current_block = self.chain_monitor.current_block_number().await?;
 
             tracing::debug!(
                 "Search {last_monitor_block} - {current_block} blocks for lock pending orders..."
@@ -197,11 +191,7 @@ where
         let mut last_block = 0;
         let mut first_block = 0;
         loop {
-            let current_block = self
-                .provider
-                .get_block_number()
-                .await
-                .context("Failed to get current block in block monitor")?;
+            let current_block = self.chain_monitor.current_block_number().await?;
 
             if current_block != last_block {
                 last_block = current_block;
@@ -231,10 +221,9 @@ where
     }
 }
 
-impl<T, P> RetryTask for OrderMonitor<T, P>
+impl<P> RetryTask for OrderMonitor<P>
 where
-    T: Transport + Clone,
-    P: Provider<T, Ethereum> + WalletProvider + 'static + Clone,
+    P: Provider<BoxTransport, Ethereum> + WalletProvider + 'static + Clone,
 {
     fn spawn(&self) -> RetryRes {
         let monitor_clone = self.clone();
@@ -253,13 +242,13 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
-        primitives::{utils, Address, B256, U256},
+        primitives::{Address, B256, U256},
         providers::{ext::AnvilApi, ProviderBuilder},
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
-        test_utils::deploy_boundless_market, Input, InputType, Offer, Predicate, PredicateType,
-        ProofRequest, Requirements,
+        test_utils::{deploy_boundless_market, deploy_hit_points},
+        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
     };
     use chrono::Utc;
     use guest_assessor::ASSESSOR_GUEST_ID;
@@ -275,13 +264,18 @@ mod tests {
             ProviderBuilder::new()
                 .with_recommended_fillers()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_http(anvil.endpoint().parse().unwrap()),
+                .on_builtin(&anvil.endpoint())
+                .await
+                .unwrap(),
         );
+
+        let hit_points = deploy_hit_points(&signer, provider.clone()).await.unwrap();
 
         let market_address = deploy_boundless_market(
             &signer,
             provider.clone(),
             Address::ZERO,
+            hit_points,
             Digest::from(ASSESSOR_GUEST_ID),
             Some(signer.address()),
         )
@@ -292,11 +286,6 @@ mod tests {
             provider.clone(),
             provider.default_signer_address(),
         );
-        boundless_market
-            .add_prover_to_appnet_allowlist(provider.default_signer_address())
-            .await
-            .unwrap();
-        boundless_market.deposit(utils::parse_ether("10").unwrap()).await.unwrap();
 
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
         let config = ConfigLock::default();
@@ -315,7 +304,7 @@ mod tests {
                     data: Default::default(),
                 },
             },
-            "http://risczero.com/image".into(),
+            "http://risczero.com/image",
             Input { inputType: InputType::Inline, data: Default::default() },
             Offer {
                 minPrice: U256::from(min_price),
@@ -323,7 +312,7 @@ mod tests {
                 biddingStart: 0,
                 rampUpPeriod: 1,
                 timeout: 100,
-                lockinStake: U256::from(0),
+                lockStake: U256::from(0),
             },
         );
         let order_id = U256::from(request.id);
@@ -332,7 +321,7 @@ mod tests {
         // let client_sig = boundless_market.eip721_signature(&request, &signer).await.unwrap();
         let chain_id = provider.get_chain_id().await.unwrap();
         let client_sig =
-            request.sign_request(&signer, market_address, chain_id).unwrap().as_bytes();
+            request.sign_request(&signer, market_address, chain_id).await.unwrap().as_bytes();
 
         let order = Order {
             status: OrderStatus::Locking,
@@ -343,7 +332,6 @@ mod tests {
             input_id: None,
             proof_id: None,
             expire_block: None,
-            path: None,
             client_sig: client_sig.into(),
             lock_price: None,
             error_msg: None,
@@ -356,9 +344,12 @@ mod tests {
         db.add_order(order_id, order).await.unwrap();
         db.set_last_block(1).await.unwrap();
 
+        let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
+        tokio::spawn(chain_monitor.spawn());
         let monitor = OrderMonitor::new(
             db.clone(),
             provider.clone(),
+            chain_monitor.clone(),
             config.clone(),
             block_time,
             market_address,
@@ -385,13 +376,18 @@ mod tests {
             ProviderBuilder::new()
                 .with_recommended_fillers()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_http(anvil.endpoint().parse().unwrap()),
+                .on_builtin(&anvil.endpoint())
+                .await
+                .unwrap(),
         );
+
+        let hit_points = deploy_hit_points(&signer, provider.clone()).await.unwrap();
 
         let market_address = deploy_boundless_market(
             &signer,
             provider.clone(),
             Address::ZERO,
+            hit_points,
             Digest::from(ASSESSOR_GUEST_ID),
             Some(signer.address()),
         )
@@ -402,7 +398,6 @@ mod tests {
             provider.clone(),
             provider.default_signer_address(),
         );
-        boundless_market.deposit(utils::parse_ether("10").unwrap()).await.unwrap();
 
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
         let config = ConfigLock::default();
@@ -421,7 +416,7 @@ mod tests {
                     data: Default::default(),
                 },
             },
-            "http://risczero.com/image".into(),
+            "http://risczero.com/image",
             Input { inputType: InputType::Inline, data: Default::default() },
             Offer {
                 minPrice: U256::from(min_price),
@@ -429,15 +424,19 @@ mod tests {
                 biddingStart: 0,
                 rampUpPeriod: 1,
                 timeout: 100,
-                lockinStake: U256::from(0),
+                lockStake: U256::from(0),
             },
         );
         let order_id = U256::from(request.id);
         tracing::info!("addr: {} ID: {:x}", signer.address(), order_id);
 
         let chain_id = provider.get_chain_id().await.unwrap();
-        let client_sig =
-            request.sign_request(&signer, market_address, chain_id).unwrap().as_bytes().into();
+        let client_sig = request
+            .sign_request(&signer, market_address, chain_id)
+            .await
+            .unwrap()
+            .as_bytes()
+            .into();
         let order = Order {
             status: OrderStatus::Locking,
             updated_at: Utc::now(),
@@ -447,7 +446,6 @@ mod tests {
             input_id: None,
             proof_id: None,
             expire_block: None,
-            path: None,
             client_sig,
             lock_price: None,
             error_msg: None,
@@ -459,9 +457,12 @@ mod tests {
 
         db.set_last_block(0).await.unwrap();
 
+        let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
+        tokio::spawn(chain_monitor.spawn());
         let monitor = OrderMonitor::new(
             db.clone(),
             provider.clone(),
+            chain_monitor.clone(),
             config.clone(),
             block_time,
             market_address,
