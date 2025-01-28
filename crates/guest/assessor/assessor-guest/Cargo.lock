@@ -941,6 +941,9 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 dependencies = [
  "serde",
 ]
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "assessor-guest"
@@ -3224,6 +3227,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nybbles"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8983bb634df7248924ee0c4c3a749609b5abcb082c28fffe3254b3eb3602b307"
+dependencies = [
+ "alloy-rlp",
+ "const-hex",
+ "proptest",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3877,7 +3893,9 @@ dependencies = [
 [[package]]
 name = "risc0-ethereum-contracts"
 version = "1.3.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d34ac67db37b058d5397bd90c229fe6df1af97539f4cd405d2796ee3b553f74"
 checksum = "5d34ac67db37b058d5397bd90c229fe6df1af97539f4cd405d2796ee3b553f74"
 dependencies = [
  "alloy",
@@ -4450,6 +4468,9 @@ name = "smallvec"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+dependencies = [
+ "serde",
+]
 dependencies = [
  "serde",
 ]

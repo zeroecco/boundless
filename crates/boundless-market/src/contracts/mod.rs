@@ -20,7 +20,7 @@ use std::str::FromStr;
 use alloy::{
     contract::Error as ContractErr,
     primitives::{PrimitiveSignature, SignatureError},
-    signers::{Signature, Signer},
+    signers::Signer,
     sol_types::{Error as DecoderErr, SolInterface, SolStruct},
     transports::TransportError,
 };
@@ -43,9 +43,10 @@ pub use risc0_ethereum_contracts::{encode_seal, IRiscZeroSetVerifier};
 #[cfg(not(target_os = "zkvm"))]
 const TXN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
 
-// boundless_market.rs is a copy of IBoundlessMarket.sol with alloy derive statements added.
+// boundless_market_generated.rs contains the Boundless contract types
+// with alloy derive statements added.
 // See the build.rs script in this crate for more details.
-include!(concat!(env!("OUT_DIR"), "/boundless_market.rs"));
+include!(concat!(env!("OUT_DIR"), "/boundless_market_generated.rs"));
 pub use boundless_market_contract::*;
 
 #[allow(missing_docs)]
@@ -324,7 +325,7 @@ impl ProofRequest {
         contract_addr: Address,
         chain_id: u64,
     ) -> Result<(), RequestError> {
-        let sig = Signature::try_from(signature.as_ref())?;
+        let sig = PrimitiveSignature::try_from(signature.as_ref())?;
         let domain = eip712_domain(contract_addr, chain_id);
         let hash = self.eip712_signing_hash(&domain.alloy_struct());
         let addr = sig.recover_address_from_prehash(&hash)?;
@@ -404,8 +405,8 @@ impl Offer {
     }
 
     /// Sets the offer lock-in stake.
-    pub fn with_lockin_stake(self, lockin_stake: U256) -> Self {
-        Self { lockinStake: lockin_stake, ..self }
+    pub fn with_lock_stake(self, lock_stake: U256) -> Self {
+        Self { lockStake: lock_stake, ..self }
     }
 
     /// Sets the offer bidding start as block number.
@@ -437,9 +438,9 @@ impl Offer {
     }
 
     /// Sets the offer lock-in stake based on the desired price per million cycles.
-    pub fn with_lockin_stake_per_mcycle(self, mcycle_price: U256, mcycle: u64) -> Self {
-        let lockin_stake = mcycle_price * U256::from(mcycle);
-        Self { lockinStake: lockin_stake, ..self }
+    pub fn with_lock_stake_per_mcycle(self, mcycle_price: U256, mcycle: u64) -> Self {
+        let lock_stake = mcycle_price * U256::from(mcycle);
+        Self { lockStake: lock_stake, ..self }
     }
 }
 
@@ -594,16 +595,6 @@ fn decode_contract_err<T: SolInterface>(err: ContractErr) -> Result<T, TxnErr> {
             Ok(decoded_error)
         }
         _ => Err(TxnErr::ContractErr(err)),
-    }
-}
-
-#[cfg(not(target_os = "zkvm"))]
-impl IBoundlessMarketErrors {
-    pub(crate) fn decode_error(err: ContractErr) -> TxnErr {
-        match decode_contract_err(err) {
-            Ok(res) => TxnErr::BoundlessMarketErr(res),
-            Err(decode_err) => decode_err,
-        }
     }
 }
 
@@ -1018,7 +1009,7 @@ mod tests {
                 biddingStart: 0,
                 timeout: 1000,
                 rampUpPeriod: 1,
-                lockinStake: U256::from(0),
+                lockStake: U256::from(0),
             },
         };
 
