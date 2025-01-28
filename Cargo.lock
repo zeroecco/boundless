@@ -2025,7 +2025,6 @@ dependencies = [
  "hex",
  "http 1.2.0",
  "httpmock",
- "network-test-layer",
  "notify",
  "reqwest",
  "risc0-aggregation",
@@ -4453,15 +4452,6 @@ dependencies = [
  "portable-atomic-util",
  "rawpointer",
  "rayon",
-]
-
-[[package]]
-name = "network-test-layer"
-version = "0.6.0"
-dependencies = [
- "alloy",
- "tower",
- "tracing",
 ]
 
 [[package]]

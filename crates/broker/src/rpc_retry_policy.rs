@@ -19,7 +19,7 @@ impl RetryPolicy for CustomRetryPolicy {
         match error {
             TransportError::Transport(TransportErrorKind::Custom(err)) => {
                 let msg = err.to_string();
-                msg.contains("os error 104)")
+                msg.contains("os error 104")
             }
             TransportError::Transport(e) => e.is_retry_err(),
             TransportError::DeserError { text, .. } => {

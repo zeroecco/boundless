@@ -55,7 +55,6 @@ hex = { workspace = true }
 httpmock = "0.7"
 risc0-zkvm = { workspace = true, default-features = true }
 tracing-test = "0.2"
-network-test-layer = { workspace = true }
 
 [features]
 test-utils = ["boundless-market/test-utils"]
