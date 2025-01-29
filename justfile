@@ -68,9 +68,17 @@ format-check:
     cd documentation && bun run ci
     forge fmt --check
 
-docker:
+docker-compose-build:
     docker compose --profile broker --env-file ./.env-compose config
     docker compose --profile broker --env-file ./.env-compose -f compose.yml -f ./dockerfiles/compose.ci.yml build
+
+docker-build: docker-build-broker docker-build-order-stream
+
+docker-build-broker:
+    docker build --platform linux/amd64 -f dockerfiles/broker.dockerfile .
+
+docker-build-order-stream:
+    docker build --platform linux/amd64 -f dockerfiles/order_stream.dockerfile .
 
 # Set up local Postgres database for testing
 setup-db:

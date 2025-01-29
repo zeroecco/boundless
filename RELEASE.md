@@ -8,13 +8,23 @@ When publishing a new release, you can use the following process.
 
 1. Pick the new version number.
 
-   If significant new features or breaking changes are included, bump the version number should be `v0.x+1.0`.
+   If significant new features or breaking changes are included, the new version number should be `v0.x+1.0`.
    Note that this will be most releases.
    If the release contains only fixes to the latest release, the version number should be `v0.x.y+1`.
 
+   > [!TIP]
+   > If a PR is needed to update the version number, open it along with the new assessor guest info in step 3
+
 2. Build the assessor guest.
 
-   ```zsh
+   > [!NOTE]
+   > As of `risc0-zkvm` 1.2.2, where bigint2 is behind unstable, `cargo-risczero` must be installed with the following command for `cargo risczero build` to be able to build the assessor.
+   >
+   > ```sh
+   > cargo install cargo-risczero --locked -Fexperimental --git https://github.com/risc0/risc0 --tag v1.2.2
+   > ```
+
+   ```sh
    cargo risczero build --manifest-path crates/guest/assessor/assessor-guest/Cargo.toml
    ```
 
@@ -22,8 +32,12 @@ When publishing a new release, you can use the following process.
 
    If the image ID has changed relative to what's recorded in `deployment.toml`:
 
-   1. Upload the ELF to some public HTTP location (such as Pinata), and get back a download URL.
+   1. Upload the ELF to some public HTTP location (such IPFS via Pinata), and get back a download URL.
    2. Record these values in `deployment.toml` as `assessor-image-id` and `assessor-guest-url`.
+
+   > [!NOTE]
+   > IPFS is the preferred way to host the ELF because it will have a stable, content-addressable URL.
+   > However, this does come with the trade-off that IPFS fetching is less reliable than e.g. S3.
 
 3. If the version number or `deployment.toml` need to be updated, open a PR to `main` to do so.
 
@@ -45,6 +59,9 @@ When publishing a new release, you can use the following process.
 
    When the tag is pushed, a run of the [release workflow][release-workflow] will kick off against that tag.
    Watch and confirm that all tests pass, and take action if they do not.
+
+   > [!TIP]
+   > If you need to push new code, you can start again from step 1 with v0.x.y+1.
 
 6. Publish the new version of the crates to [crates.io](https://crates.io).
 
