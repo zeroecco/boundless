@@ -229,13 +229,19 @@ impl Agent {
         }
 
         while !term_sig.load(Ordering::Relaxed) {
-            let task = taskdb::request_work(&self.db_pool, &self.args.task_stream)
-                .await
-                .context("Failed to request_work")?;
-            let Some(task) = task else {
-                time::sleep(time::Duration::from_secs(self.args.poll_time)).await;
-                continue;
-            };
+            let listen_future = taskdb::listen_for_ready_task(&self.db_pool, &self.args.task_stream);
+
+            tokio::select! {
+                listen_result = listen_future => {
+                    listen_result.context("Failed to listen for ready task")?;
+                    Ok(taskdb::request_work(&self.db_pool, &self.args.task_stream).await?)
+                }
+                () = async {
+                    while !term_sig.load(Ordering::Relaxed) {
+                        time::sleep(time::Duration::from_millis(100)).await;
+                    }
+                } => Ok(None)
+            }
 
             if let Err(err) = self.process_work(&task).await {
                 tracing::error!("Failure during task processing: {err:?}");

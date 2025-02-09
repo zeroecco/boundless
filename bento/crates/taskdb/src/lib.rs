@@ -6,7 +6,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 pub use sqlx::Error as SqlxError;
 use sqlx::{
     types::{JsonValue, Uuid},
-    FromRow, PgPool,
+    FromRow, PgPool, PgListener,
 };
 use thiserror::Error;
 
@@ -191,6 +191,28 @@ pub async fn request_work(
         Ok(task.get())
     } else {
         Ok(None)
+    }
+}
+
+pub async fn listen_for_ready_task(pool: &PgPool, worker_type: &str) -> Result<(), TaskDbErr> {
+    let mut listener = PgListener::connect_with(pool).await?;
+    listener.listen("task_created").await?;
+    listener.recv().await?;
+    request_work(pool, worker_type).await?;
+    Ok(())
+}
+
+pub async fn ping_task_ready(pool: &PgPool) -> Result<(), TaskDbErr> {
+    let res = query_scalar!("SELECT count(*) FROM tasks where state = 'ready'")
+        .fetch_one(pool)
+        .await?;
+    if res > Some(0) {
+        query_scalar!("SELECT pg_notify('task_ready', '')")
+            .execute(pool)
+            .await?;
+        Ok(())
+    } else {
+        Ok(())
     }
 }
 
