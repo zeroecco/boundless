@@ -92,15 +92,15 @@ async fn new_order(
     Ok(())
 }
 
-const GET_BATCH: &str = "/v1/batches/current";
-async fn get_batch(State(_state): State<Arc<AppState>>) -> Result<(), ApiError> {
+const GET_BATCH: &str = "/v1/batches/latest";
+async fn get_latest_batch(State(_state): State<Arc<AppState>>) -> Result<(), ApiError> {
     todo!()
 }
 
 fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .route(NEW_ORDER, post(new_order))
-        .route(GET_BATCH, get(get_batch))
+        .route(GET_BATCH, get(get_latest_batch))
         .with_state(state)
 }
 
