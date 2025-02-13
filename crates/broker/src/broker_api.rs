@@ -79,7 +79,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-const NEW_ORDER: &str = "/orders/new";
+const NEW_ORDER: &str = "/v1/orders/new";
 async fn new_order(
     State(state): State<Arc<AppState>>,
     Json(new_order): Json<(U256, Order)>,
@@ -92,7 +92,7 @@ async fn new_order(
     Ok(())
 }
 
-const GET_BATCH: &str = "/batches/current";
+const GET_BATCH: &str = "/v1/batches/current";
 async fn get_batch(State(_state): State<Arc<AppState>>) -> Result<(), ApiError> {
     todo!()
 }
