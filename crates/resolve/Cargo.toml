@@ -1,0 +1,25 @@
+[package]
+name = "resolve"
+resolver = "2"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+risc0-zkvm = { workspace = true }
+risc0-aggregation = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+guest-resolve = { workspace = true }
+guest-set-builder = { workspace = true }
+guest-util = { workspace = true }
+# TODO(risc0#2342) Remove the requirement that the prove feature be used.
+risc0-zkvm = { workspace = true, features = ["client", "bonsai", "prove", "unstable"] }
+test-log = { workspace = true }
+tracing = { workspace = true }
