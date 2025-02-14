@@ -3,3 +3,4 @@
 // All rights reserved.
 
 mod e2e;
+mod e2e_manual;

@@ -1,4 +1,3 @@
-use alloy::primitives::U256;
 use anyhow::{Context, Error as AnyhowErr, Result};
 use axum::{
     extract::State,
@@ -16,7 +15,7 @@ use url::Url;
 use crate::{
     db::{DbError, DbObj},
     task::{RetryRes, RetryTask, SupervisorErr},
-    Order,
+    Batch, Order,
 };
 
 struct AppState {
@@ -82,10 +81,10 @@ impl IntoResponse for ApiError {
 const NEW_ORDER: &str = "/v1/orders/new";
 async fn new_order(
     State(state): State<Arc<AppState>>,
-    Json(new_order): Json<(U256, Order)>,
+    Json(new_order): Json<Order>,
 ) -> Result<(), ApiError> {
-    let order_id = new_order.0;
-    let order = new_order.1;
+    let order_id = new_order.request.id;
+    let order = new_order;
 
     state.db.add_order(order_id, order).await?;
 
@@ -93,8 +92,11 @@ async fn new_order(
 }
 
 const GET_BATCH: &str = "/v1/batches/latest";
-async fn get_latest_batch(State(_state): State<Arc<AppState>>) -> Result<(), ApiError> {
-    todo!()
+async fn get_latest_batch(State(state): State<Arc<AppState>>) -> Result<Json<Batch>, ApiError> {
+    let latest_batch = state.db.get_current_batch().await?;
+    let batch = state.db.get_batch(latest_batch).await?;
+
+    Ok(Json(batch))
 }
 
 fn app(state: Arc<AppState>) -> Router {
