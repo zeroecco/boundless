@@ -1,99 +1,108 @@
-// Copyright (c) 2024 RISC Zero, Inc.
+// Copyright (c) 2025 RISC Zero, Inc.
 //
 // All rights reserved.
 
+#![no_main]
+#![no_std]
+
+extern crate alloc;
+
 use alloy_sol_types::SolValue;
 use boundless_market::contracts::ResolveJournal;
-use resolve::{AssumptionReceipt, ResolveInput};
+use boundless_resolve::{AssumptionReceipt, ResolveInput};
 use risc0_aggregation::{RecursionVerifierParamters, SetInclusionReceiptVerifierParameters};
 use risc0_zkvm::{
     guest::env,
     sha::{Digest, Digestible},
-    SuccinctReceiptVerifierParameters, VerifierContext,
+    Assumption, Groth16ReceiptVerifierParameters, SuccinctReceiptVerifierParameters,
+    VerifierContext,
 };
 
+risc0_zkvm::guest::entry!(main);
+
 fn main() {
+    // Read and deserialize the input.
     let bytes = env::read_frame();
     let input: ResolveInput = postcard::from_bytes(&bytes).expect("failed to deserialize input");
 
-    // Verify the integrity of the conditional and assumption claims.
-    // NOTE: We do not use `verify_integrity` here because that method does not allow for
-    // verification of conditional receipts. This is to prevent a footgun in that verifying a
-    // conditional receipt tells you nothing unless you also verify the assumptions. Here, we also
-    // verify the assumption also potentially through composition and are committing the full
-    // receipt claim, making this semantically consistent.
-    env::log("verify conditional");
+    // Verify the integrity of the conditional claim.
+    // NOTE: We do not use `verify_integrity' here because that method does not allow verification
+    // of conditional receipts. This is to prevent a footgun, where verifying a conditional receipt
+    // tells you nothing unless you also verify the assumptions. Here, we also verify the assumption
+    // by composition and commit the resolved commit claim, making it semantically consistent.
     env::verify_assumption(input.conditional.digest(), Digest::ZERO).unwrap();
 
-    // Remove the head of the assumptions list from the conditional claim.
+    // Process the conditional claim and extract the head assumption.
     let mut claim = input.conditional;
-    let assumption = claim
-        .output
-        .as_value_mut()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .assumptions
-        .as_value_mut()
-        .unwrap()
-        .0
-        .remove(0)
-        .value()
-        .unwrap();
+    let output = claim.output.as_value_mut().expect("Output pruned").as_mut().expect("No output");
+    let assumptions = output.assumptions.as_value_mut().expect("Assumptions pruned");
+    if assumptions.0.is_empty() {
+        panic!("No assumptions")
+    }
+    let assumption = assumptions.0.remove(0);
+    let assumption = assumption.as_value().expect("Assumption pruned");
 
-    // Construct the appropriate verifier context, using the control root from the
-    // assumption, or default if zero, and the default for other parameters.
-    // TODO(victor) Add a `with_control_root` builder method on VerifierContext to do this.
-    // NOTE: This guest is bound to the version of the zkVM it was compiled with. Assumptions may
-    // have a control root of all zeroes, resolved during recursive verification, howevever we need
-    // to supply a concrete control root when directly verifying. Either use the risc0-zkvm
-    // default, or the one supplied on the assumption.
-    // TODO(victor) Building the Groth16 verifier parameters is really slow. Need to either speed
-    // it up dramatically or calculate the verifier parameters at build-time.
-    let verifier_context = VerifierContext::empty()
+    // Create verifier context and verify assumption.
+    let verifier_context = create_verifier_context(assumption.control_root);
+    verify_assumption(input.assumption, assumption, &verifier_context);
+
+    // Commit the resolve journal.
+    let journal = ResolveJournal { claimDigest: <[u8; 32]>::from(claim.digest()).into() };
+
+    env::commit_slice(&journal.abi_encode());
+}
+
+/// Construct a verifier context that accepts receipts corresponding to the specified control root, or the default control root if the specified root is zero.
+// TODO(victor) Add a `with_control_root` builder method on VerifierContext to do this.
+fn create_verifier_context(control_root: Digest) -> VerifierContext {
+    let succinct_params = {
+        let mut params = SuccinctReceiptVerifierParameters::default();
+        if control_root != Digest::ZERO {
+            params.control_root = control_root;
+        }
+        params
+    };
+
+    let groth16_params = {
+        let mut params = Groth16ReceiptVerifierParameters::default();
+        if control_root != Digest::ZERO {
+            params.control_root = control_root;
+        }
+        params
+    };
+
+    VerifierContext::empty()
         .with_suites(VerifierContext::default_hash_suites())
-        .with_succinct_verifier_parameters({
-            let default = SuccinctReceiptVerifierParameters::default();
-            SuccinctReceiptVerifierParameters {
-                control_root: match assumption.control_root {
-                    Digest::ZERO => default.control_root,
-                    _ => assumption.control_root,
-                },
-                ..default
-            }
-        });
-    //    .with_groth16_verifier_parameters({
-    //        let default = Groth16ReceiptVerifierParameters::default();
-    //        Groth16ReceiptVerifierParameters {
-    //            // NOTE: Assumptions may have a control root of all zeroes, resolved during recursive
-    //            // verification, howevever we need to supply a concrete control root when directly
-    //            // verifying. Either use the risc0-zkvm default, or the one supplied on the
-    //            // assumption.
-    //            control_root: match assumption.control_root {
-    //                Digest::ZERO => default.control_root,
-    //                _ => assumption.control_root,
-    //            },
-    //            ..default
-    //        }
-    //    });
+        .with_succinct_verifier_parameters(succinct_params)
+        .with_groth16_verifier_parameters(groth16_params)
+}
 
-    // Verify the provided assumption receipt, handling the cases of no receipt provided (by making
-    // an assumption), a risc0_zkvm::InnerAssumptionReceipt is provided, and a SetInclusionReceipt
-    // is provided.
-    match input.assumption {
+/// Verifies the assumption receipt against the expected assumption.
+fn verify_assumption(
+    assumption_receipt: AssumptionReceipt,
+    assumption: &Assumption,
+    verifier_context: &VerifierContext,
+) {
+    match assumption_receipt {
         AssumptionReceipt::Base(receipt) => {
             let receipt_claim_digest = receipt.claim_digest().unwrap();
-            assert_eq!(receipt_claim_digest, assumption.claim, "provided assumption receipt claim digest is not consistent with assumption list on conditional receipt: {} != {}", receipt_claim_digest, assumption.claim);
-            env::log("verify base");
-            receipt.verify_integrity_with_context(&verifier_context).unwrap();
+            assert_eq!(
+                receipt_claim_digest, assumption.claim,
+                "resolved assumption is not equal to the head of the list: {} != {}",
+                receipt_claim_digest, assumption.claim,
+            );
+            receipt.verify_integrity_with_context(verifier_context).unwrap();
         }
-        AssumptionReceipt::SetInclusion{image_id, receipt} => {
+        AssumptionReceipt::SetInclusion { image_id, receipt } => {
             let receipt_claim_digest = receipt.claim.digest();
-            assert_eq!(receipt_claim_digest, assumption.claim, "provided assumption receipt claim digest is not consistent with assumption list on conditional receipt: {} != {}", receipt_claim_digest, assumption.claim);
-            env::log("verify set");
+            assert_eq!(
+                receipt_claim_digest, assumption.claim,
+                "resolved assumption is not equal to the head of the list: {} != {}",
+                receipt_claim_digest, assumption.claim,
+            );
             receipt
                 .verify_integrity_with_context(
-                    &verifier_context,
+                    verifier_context,
                     SetInclusionReceiptVerifierParameters { image_id },
                     Some(RecursionVerifierParamters {
                         control_root: (assumption.control_root != Digest::ZERO)
@@ -102,12 +111,6 @@ fn main() {
                 )
                 .unwrap();
         }
-        _ => unimplemented!("resolve with the given assumption receipt type is unimplemented"),
+        _ => unimplemented!("assumption receipt type is not supported"),
     }
-
-    let journal = ResolveJournal {
-        claimDigest: <[u8; 32]>::from(claim.digest()).into(),
-    };
-
-    env::commit_slice(&journal.abi_encode());
 }
