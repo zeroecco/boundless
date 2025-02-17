@@ -2426,6 +2426,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "boundless-resolve"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "guest-resolve",
+ "guest-set-builder",
+ "guest-util",
+ "postcard",
+ "risc0-aggregation",
+ "risc0-zkvm",
+ "serde",
+ "test-log",
+ "tracing",
+]
+
+[[package]]
 name = "boundless-slasher"
 version = "0.6.0"
 dependencies = [
@@ -6381,22 +6397,6 @@ dependencies = [
  "web-sys",
  "webpki-roots 0.26.8",
  "windows-registry",
-]
-
-[[package]]
-name = "resolve"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "guest-resolve",
- "guest-set-builder",
- "guest-util",
- "postcard",
- "risc0-aggregation",
- "risc0-zkvm",
- "serde",
- "test-log",
- "tracing",
 ]
 
 [[package]]
