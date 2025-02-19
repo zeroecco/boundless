@@ -112,7 +112,7 @@ pub trait BrokerDb {
     async fn set_batch_submitted(&self, batch_id: usize) -> Result<(), DbError>;
     async fn set_batch_failure(&self, batch_id: usize, err: String) -> Result<(), DbError>;
     async fn get_current_batch(&self) -> Result<usize, DbError>;
-
+    async fn mark_batch_submission_attempt(&self, batch_id: usize) -> Result<(), DbError>;
     /// Update a batch with the results of an aggregation step.
     ///
     /// Sets the aggreagtion state, and adds the given orders to the batch, updating the batch fees
@@ -769,6 +769,24 @@ impl BrokerDb for SqliteDb {
                 self.new_batch().await
             }
         }
+    }
+
+    async fn mark_batch_submission_attempt(&self, batch_id: usize) -> Result<(), DbError> {
+        let res = sqlx::query(
+            r#"
+            UPDATE batches
+            SET
+                data = json_set(data, '$.submission_attempts', json_extract(data, '$.submission_attempts') + 1)
+            WHERE
+                id = $1"#,
+        )
+        .bind(batch_id as i64)
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(DbError::BatchNotFound(batch_id));
+        }
+        Ok(())
     }
 
     async fn update_batch(
@@ -1439,6 +1457,19 @@ mod tests {
         let db_batch = db.get_batch(batch_id).await.unwrap();
         assert_eq!(db_batch.status, BatchStatus::Failed);
         assert_eq!(db_batch.error_msg, Some(err_msg.into()));
+    }
+
+    #[sqlx::test]
+    async fn mark_batch_submission_attempt(pool: SqlitePool) {
+        let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
+
+        let batch_id = db.get_current_batch().await.unwrap();
+        let batch = db.get_batch(batch_id).await.unwrap();
+        assert_eq!(batch.submission_attempts, 0);
+
+        db.mark_batch_submission_attempt(batch_id).await.unwrap();
+        let batch = db.get_batch(batch_id).await.unwrap();
+        assert_eq!(batch.submission_attempts, 1);
     }
 
     #[sqlx::test]

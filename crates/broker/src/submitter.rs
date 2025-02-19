@@ -258,6 +258,7 @@ where
                 .await
             {
                 tracing::error!("Failed to submit proofs for batch {batch_id}: {err:?}");
+
                 for fulfillment in fulfillments.iter() {
                     if let Err(db_err) = self
                         .db
@@ -357,6 +358,7 @@ where
             }
             Err(err) => {
                 tracing::error!("Submission of batch {batch_id} failed: {err:?}");
+
                 if let Err(err) = self.db.set_batch_failure(batch_id, format!("{err:?}")).await {
                     tracing::error!("Failed to set batch failure: {batch_id} - {err:?}");
                     return Err(SupervisorErr::Recover(err.into()));
@@ -620,6 +622,7 @@ mod tests {
                     assessor_receipt.claim().unwrap().digest(),
                 ],
             }),
+            ..Default::default()
         };
         db.add_batch(batch_id, batch).await.unwrap();
 
