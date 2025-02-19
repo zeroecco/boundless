@@ -358,10 +358,35 @@ where
             }
             Err(err) => {
                 tracing::error!("Submission of batch {batch_id} failed: {err:?}");
+                let max_batch_submission_attempts = self
+                    .config
+                    .lock_all()
+                    .map_err(|e| SupervisorErr::Recover(e.into()))?
+                    .batcher
+                    .max_submission_attempts;
+                self.db.mark_batch_submission_attempt(batch_id).await.map_err(|e| {
+                    tracing::error!("Failed to set update batch submission attempts in db: {e:?}");
+                    SupervisorErr::Recover(e.into())
+                })?;
 
-                if let Err(err) = self.db.set_batch_failure(batch_id, format!("{err:?}")).await {
-                    tracing::error!("Failed to set batch failure: {batch_id} - {err:?}");
-                    return Err(SupervisorErr::Recover(err.into()));
+                let batch = self.db.get_batch(batch_id).await.map_err(|e| {
+                    tracing::error!("Failed to get batch from db: {e:?}");
+                    SupervisorErr::Recover(e.into())
+                })?;
+
+                if batch.submission_attempts >= max_batch_submission_attempts {
+                    tracing::error!("Batch {batch_id} has reached max submission attempts");
+                    if let Err(err) = self.db.set_batch_failure(batch_id, format!("{err:?}")).await
+                    {
+                        tracing::error!("Failed to set batch failure in db: {batch_id} - {err:?}");
+                        return Err(SupervisorErr::Recover(err.into()));
+                    }
+                } else {
+                    tracing::warn!(
+                        "Batch submission attempt {}/{} failed",
+                        batch.submission_attempts,
+                        max_batch_submission_attempts,
+                    );
                 }
             }
         }
