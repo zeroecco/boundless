@@ -276,6 +276,15 @@ async fn image_upload_put(
     let body_bytes =
         to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
 
+    if body_bytes.is_empty() {
+        // Note: this is currently a hack to short-circuit the upload if empty bytes.
+        // This is done to match Bonsai's behavior, but also because `Prover::has_image`
+        // needs to check if an image exists before downloading, and does this currently by calling
+        // upload with empty bytes.
+        // See https://github.com/risc0/risc0/pull/2851 for a potential way to avoid this pattern.
+        return Ok(());
+    }
+
     let comp_img_id =
         compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
     if comp_img_id != image_id {

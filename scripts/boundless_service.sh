@@ -160,7 +160,7 @@ start_services() {
 
     log_info "Starting Docker Compose services using environment file: $ENV_FILE"
 
-    # Start Docker Compose in foreground mode
+    # Start Docker Compose in background/detached mode
     docker compose --profile broker --env-file "$ENV_FILE" up --build -d
 
     # After docker compose up exits normally (without interruption)
