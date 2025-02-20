@@ -71,8 +71,10 @@ async fn main() -> Result<()> {
     let mut stdout = take_stdout()?;
     let set_builder_elf = fetch_url(&args.set_builder_url).await?;
     let assessor_elf = fetch_url(&args.assessor_url).await?;
+    // TODO(Wolf): fetch the correct Resolve ELF from the contract
+    let resolve_elf = assessor_elf.clone();
     let domain = eip712_domain(args.boundless_market_address, args.chain_id.try_into()?);
-    let prover = DefaultProver::new(set_builder_elf, assessor_elf, args.prover_address, domain)?;
+    let prover = DefaultProver::new(set_builder_elf, assessor_elf, resolve_elf, args.prover_address, domain)?;
     let order = Order {
         request: <ProofRequest>::abi_decode(
             &hex::decode(args.request.trim_start_matches("0x"))?,

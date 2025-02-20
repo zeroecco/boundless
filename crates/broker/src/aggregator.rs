@@ -145,6 +145,7 @@ where
                 &self.set_builder_guest_id.to_string(),
                 &input_id,
                 assumption_ids,
+                vec![],
             )
             .await
             .context("Failed to prove set-builder")?;
@@ -206,6 +207,7 @@ where
                 request: order.request.clone(),
                 signature: order.client_sig.clone().to_vec(),
                 journal,
+                resolve_image_id: Digest::ZERO,
                 require_payment: true,
             })
         }
@@ -226,7 +228,7 @@ where
 
         let proof_res = self
             .prover
-            .prove_and_monitor_stark(&self.assessor_guest_id.to_string(), &input_id, assumptions)
+            .prove_and_monitor_stark(&self.assessor_guest_id.to_string(), &input_id, assumptions, vec![])
             .await
             .context("Failed to prove assesor stark")?;
 
@@ -562,9 +564,9 @@ mod tests {
             .await
             .unwrap();
         let proof_res_1 =
-            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
+            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![], vec![]).await.unwrap();
         let proof_res_2 =
-            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
+            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![], vec![]).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
         let _handle = tokio::spawn(chain_monitor.spawn());
@@ -721,9 +723,9 @@ mod tests {
             .await
             .unwrap();
         let proof_res_1 =
-            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
+            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![], vec![]).await.unwrap();
         let proof_res_2 =
-            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
+            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![], vec![]).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
         let _handle = tokio::spawn(chain_monitor.spawn());
@@ -896,7 +898,7 @@ mod tests {
             .await
             .unwrap();
         let proof_res =
-            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
+            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![], vec![]).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
 
@@ -1007,7 +1009,7 @@ mod tests {
             .await
             .unwrap();
         let proof_res =
-            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
+            prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![], vec![]).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
 

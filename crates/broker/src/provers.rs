@@ -2,12 +2,6 @@
 //
 // All rights reserved.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
-
 use async_trait::async_trait;
 use bonsai_sdk::{
     non_blocking::{Client as BonsaiClient, SessionId, SnarkId},
@@ -15,10 +9,15 @@ use bonsai_sdk::{
 };
 use boundless_market::input::InputBuilder;
 use risc0_zkvm::{
-    compute_image_id, sha::Digestible, FakeReceipt, InnerReceipt, MaybePruned, Receipt,
+    compute_image_id, sha::Digestible, Assumption, FakeReceipt, InnerReceipt, MaybePruned, Receipt,
     ReceiptClaim,
 };
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -89,12 +88,14 @@ pub trait Prover {
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
     ) -> Result<String, ProverError>;
     async fn prove_and_monitor_stark(
         &self,
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
     ) -> Result<ProofResult, ProverError>;
     async fn wait_for_stark(&self, proof_id: &str) -> Result<ProofResult, ProverError>;
     async fn get_receipt(&self, proof_id: &str) -> Result<Option<Receipt>, ProverError>;
@@ -211,7 +212,14 @@ impl Prover for Bonsai {
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
     ) -> Result<String, ProverError> {
+        if !unresolved.is_empty() {
+            return Err(ProverError::ProvingFailed(format!(
+                "{} unresolved assumptions",
+                unresolved.len()
+            )));
+        }
         Ok(self
             .client
             .create_session(image_id.into(), input_id.into(), assumptions, false)
@@ -224,8 +232,9 @@ impl Prover for Bonsai {
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
     ) -> Result<ProofResult, ProverError> {
-        let proof_id = self.prove_stark(image_id, input_id, assumptions).await?;
+        let proof_id = self.prove_stark(image_id, input_id, assumptions, unresolved).await?;
         self.wait_for_stark(&proof_id).await
     }
 
@@ -341,6 +350,7 @@ impl MockProver {
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
         executor_limit: Option<u64>,
     ) -> Result<ProofResult, ProverError> {
         let image = self
@@ -373,6 +383,11 @@ impl MockProver {
                 )))?
                 .clone();
             env.add_assumption(assumption_receipt.1.clone());
+        }
+        for unresolved in unresolved.iter() {
+            env.add_assumption(
+                InnerReceipt::Fake(FakeReceipt::new(MaybePruned::Pruned(unresolved.claim))),
+            );
         }
         let start = Instant::now();
         let env = env.build().map_err(|_| {
@@ -431,7 +446,7 @@ impl Prover for MockProver {
         assumptions: Vec<String>,
         executor_limit: Option<u64>,
     ) -> Result<ProofResult, ProverError> {
-        self.mock_prove_stark(image_id, input_id, assumptions, executor_limit)
+        self.mock_prove_stark(image_id, input_id, assumptions, vec![], executor_limit)
     }
 
     async fn prove_stark(
@@ -439,8 +454,9 @@ impl Prover for MockProver {
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
     ) -> Result<String, ProverError> {
-        Ok(self.mock_prove_stark(image_id, input_id, assumptions, None)?.id)
+        Ok(self.mock_prove_stark(image_id, input_id, assumptions, unresolved, None)?.id)
     }
 
     async fn prove_and_monitor_stark(
@@ -448,8 +464,9 @@ impl Prover for MockProver {
         image_id: &str,
         input_id: &str,
         assumptions: Vec<String>,
+        unresolved: Vec<Assumption>,
     ) -> Result<ProofResult, ProverError> {
-        self.mock_prove_stark(image_id, input_id, assumptions, None)
+        self.mock_prove_stark(image_id, input_id, assumptions, unresolved, None)
     }
 
     async fn wait_for_stark(&self, proof_id: &str) -> Result<ProofResult, ProverError> {

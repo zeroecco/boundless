@@ -84,11 +84,19 @@ fn verify_assumption(
     verifier_context: &VerifierContext,
 ) {
     match assumption_receipt {
-        AssumptionReceipt::Base(receipt) => {
+        AssumptionReceipt::Base(risc0_zkvm::AssumptionReceipt::Unresolved(ref unresolved)) => {
+            assert_eq!(
+                unresolved, assumption,
+                "provided assumption is not equal to the head of the list: {} != {}",
+                unresolved.claim, assumption.claim,
+            );
+            env::verify_assumption(assumption.claim, assumption.control_root).unwrap();
+        }
+        AssumptionReceipt::Base(risc0_zkvm::AssumptionReceipt::Proven(receipt)) => {
             let receipt_claim_digest = receipt.claim_digest().unwrap();
             assert_eq!(
                 receipt_claim_digest, assumption.claim,
-                "resolved assumption is not equal to the head of the list: {} != {}",
+                "provided assumption is not equal to the head of the list: {} != {}",
                 receipt_claim_digest, assumption.claim,
             );
             receipt.verify_integrity_with_context(verifier_context).unwrap();
@@ -97,7 +105,7 @@ fn verify_assumption(
             let receipt_claim_digest = receipt.claim.digest();
             assert_eq!(
                 receipt_claim_digest, assumption.claim,
-                "resolved assumption is not equal to the head of the list: {} != {}",
+                "provided assumption is not equal to the head of the list: {} != {}",
                 receipt_claim_digest, assumption.claim,
             );
             receipt

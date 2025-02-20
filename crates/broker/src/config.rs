@@ -110,6 +110,8 @@ pub struct ProverConf {
     ///
     /// Provides a little durability for transient failures during proof status requests
     pub req_retry_count: u64,
+    /// Maximum number of assumptions allowed for the Resolve.
+    pub max_assumptions: u64,
     /// Set builder guest ELF path
     ///
     /// When using a durable deploy, set this to the published current SOT guest ELF path on the
@@ -125,6 +127,7 @@ impl Default for ProverConf {
             status_poll_ms: 1000,
             bonsai_r0_zkvm_ver: None,
             req_retry_count: 0,
+            max_assumptions: 0,
             set_builder_guest_path: None,
             assessor_set_guest_path: None,
         }
@@ -346,6 +349,7 @@ max_file_size = 50_000_000
 status_poll_ms = 1000
 bonsai_r0_zkvm_ver = "1.0.1"
 req_retry_count = 0
+max_assumptions = 0
 
 [batcher]
 batch_max_time = 300
@@ -371,6 +375,7 @@ max_mcycle_limit = 10
 [prover]
 status_poll_ms = 1000
 req_retry_count = 0
+max_assumptions = 0
 
 [batcher]
 batch_max_time = 300

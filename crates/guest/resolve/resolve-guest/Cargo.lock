@@ -1456,6 +1456,7 @@ dependencies = [
  "rand 0.9.0",
  "reqwest",
  "risc0-aggregation",
+ "risc0-binfmt",
  "risc0-ethereum-contracts",
  "risc0-zkvm",
  "rmp-serde",

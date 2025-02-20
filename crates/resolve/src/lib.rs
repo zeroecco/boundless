@@ -6,10 +6,11 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::fmt::Debug;
 use risc0_aggregation::SetInclusionReceipt;
 use risc0_zkvm::sha::Digest;
-use risc0_zkvm::{InnerAssumptionReceipt, ReceiptClaim, Unknown};
+use risc0_zkvm::{ReceiptClaim, Unknown};
 use serde::{Deserialize, Serialize};
 
 /// Receipt attesting to the validity of an assumption.
@@ -20,9 +21,25 @@ use serde::{Deserialize, Serialize};
 #[non_exhaustive]
 pub enum AssumptionReceipt {
     /// Base assumption receipt
-    Base(InnerAssumptionReceipt),
+    /// This allows using [risc0_zkvm::AssumptionReceipt::Unresolved], which makes it possible to
+    /// add the assumption to the [risc0_zkvm::ExecutorEnv] instead of as port of the input.
+    /// This is only practical useful during dev mode tests.
+    Base(risc0_zkvm::AssumptionReceipt),
     /// Set inclusion receipt for aggregated proofs
+    // TODO(Wolf): Do we need to commit to the image ID of the SetBuilder?
     SetInclusion { image_id: Digest, receipt: SetInclusionReceipt<Unknown> },
+}
+
+impl From<risc0_zkvm::Assumption> for AssumptionReceipt {
+    fn from(assumption: risc0_zkvm::Assumption) -> Self {
+        AssumptionReceipt::Base(risc0_zkvm::AssumptionReceipt::Unresolved(assumption))
+    }
+}
+
+impl From<risc0_zkvm::Receipt> for AssumptionReceipt {
+    fn from(receipt: risc0_zkvm::Receipt) -> Self {
+        AssumptionReceipt::Base(receipt.into())
+    }
 }
 
 /// Input of the Resolve guest.
@@ -45,41 +62,32 @@ pub struct ResolveInput {
     pub assumption: AssumptionReceipt,
 }
 
-#[cfg(test)]
-mod tests {
+impl ResolveInput {
+    /// Serializes the ResolveInput to a Vec<u8> using postcard.
+    pub fn to_vec(&self) -> Vec<u8> {
+        let bytes = postcard::to_allocvec(self).unwrap();
+        let length = bytes.len() as u32;
+        let mut result = Vec::with_capacity(4 + bytes.len());
+        result.extend_from_slice(&length.to_le_bytes());
+        result.extend_from_slice(&bytes);
+        result
+    }
+}
+
+#[cfg(feature = "test_helpers")]
+pub mod test_helpers {
     use super::*;
-    use alloc::{format, string::ToString, vec, vec::Vec};
+    use alloc::vec;
     use anyhow::Context;
-    use core::iter;
-    use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
-    use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
-    use guest_util::{ECHO_ELF, ECHO_ID, IDENTITY_ELF, IDENTITY_ID};
-    use risc0_aggregation::{
-        GuestState as AggregationState, SetInclusionReceiptVerifierParameters,
-    };
+    use guest_util::{IDENTITY_ELF, IDENTITY_ID};
     use risc0_zkvm::{
-        default_prover,
         sha::{Digest, Digestible},
-        Assumption, ExecutorEnv, ExecutorImpl, FakeReceipt, InnerReceipt, MaybePruned, ProveInfo,
-        ProverOpts, Receipt, VerifierContext,
+        Assumption, ExecutorEnv, ExecutorImpl, FakeReceipt, InnerReceipt, MaybePruned, ProverOpts,
+        Receipt, VerifierContext,
     };
-    use test_log::test;
-
-    /// Produce a receipt for the guest execution.
-    fn prove_with_opts(env: ExecutorEnv, elf: &[u8], opts: &ProverOpts) -> anyhow::Result<Receipt> {
-        tracing::debug!("starting proving");
-        let ProveInfo { receipt, stats } = default_prover().prove_with_opts(env, elf, opts)?;
-        tracing::debug!("finished proving: {:#?}", stats);
-        Ok(receipt)
-    }
-
-    fn echo(input: &str) -> anyhow::Result<Receipt> {
-        let env = ExecutorEnv::builder().write(&input.as_bytes())?.build()?;
-        prove_with_opts(env, ECHO_ELF, &ProverOpts::succinct())
-    }
 
     /// Processes a receipt and returns a conditional receipt based on the execution environment.
-    fn identity_conditional(input: &Receipt) -> anyhow::Result<Receipt> {
+    pub fn identity_conditional(input: &Receipt) -> anyhow::Result<Receipt> {
         // Extract claim and build environment
         let claim = input.claim().context("Invalid claim")?.value().context("Pruned claim")?;
         let env = ExecutorEnv::builder().write(&claim)?.add_assumption(claim.clone()).build()?;
@@ -106,7 +114,6 @@ mod tests {
         // The default_prover() only works when all the assumptions are resolved, thus compress the
         // segments manually but do not resolve the assumptions.
         // TODO(risc0#982): Support conditional receipts in proof composition
-        tracing::debug!("starting proving");
         let conditional_receipt = session
             .segments
             .iter()
@@ -119,12 +126,44 @@ mod tests {
             })
             .reduce(|left, right| prover.join(&left?, &right?).context("Failed to join"))
             .context("No segments")??;
-        tracing::debug!("finished proving: {:#?}", session.stats());
 
         Ok(Receipt::new(
             InnerReceipt::Succinct(conditional_receipt),
             session.journal.unwrap().bytes,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::{format, string::ToString, vec, vec::Vec};
+    use core::iter;
+    use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
+    use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
+    use guest_util::{ECHO_ELF, ECHO_ID, IDENTITY_ID};
+    use risc0_aggregation::{
+        GuestState as AggregationState, SetInclusionReceiptVerifierParameters,
+    };
+    use risc0_zkvm::{
+        default_prover,
+        sha::{Digest, Digestible},
+        Assumption, ExecutorEnv, MaybePruned, ProveInfo, ProverOpts, Receipt,
+    };
+    use test_helpers::identity_conditional;
+    use test_log::test;
+
+    /// Produce a receipt for the guest execution.
+    fn prove_with_opts(env: ExecutorEnv, elf: &[u8], opts: &ProverOpts) -> anyhow::Result<Receipt> {
+        tracing::debug!("starting proving");
+        let ProveInfo { receipt, stats } = default_prover().prove_with_opts(env, elf, opts)?;
+        tracing::debug!("finished proving: {:#?}", stats);
+        Ok(receipt)
+    }
+
+    fn echo(input: &str) -> anyhow::Result<Receipt> {
+        let env = ExecutorEnv::builder().write(&input.as_bytes())?.build()?;
+        prove_with_opts(env, ECHO_ELF, &ProverOpts::succinct())
     }
 
     /// Produce receipt for an aggregation of the given list of receipts.
@@ -145,30 +184,61 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "does not work in dev mode"]
-    fn resolve_basic() {
+    fn resolve_base_unresolved() {
         let echo_receipt = echo("echo... echo... echo...").unwrap();
-        echo_receipt.inner.succinct().unwrap();
         echo_receipt.verify(ECHO_ID).unwrap();
 
         let conditional_receipt = identity_conditional(&echo_receipt).unwrap();
         conditional_receipt.verify(IDENTITY_ID).unwrap_err();
 
-        let input = ResolveInput {
+        let resolve_input = ResolveInput {
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
-            assumption: AssumptionReceipt::Base(echo_receipt.inner.into()),
+            assumption: Assumption {
+                claim: echo_receipt.claim().unwrap().digest(),
+                control_root: Digest::ZERO,
+            }
+            .into(),
         };
 
         // Proving should fail if the conditional receipt is not provided.
-        let env = ExecutorEnv::builder()
-            .write_frame(&postcard::to_allocvec(&input).unwrap())
-            .build()
-            .unwrap();
+        let env = ExecutorEnv::builder().write_slice(&resolve_input.to_vec()).build().unwrap();
         let err = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap_err();
         assert!(err.to_string().contains("no receipt found to resolve assumption"), "{err}");
 
         let env = ExecutorEnv::builder()
-            .write_frame(&postcard::to_allocvec(&input).unwrap())
+            .write_frame(&postcard::to_allocvec(&resolve_input).unwrap())
+            .add_assumption(conditional_receipt)
+            .add_assumption(echo_receipt)
+            .build()
+            .unwrap();
+        let receipt = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap();
+        receipt.verify(RESOLVE_GUEST_ID).unwrap();
+
+        let resolved_claim_digest = Digest::try_from(receipt.journal.bytes).unwrap();
+        assert_eq!(resolved_claim_digest, ReceiptClaim::ok(IDENTITY_ID, vec![]).digest());
+    }
+
+    #[test]
+    #[ignore = "does not work in dev mode"]
+    fn resolve_base_proven() {
+        let echo_receipt = echo("echo... echo... echo...").unwrap();
+        echo_receipt.verify(ECHO_ID).unwrap();
+
+        let conditional_receipt = identity_conditional(&echo_receipt).unwrap();
+        conditional_receipt.verify(IDENTITY_ID).unwrap_err();
+
+        let resolve_input = ResolveInput {
+            conditional: conditional_receipt.claim().unwrap().value().unwrap(),
+            assumption: echo_receipt.into(),
+        };
+
+        // Proving should fail if the conditional receipt is not provided.
+        let env = ExecutorEnv::builder().write_slice(&resolve_input.to_vec()).build().unwrap();
+        let err = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap_err();
+        assert!(err.to_string().contains("no receipt found to resolve assumption"), "{err}");
+
+        let env = ExecutorEnv::builder()
+            .write_frame(&postcard::to_allocvec(&resolve_input).unwrap())
             .add_assumption(conditional_receipt)
             .build()
             .unwrap();
@@ -206,7 +276,7 @@ mod tests {
             verifier_parameters.digest(),
         );
 
-        let input = ResolveInput {
+        let resolve_input = ResolveInput {
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
             assumption: AssumptionReceipt::SetInclusion {
                 image_id: SET_BUILDER_ID.into(),
@@ -216,7 +286,7 @@ mod tests {
 
         // Run with the conditional receipt, and the set receipt for the singleton as assumptions.
         let env = ExecutorEnv::builder()
-            .write_frame(&postcard::to_allocvec(&input).unwrap())
+            .write_slice(&resolve_input.to_vec())
             .add_assumption(conditional_receipt)
             .add_assumption(set_inclusion_receipt)
             .build()
@@ -254,7 +324,7 @@ mod tests {
         )
         .with_root(set_inclusion_receipt);
 
-        let input = ResolveInput {
+        let resolve_input = ResolveInput {
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
             assumption: AssumptionReceipt::SetInclusion {
                 image_id: SET_BUILDER_ID.into(),
@@ -265,7 +335,7 @@ mod tests {
         // Run with the conditional receipt as an assumptions and the set receipt containing a
         // succinct STARK receipt for direct verification of the root.
         let env = ExecutorEnv::builder()
-            .write_frame(&postcard::to_allocvec(&input).unwrap())
+            .write_slice(&resolve_input.to_vec())
             .add_assumption(conditional_receipt)
             .build()
             .unwrap();
