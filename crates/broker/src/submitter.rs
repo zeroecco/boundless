@@ -426,7 +426,13 @@ mod tests {
         network::EthereumWallet,
         node_bindings::Anvil,
         primitives::{B256, U256},
-        providers::ProviderBuilder,
+        providers::{
+            fillers::{
+                BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+                WalletFiller,
+            },
+            Identity, ProviderBuilder, RootProvider,
+        },
         signers::local::PrivateKeySigner,
     };
     use boundless_assessor::{AssessorInput, Fulfillment};
@@ -445,7 +451,22 @@ mod tests {
     use risc0_zkvm::sha::Digest;
     use tracing_test::traced_test;
 
-    async fn run_submit_batch(config: ConfigLock) {
+    type TestProvider = FillProvider<
+        JoinFill<
+            JoinFill<
+                Identity,
+                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+            >,
+            WalletFiller<EthereumWallet>,
+        >,
+        RootProvider<BoxTransport>,
+        BoxTransport,
+        Ethereum,
+    >;
+
+    async fn build_submitter_and_batch(
+        config: ConfigLock,
+    ) -> (Submitter<TestProvider>, DbObj, usize) {
         let anvil = Anvil::new().spawn();
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
         let customer_signer: PrivateKeySigner = anvil.keys()[1].clone().into();
@@ -664,8 +685,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(submitter.process_next_batch().await.unwrap());
+        (submitter, db, batch_id)
+    }
 
+    async fn process_next_batch<P>(submitter: Submitter<P>, db: DbObj, batch_id: usize)
+    where
+        P: Provider<BoxTransport, Ethereum> + WalletProvider + 'static + Clone,
+    {
+        assert!(submitter.process_next_batch().await.unwrap());
         let batch = db.get_batch(batch_id).await.unwrap();
         assert_eq!(batch.status, BatchStatus::Submitted);
     }
@@ -674,7 +701,8 @@ mod tests {
     #[traced_test]
     async fn submit_batch() {
         let config = ConfigLock::default();
-        run_submit_batch(config).await;
+        let (submitter, db, batch_id) = build_submitter_and_batch(config).await;
+        process_next_batch(submitter, db, batch_id).await;
     }
 
     #[tokio::test]
@@ -682,6 +710,19 @@ mod tests {
     async fn submit_batch_merged_txn() {
         let config = ConfigLock::default();
         config.load_write().as_mut().unwrap().batcher.single_txn_fulfill = true;
-        run_submit_batch(config).await;
+        let (submitter, db, batch_id) = build_submitter_and_batch(config).await;
+        process_next_batch(submitter, db, batch_id).await;
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn submit_batch_retry() {
+        let config = ConfigLock::default();
+        let (submitter, db, batch_id) = build_submitter_and_batch(config).await;
+
+        let batch = db.get_batch(batch_id).await.unwrap();
+        submitter.submit_batch(batch_id, &batch).await.unwrap();
+
+        process_next_batch(submitter, db, batch_id).await;
     }
 }
