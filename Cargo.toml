@@ -49,7 +49,7 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 postcard = { version = "1.0" }
 rand = { version = "0.9" }
 reqwest = "0.12"
-risc0-aggregation = { version = "0.2" }
+risc0-aggregation = { version = "0.2.2" }
 risc0-binfmt = "1.2"
 risc0-build = { version = "1.2", features = ["docker"] }
 risc0-build-ethereum = { version = "1.3" }
