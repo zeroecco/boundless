@@ -355,6 +355,7 @@ where
                     "Completed batch: {batch_id} total_fees: {}",
                     format_ether(batch.fees)
                 );
+                Ok(true)
             }
             Err(err) => {
                 tracing::error!("Submission of batch {batch_id} failed: {err:?}");
@@ -387,12 +388,10 @@ where
                         batch.submission_attempts,
                         max_batch_submission_attempts,
                     );
-                    return Ok(false);
                 }
+                Ok(false)
             }
         }
-
-        Ok(true)
     }
 }
 
@@ -717,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn submit_batch_retry() {
+    async fn submit_batch_retry_max_attempts() {
         let config = ConfigLock::default();
         let (_anvil, submitter, db, batch_id) = build_submitter_and_batch(config).await;
 
@@ -727,21 +726,36 @@ mod tests {
             AggregationState { claim_digests: Vec::new(), ..batch.aggregation_state.unwrap() };
         db.set_batch_aggregation_state(batch_id, new_agg_state).await.unwrap();
 
-        let res = submitter.process_next_batch().await;
-        tracing::debug!("res {:?}", res);
-        // assert!(logs_contain("Batch submission attempt 1/3 failed"));
-        assert!(!res.unwrap()); // returned Ok(false)
+        assert!(!submitter.process_next_batch().await.unwrap()); // returned Ok(false)
+        assert!(logs_contain("Batch submission attempt 1/3 failed"));
 
-        let res = submitter.process_next_batch().await;
-        tracing::debug!("res {:?}", res);
-        assert!(!res.unwrap()); // returned Ok(false)
+        assert!(!submitter.process_next_batch().await.unwrap()); // returned Ok(false)
+        assert!(logs_contain("Batch submission attempt 2/3 failed"));
 
-        let res = submitter.process_next_batch().await;
-        tracing::debug!("res {:?}", res);
-        assert!(!res.unwrap()); // returned Ok(false)
+        assert!(!submitter.process_next_batch().await.unwrap()); // returned Ok(false)
+        assert!(logs_contain("reached max submission attempts"));
+    }
 
-        let res = submitter.process_next_batch().await;
-        tracing::debug!("res {:?}", res);
-        assert!(!res.unwrap()); // returned Ok(false)
+    #[tokio::test]
+    #[traced_test]
+    async fn submit_batch_retry_recover() {
+        let config = ConfigLock::default();
+        let (_anvil, submitter, db, batch_id) = build_submitter_and_batch(config).await;
+
+        // set an empty claim digests vec. This will cause the batch submission to fail
+        let batch = db.get_batch(batch_id).await.unwrap();
+        let new_agg_state = AggregationState {
+            claim_digests: Vec::new(),
+            ..batch.aggregation_state.clone().unwrap()
+        };
+        db.set_batch_aggregation_state(batch_id, new_agg_state).await.unwrap();
+
+        assert!(!submitter.process_next_batch().await.unwrap()); // returned Ok(false)
+        assert!(logs_contain("Batch submission attempt 1/3 failed"));
+
+        // set it back to the prior valid aggregation_state
+        db.set_batch_aggregation_state(batch_id, batch.aggregation_state.unwrap()).await.unwrap();
+        assert!(submitter.process_next_batch().await.unwrap()); // returned Ok(true)
+        assert!(logs_contain("Completed batch"));
     }
 }

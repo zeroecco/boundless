@@ -108,14 +108,16 @@ pub trait BrokerDb {
     async fn set_aggregation_status(&self, id: U256) -> Result<(), DbError>;
     async fn get_aggregation_proofs(&self) -> Result<Vec<AggregationOrder>, DbError>;
     async fn complete_batch(&self, batch_id: usize, g16_proof_id: String) -> Result<(), DbError>;
+    /// Retrieve a batch with status Complete and modify its status to PendingSubmission
     async fn get_complete_batch(&self) -> Result<Option<(usize, Batch)>, DbError>;
     async fn set_batch_submitted(&self, batch_id: usize) -> Result<(), DbError>;
     async fn set_batch_failure(&self, batch_id: usize, err: String) -> Result<(), DbError>;
     async fn get_current_batch(&self) -> Result<usize, DbError>;
+    /// Mark of a submission attempt for the given_batch_id and also reset the status to Completed from PendingSubmission
     async fn mark_batch_submission_attempt(&self, batch_id: usize) -> Result<(), DbError>;
     /// Update a batch with the results of an aggregation step.
     ///
-    /// Sets the aggreagtion state, and adds the given orders to the batch, updating the batch fees
+    /// Sets the aggregation state, and adds the given orders to the batch, updating the batch fees
     /// and deadline. During finalization, the assessor_claim_digest is recorded as well.
     async fn update_batch(
         &self,
@@ -782,11 +784,12 @@ impl BrokerDb for SqliteDb {
             r#"
             UPDATE batches
             SET
-                data = json_set(data, '$.submission_attempts', json_extract(data, '$.submission_attempts') + 1)
+                data = json_set(json_set(data, '$.submission_attempts', json_extract(data, '$.submission_attempts') + 1), '$.status', $2)
             WHERE
                 id = $1"#,
         )
         .bind(batch_id as i64)
+        .bind(BatchStatus::Complete)
         .execute(&self.pool)
         .await?;
         if res.rows_affected() == 0 {
