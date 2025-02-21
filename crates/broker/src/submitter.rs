@@ -387,6 +387,7 @@ where
                         batch.submission_attempts,
                         max_batch_submission_attempts,
                     );
+                    return Ok(false);
                 }
             }
         }
@@ -424,7 +425,7 @@ mod tests {
     };
     use alloy::{
         network::EthereumWallet,
-        node_bindings::Anvil,
+        node_bindings::{Anvil, AnvilInstance},
         primitives::{B256, U256},
         providers::{
             fillers::{
@@ -466,7 +467,7 @@ mod tests {
 
     async fn build_submitter_and_batch(
         config: ConfigLock,
-    ) -> (Submitter<TestProvider>, DbObj, usize) {
+    ) -> (AnvilInstance, Submitter<TestProvider>, DbObj, usize) {
         let anvil = Anvil::new().spawn();
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
         let customer_signer: PrivateKeySigner = anvil.keys()[1].clone().into();
@@ -685,7 +686,7 @@ mod tests {
         )
         .unwrap();
 
-        (submitter, db, batch_id)
+        (anvil, submitter, db, batch_id)
     }
 
     async fn process_next_batch<P>(submitter: Submitter<P>, db: DbObj, batch_id: usize)
@@ -701,7 +702,7 @@ mod tests {
     #[traced_test]
     async fn submit_batch() {
         let config = ConfigLock::default();
-        let (submitter, db, batch_id) = build_submitter_and_batch(config).await;
+        let (_anvil, submitter, db, batch_id) = build_submitter_and_batch(config).await;
         process_next_batch(submitter, db, batch_id).await;
     }
 
@@ -710,7 +711,7 @@ mod tests {
     async fn submit_batch_merged_txn() {
         let config = ConfigLock::default();
         config.load_write().as_mut().unwrap().batcher.single_txn_fulfill = true;
-        let (submitter, db, batch_id) = build_submitter_and_batch(config).await;
+        let (_anvil, submitter, db, batch_id) = build_submitter_and_batch(config).await;
         process_next_batch(submitter, db, batch_id).await;
     }
 
@@ -718,11 +719,29 @@ mod tests {
     #[traced_test]
     async fn submit_batch_retry() {
         let config = ConfigLock::default();
-        let (submitter, db, batch_id) = build_submitter_and_batch(config).await;
+        let (_anvil, submitter, db, batch_id) = build_submitter_and_batch(config).await;
 
+        // set an empty claim digests vec. This will cause the batch submission to fail
         let batch = db.get_batch(batch_id).await.unwrap();
-        submitter.submit_batch(batch_id, &batch).await.unwrap();
+        let new_agg_state =
+            AggregationState { claim_digests: Vec::new(), ..batch.aggregation_state.unwrap() };
+        db.set_batch_aggregation_state(batch_id, new_agg_state).await.unwrap();
 
-        process_next_batch(submitter, db, batch_id).await;
+        let res = submitter.process_next_batch().await;
+        tracing::debug!("res {:?}", res);
+        // assert!(logs_contain("Batch submission attempt 1/3 failed"));
+        assert!(!res.unwrap()); // returned Ok(false)
+
+        let res = submitter.process_next_batch().await;
+        tracing::debug!("res {:?}", res);
+        assert!(!res.unwrap()); // returned Ok(false)
+
+        let res = submitter.process_next_batch().await;
+        tracing::debug!("res {:?}", res);
+        assert!(!res.unwrap()); // returned Ok(false)
+
+        let res = submitter.process_next_batch().await;
+        tracing::debug!("res {:?}", res);
+        assert!(!res.unwrap()); // returned Ok(false)
     }
 }

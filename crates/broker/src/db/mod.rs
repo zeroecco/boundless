@@ -130,6 +130,12 @@ pub trait BrokerDb {
     async fn add_batch(&self, batch_id: usize, batch: Batch) -> Result<(), DbError>;
     #[cfg(test)]
     async fn set_batch_status(&self, batch_id: usize, status: BatchStatus) -> Result<(), DbError>;
+    #[cfg(test)]
+    async fn set_batch_aggregation_state(
+        &self,
+        batch_id: usize,
+        agg_state: AggregationState,
+    ) -> Result<(), DbError>;
 }
 
 pub type DbObj = Arc<dyn BrokerDb + Send + Sync>;
@@ -953,6 +959,33 @@ impl BrokerDb for SqliteDb {
                     id = $2"#,
         )
         .bind(status)
+        .bind(batch_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        if res.rows_affected() == 0 {
+            return Err(DbError::BatchNotFound(batch_id));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    async fn set_batch_aggregation_state(
+        &self,
+        batch_id: usize,
+        agg_state: AggregationState,
+    ) -> Result<(), DbError> {
+        let res = sqlx::query(
+            r#"
+                UPDATE batches
+                SET
+                    data = json_set(data,
+                           '$.aggregation_state', json($1))
+                WHERE
+                    id = $2"#,
+        )
+        .bind(sqlx::types::Json(agg_state))
         .bind(batch_id as i64)
         .execute(&self.pool)
         .await?;
