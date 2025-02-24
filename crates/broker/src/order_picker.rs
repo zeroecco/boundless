@@ -225,11 +225,12 @@ where
             return Ok(());
         }
 
+        // TODO(Wolf): also preflight the Resolve guest with the corresponding assumptions
+
         tracing::debug!(
             "Starting preflight execution of {order_id:x} exec limit {exec_limit} mcycles"
         );
         // TODO add a future timeout here to put a upper bound on how long to preflight for
-        // TODO(Wolf): handle the assumptions from the guest_env
         let proof_res = self
             .prover
             .preflight(&image_id, &input_id, vec![], Some(exec_limit * 1024 * 1024))

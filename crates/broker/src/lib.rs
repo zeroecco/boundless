@@ -299,6 +299,40 @@ where
         }
     }
 
+    async fn get_resolve_image(&self) -> Result<(Digest, Vec<u8>)> {
+        let (resolve_path, max_file_size) = {
+            let config = self.config_watcher.config.lock_all().context("Failed to lock config")?;
+            (config.prover.resolve_set_guest_path.clone(), config.market.max_file_size)
+        };
+
+        if let Some(path) = resolve_path {
+            let elf_buf = std::fs::read(path).context("Failed to read resolve path")?;
+            let img_id = risc0_zkvm::compute_image_id(&elf_buf)
+                .context("Failed to compute resolve imageId")?;
+
+            Ok((img_id, elf_buf))
+        } else {
+            let boundless_market = BoundlessMarketService::new(
+                self.args.boundless_market_addr,
+                self.provider.clone(),
+                Address::ZERO,
+            );
+
+            let (image_id, image_url_str) = boundless_market
+                .resolve_image_info()
+                .await
+                .context("Failed to get contract resolve_image_info")?;
+            let image_uri = UriHandlerBuilder::new(&image_url_str)
+                .set_max_size(max_file_size)
+                .build()
+                .context("Failed to parse image URI")?;
+            tracing::debug!("Downloading assessor image from: {image_uri}");
+            let image_data = image_uri.fetch().await.context("Failed to download sot image")?;
+
+            Ok((Digest::from_bytes(image_id.0), image_data))
+        }
+    }
+
     async fn get_set_builder_image(&self) -> Result<(Digest, Vec<u8>)> {
         let (set_builder_path, max_file_size) = {
             let config = self.config_watcher.config.lock_all().context("Failed to lock config")?;
@@ -463,16 +497,17 @@ where
 
         let set_builder_img_data = self.get_set_builder_image().await?;
         let assessor_img_data = self.get_assessor_image().await?;
-        // TODO(Wolf): fetch the correct Resolve ELF from the contract
-        let resolve_image_data = assessor_img_data.clone();
+        let resolve_img_data = self.get_resolve_image().await?;
 
         let proving_service = Arc::new(
             proving::ProvingService::new(
                 self.db.clone(),
                 prover.clone(),
                 self.config_watcher.config.clone(),
-                resolve_image_data.0,
-                resolve_image_data.1,
+                set_builder_img_data.0,
+                set_builder_img_data.1.clone(),
+                resolve_img_data.0,
+                resolve_img_data.1.clone(),
             )
             .await
             .context("Failed to initialize proving service")?,
@@ -495,6 +530,8 @@ where
                 set_builder_img_data.1,
                 assessor_img_data.0,
                 assessor_img_data.1,
+                resolve_img_data.0,
+                resolve_img_data.1,
                 self.args.boundless_market_addr,
                 prover_addr,
                 self.config_watcher.config.clone(),

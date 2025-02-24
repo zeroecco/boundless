@@ -44,10 +44,13 @@ fn main() {
 
     // Create verifier context and verify assumption.
     let verifier_context = create_verifier_context(assumption.control_root);
-    verify_assumption(input.assumption, assumption, &verifier_context);
+    verify_assumption(input.set_builder_image_id, input.assumption, assumption, &verifier_context);
 
     // Commit the resolve journal.
-    let journal = ResolveJournal { claimDigest: <[u8; 32]>::from(claim.digest()).into() };
+    let journal = ResolveJournal {
+        setBuilderImageID: <[u8; 32]>::from(input.set_builder_image_id).into(),
+        claimDigest: <[u8; 32]>::from(claim.digest()).into(),
+    };
 
     env::commit_slice(&journal.abi_encode());
 }
@@ -79,6 +82,7 @@ fn create_verifier_context(control_root: Digest) -> VerifierContext {
 
 /// Verifies the assumption receipt against the expected assumption.
 fn verify_assumption(
+    set_builder_image_id: Digest,
     assumption_receipt: AssumptionReceipt,
     assumption: &Assumption,
     verifier_context: &VerifierContext,
@@ -101,7 +105,7 @@ fn verify_assumption(
             );
             receipt.verify_integrity_with_context(verifier_context).unwrap();
         }
-        AssumptionReceipt::SetInclusion { image_id, receipt } => {
+        AssumptionReceipt::SetInclusion(receipt) => {
             let receipt_claim_digest = receipt.claim.digest();
             assert_eq!(
                 receipt_claim_digest, assumption.claim,
@@ -111,7 +115,7 @@ fn verify_assumption(
             receipt
                 .verify_integrity_with_context(
                     verifier_context,
-                    SetInclusionReceiptVerifierParameters { image_id },
+                    SetInclusionReceiptVerifierParameters { image_id: set_builder_image_id },
                     Some(RecursionVerifierParamters {
                         control_root: (assumption.control_root != Digest::ZERO)
                             .then_some(assumption.control_root),

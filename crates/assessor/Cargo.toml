@@ -22,6 +22,7 @@ alloy = { workspace = true }
 boundless-resolve = { workspace = true, features = ["test_helpers"] }
 guest-assessor = { workspace = true }
 guest-resolve = { workspace = true }
+guest-set-builder = { workspace = true }
 guest-util = { workspace = true }
 risc0-zkvm = { workspace = true, features = ["client"] }
 test-log = { workspace = true }

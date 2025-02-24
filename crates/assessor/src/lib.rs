@@ -17,13 +17,10 @@
 #![deny(missing_docs)]
 
 use alloy_primitives::{Address, PrimitiveSignature};
-use alloy_sol_types::{Eip712Domain, SolStruct, SolValue};
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::{bail, Result};
-use boundless_market::contracts::{EIP721DomainSaltless, ProofRequest, ResolveJournal};
-use risc0_zkvm::{
-    sha::{Digest, Digestible},
-    ReceiptClaim,
-};
+use boundless_market::contracts::{EIP721DomainSaltless, ProofRequest};
+use risc0_zkvm::{sha::Digest, ReceiptClaim};
 use serde::{Deserialize, Serialize};
 
 /// Fulfillment contains a signed request, including offer and requirements,
@@ -37,9 +34,8 @@ pub struct Fulfillment {
     pub signature: Vec<u8>,
     /// The journal of the request.
     pub journal: Vec<u8>,
-    /// The image ID of the resolve guest, if assumptions were present or ZERO otherwise.
-    // TODO(Wolf): Check whether we need to commit to this value.
-    pub resolve_image_id: Digest,
+    /// Whether the request is a conditional that was resolved using the Resolve guest.
+    pub resolve: bool,
     /// Whether the fulfillment requires payment.
     ///
     /// When set to true, the fulfill transaction will revert if the payment conditions are not met (e.g. the request is locked to a different prover address)
@@ -72,16 +68,7 @@ impl Fulfillment {
     /// Returns a [ReceiptClaim] for the fulfillment.
     pub fn receipt_claim(&self) -> ReceiptClaim {
         let image_id = Digest::from_bytes(self.request.requirements.imageId.0);
-        let claim = ReceiptClaim::ok(image_id, self.journal.clone());
-
-        if self.resolve_image_id == Digest::ZERO {
-            return claim;
-        }
-        // if Resolve was used, use the request claim as the inner claim of the Resolve guest
-        ReceiptClaim::ok(
-            self.resolve_image_id,
-            ResolveJournal { claimDigest: <[u8; 32]>::from(claim.digest()).into() }.abi_encode(),
-        )
+        ReceiptClaim::ok(image_id, self.journal.clone())
     }
 }
 
@@ -98,6 +85,10 @@ pub struct AssessorInput {
     pub domain: EIP721DomainSaltless,
     /// The address of the prover.
     pub prover_address: Address,
+    /// Image ID of the SetBuilder guest.
+    pub set_builder_image_id: Digest,
+    /// Image ID of the Resolve guest.
+    pub resolve_image_id: Digest,
 }
 
 impl AssessorInput {
@@ -126,6 +117,7 @@ mod tests {
     use boundless_resolve::ResolveInput;
     use guest_assessor::ASSESSOR_GUEST_ELF;
     use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
+    use guest_set_builder::SET_BUILDER_ID;
     use guest_util::{ECHO_ELF, ECHO_ID, IDENTITY_ID};
     use risc0_zkvm::{
         default_executor,
@@ -172,7 +164,7 @@ mod tests {
             request: proving_request,
             signature: signature.as_bytes().to_vec(),
             journal: vec![1, 2, 3],
-            resolve_image_id: Digest::ZERO,
+            resolve: false,
             require_payment: true,
         };
 
@@ -226,6 +218,8 @@ mod tests {
             domain: eip712_domain(Address::ZERO, 1),
             fills: claims,
             prover_address: Address::ZERO,
+            set_builder_image_id: Digest::from(SET_BUILDER_ID),
+            resolve_image_id: Digest::from(RESOLVE_GUEST_ID),
         };
         let mut env_builder = ExecutorEnv::builder();
         env_builder.write_slice(&assessor_input.to_vec());
@@ -239,6 +233,7 @@ mod tests {
 
     fn resolve(conditional: Receipt, assumption: Receipt) -> Receipt {
         let resolve_input = ResolveInput {
+            set_builder_image_id: Digest::from(SET_BUILDER_ID),
             conditional: conditional.claim().unwrap().value().unwrap(),
             assumption: Assumption {
                 claim: assumption.claim().unwrap().digest(),
@@ -275,7 +270,7 @@ mod tests {
             request,
             signature,
             journal,
-            resolve_image_id: Digest::ZERO,
+            resolve: false,
             require_payment: true,
         }];
         assessor(claims, vec![application_receipt]);
@@ -291,13 +286,8 @@ mod tests {
         // 2. Prove the request via the application guest
         let application_receipt = echo("test");
         let journal = application_receipt.journal.bytes.clone();
-        let claim = Fulfillment {
-            request,
-            signature,
-            journal,
-            resolve_image_id: Digest::ZERO,
-            require_payment: true,
-        };
+        let claim =
+            Fulfillment { request, signature, journal, resolve: false, require_payment: true };
 
         // 3. Prove the Assessor reusing the same leaf twice
         let claims = vec![claim.clone(), claim];
@@ -324,13 +314,8 @@ mod tests {
         let resolve_receipt = resolve(conditional_receipt, assumption_receipt);
 
         // 3. Prove the Assessor
-        let fill = Fulfillment {
-            request,
-            signature,
-            journal,
-            resolve_image_id: RESOLVE_GUEST_ID.into(),
-            require_payment: true,
-        };
+        let fill =
+            Fulfillment { request, signature, journal, resolve: true, require_payment: true };
         assessor(vec![fill], vec![resolve_receipt]);
     }
 }

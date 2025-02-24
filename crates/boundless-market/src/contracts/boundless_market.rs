@@ -994,6 +994,15 @@ where
         Ok((image_id, image_url))
     }
 
+    /// Returns the image ID and URL of the assessor guest.
+    pub async fn resolve_image_info(&self) -> Result<(B256, String)> {
+        tracing::debug!("Calling resolveImageInfo()");
+        let (image_id, image_url) =
+            self.instance.resolveImageInfo().call().await.context("call failed")?.into();
+
+        Ok((image_id, image_url))
+    }
+
     /// Get the chain ID.
     ///
     /// This function implements caching to save the chain ID after the first successful fetch.

@@ -17,7 +17,9 @@ risc0-zkvm = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+alloy-sol-types = { workspace = true }
 anyhow = { workspace = true }
+boundless-market = { workspace = true }
 boundless-resolve = { path = ".", features = ["test_helpers"] }
 guest-resolve = { workspace = true }
 guest-set-builder = { workspace = true }

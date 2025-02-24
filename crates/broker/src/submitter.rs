@@ -395,6 +395,7 @@ mod tests {
         provers::{encode_input, MockProver},
         AggregationState, Batch, BatchStatus, Order, OrderStatus,
     };
+    use alloy::consensus::EnvKzgSettings::Default;
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
@@ -528,10 +529,12 @@ mod tests {
                         request: order_request.clone(),
                         signature: client_sig.into(),
                         journal: echo_receipt.journal.bytes.clone(),
-                        resolve_image_id: Digest::ZERO,
+                        resolve: false,
                         require_payment: true,
                     }],
                     prover_address: prover_addr,
+                    set_builder_image_id: Default::from(SET_BUILDER_ID),
+                    resolve_image_id: Default::from(RESOLVE_IMAGE),
                 }
                 .to_vec(),
             )
@@ -539,7 +542,12 @@ mod tests {
             .unwrap();
 
         let assessor_proof = prover
-            .prove_and_monitor_stark(&assessor_id_str, &assessor_input, vec![echo_proof.id.clone()],vec![])
+            .prove_and_monitor_stark(
+                &assessor_id_str,
+                &assessor_input,
+                vec![echo_proof.id.clone()],
+                vec![],
+            )
             .await
             .unwrap();
         let assessor_receipt = prover.get_receipt(&assessor_proof.id).await.unwrap().unwrap();
@@ -567,7 +575,8 @@ mod tests {
             .prove_and_monitor_stark(
                 &set_builder_id_str,
                 &set_builder_input,
-                vec![echo_proof.id.clone(), assessor_proof.id.clone()],vec![],
+                vec![echo_proof.id.clone(), assessor_proof.id.clone()],
+                vec![],
             )
             .await
             .unwrap();

@@ -385,9 +385,9 @@ impl MockProver {
             env.add_assumption(assumption_receipt.1.clone());
         }
         for unresolved in unresolved.iter() {
-            env.add_assumption(
-                InnerReceipt::Fake(FakeReceipt::new(MaybePruned::Pruned(unresolved.claim))),
-            );
+            env.add_assumption(InnerReceipt::Fake(FakeReceipt::new(MaybePruned::Pruned(
+                unresolved.claim,
+            ))));
         }
         let start = Instant::now();
         let env = env.build().map_err(|_| {

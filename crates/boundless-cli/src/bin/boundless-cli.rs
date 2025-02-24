@@ -471,6 +471,9 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
             let (_, market_url) = boundless_market.image_info().await?;
             tracing::debug!("Fetching Assessor ELF from {}", market_url);
             let assessor_elf = fetch_url(&market_url).await?;
+            let (_, resolve_url) = boundless_market.resolve_image_info().await?;
+            tracing::debug!("Fetching Assessor ELF from {}", market_url);
+            let resolve_elf = fetch_url(&resolve_url).await?;
             let domain = boundless_market.eip712_domain().await?;
 
             let mut set_verifier =
@@ -481,8 +484,6 @@ pub(crate) async fn run(args: &MainArgs) -> Result<Option<U256>> {
             let (_, set_builder_url) = set_verifier.image_info().await?;
             tracing::debug!("Fetching SetBuilder ELF from {}", set_builder_url);
             let set_builder_elf = fetch_url(&set_builder_url).await?;
-            // TODO(Wolf): fetch the correct Resolve ELF from the contract
-            let resolve_elf = assessor_elf.clone();
 
             let prover =
                 DefaultProver::new(set_builder_elf, assessor_elf, resolve_elf, caller, domain)?;

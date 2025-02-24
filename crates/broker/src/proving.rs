@@ -21,6 +21,7 @@ pub struct ProvingService {
     db: DbObj,
     prover: ProverObj,
     config: ConfigLock,
+    set_builder_guest_id: Digest,
     resolve_guest_id: Digest,
 }
 
@@ -29,15 +30,22 @@ impl ProvingService {
         db: DbObj,
         prover: ProverObj,
         config: ConfigLock,
+        set_builder_guest_id: Digest,
+        set_builder_guest: Vec<u8>,
         resolve_guest_id: Digest,
         resolve_guest: Vec<u8>,
     ) -> Result<Self> {
+        prover
+            .upload_image(&set_builder_guest_id.to_string(), set_builder_guest)
+            .await
+            .context("Failed to upload resolve guest")?;
+
         prover
             .upload_image(&resolve_guest_id.to_string(), resolve_guest)
             .await
             .context("Failed to upload resolve guest")?;
 
-        Ok(Self { db, prover, config, resolve_guest_id })
+        Ok(Self { db, prover, config, set_builder_guest_id, resolve_guest_id })
     }
 
     pub async fn monitor_proof(&self, order_id: U256, proof_id: String) -> Result<()> {
@@ -72,7 +80,6 @@ impl ProvingService {
                 .await
                 .context("Failed to upload image")?,
         };
-        // TODO(Wolf): How do we handle an existing input ID, which Assumptions
         let guest_env = decode_input(&order, max_file_size, fetch_retries)
             .await
             .context("Failed to decode order input")?;
@@ -85,7 +92,6 @@ impl ProvingService {
 
         tracing::info!("Proving order {order_id:x}");
 
-        // TODO(Wolf): handle non-set receipts
         let unresolved = guest_env
             .assumptions
             .iter()
@@ -127,11 +133,9 @@ impl ProvingService {
                 .with_context(|| format!("Receipt for {proof_id} claims pruned"))?;
 
             let resolve_input = ResolveInput {
+                set_builder_image_id: self.set_builder_guest_id,
                 conditional: claim,
-                assumption: AssumptionReceipt::SetInclusion {
-                    image_id: Digest::ZERO,
-                    receipt: assumption,
-                },
+                assumption: AssumptionReceipt::SetInclusion(assumption),
             };
             let input_data = resolve_input.to_vec();
 
@@ -278,6 +282,7 @@ mod tests {
     use boundless_market::input::GuestEnv;
     use chrono::Utc;
     use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
+    use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
     use guest_util::{ECHO_ELF, ECHO_ID};
     use risc0_zkvm::sha::Digest;
     use std::sync::Arc;
@@ -301,6 +306,8 @@ mod tests {
             db.clone(),
             prover,
             config.clone(),
+            Digest::from(SET_BUILDER_ID),
+            SET_BUILDER_ELF.to_vec(),
             Digest::from(RESOLVE_GUEST_ID),
             RESOLVE_GUEST_ELF.to_vec(),
         )
@@ -327,7 +334,6 @@ mod tests {
                 imageUrl: "http://risczero.com/image".into(),
                 input: Input {
                     inputType: InputType::Inline,
-                    // TODO(Wolf): this used to work for empty input, is that important?
                     data: GuestEnv::default().encode().unwrap().into(),
                 },
                 offer: Offer {
@@ -378,6 +384,8 @@ mod tests {
             db.clone(),
             prover,
             config.clone(),
+            Digest::from(SET_BUILDER_ID),
+            SET_BUILDER_ELF.to_vec(),
             Digest::from(RESOLVE_GUEST_ID),
             RESOLVE_GUEST_ELF.to_vec(),
         )

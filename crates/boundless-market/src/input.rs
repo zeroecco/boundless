@@ -249,7 +249,7 @@ impl InputBuilder {
             MaybePruned::Value(claim) => MaybePruned::Pruned(claim.digest::<sha::Impl>()),
             MaybePruned::Pruned(digest) => MaybePruned::Pruned(digest),
         };
-        // TODO(Wolf): add into_unknown() to SetInclusionReceipt
+        // TODO(Wolf): add into_unknown() to SetInclusionReceipt when #228 is merged
         let mut unknown_receipt = SetInclusionReceipt::from_path_with_verifier_params(
             claim,
             receipt.merkle_path,

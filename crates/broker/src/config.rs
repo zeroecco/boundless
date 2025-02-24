@@ -119,6 +119,8 @@ pub struct ProverConf {
     pub set_builder_guest_path: Option<PathBuf>,
     /// Assessor ELF path
     pub assessor_set_guest_path: Option<PathBuf>,
+    /// Resolve ELF path
+    pub resolve_set_guest_path: Option<PathBuf>,
 }
 
 impl Default for ProverConf {
@@ -130,6 +132,7 @@ impl Default for ProverConf {
             max_assumptions: 0,
             set_builder_guest_path: None,
             assessor_set_guest_path: None,
+            resolve_set_guest_path: None,
         }
     }
 }

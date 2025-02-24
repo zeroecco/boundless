@@ -197,11 +197,9 @@ impl DefaultProver {
         ensure!(assumption.root.is_some(), "assumption must have a root");
 
         let resolve_input = ResolveInput {
+            set_builder_image_id: self.set_builder_image_id,
             conditional: conditional_claim,
-            assumption: AssumptionReceipt::SetInclusion {
-                image_id: self.set_builder_image_id,
-                receipt: assumption,
-            },
+            assumption: AssumptionReceipt::SetInclusion(assumption),
         };
         self.prove(
             self.resolve_elf.clone(),
@@ -233,8 +231,13 @@ impl DefaultProver {
         fills: Vec<Fulfillment>,
         receipts: Vec<Receipt>,
     ) -> Result<Receipt> {
-        let assessor_input =
-            AssessorInput { domain: self.domain.clone(), fills, prover_address: self.address };
+        let assessor_input = AssessorInput {
+            domain: self.domain.clone(),
+            fills,
+            prover_address: self.address,
+            set_builder_image_id: self.set_builder_image_id,
+            resolve_image_id: self.resolve_image_id,
+        };
         self.prove(
             self.assessor_elf.clone(),
             assessor_input.to_vec(),
@@ -277,17 +280,17 @@ impl DefaultProver {
         let order_journal = order_receipt.journal.bytes.clone();
         let order_image_id = compute_image_id(&order_elf)?;
 
-        let mut resolve_image_id = Digest::ZERO;
+        let mut resolve = false;
         if !guest_env.assumptions.is_empty() {
             order_receipt = self.resolve(order_receipt, guest_env.assumptions).await?;
-            resolve_image_id = self.resolve_image_id;
+            resolve = true;
         }
 
         let fill = Fulfillment {
             request: order.request.clone(),
             signature: order.signature.into(),
             journal: order_journal.clone(),
-            resolve_image_id,
+            resolve,
             require_payment,
         };
 

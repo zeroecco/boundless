@@ -26,8 +26,7 @@ pub enum AssumptionReceipt {
     /// This is only practical useful during dev mode tests.
     Base(risc0_zkvm::AssumptionReceipt),
     /// Set inclusion receipt for aggregated proofs
-    // TODO(Wolf): Do we need to commit to the image ID of the SetBuilder?
-    SetInclusion { image_id: Digest, receipt: SetInclusionReceipt<Unknown> },
+    SetInclusion(SetInclusionReceipt<Unknown>),
 }
 
 impl From<risc0_zkvm::Assumption> for AssumptionReceipt {
@@ -42,6 +41,12 @@ impl From<risc0_zkvm::Receipt> for AssumptionReceipt {
     }
 }
 
+impl From<SetInclusionReceipt<Unknown>> for AssumptionReceipt {
+    fn from(receipt: SetInclusionReceipt<Unknown>) -> Self {
+        AssumptionReceipt::SetInclusion(receipt)
+    }
+}
+
 /// Input of the Resolve guest.
 ///
 /// Resolve guest takes as input two claims, one that is conditional on the other. It verifies both
@@ -50,6 +55,9 @@ impl From<risc0_zkvm::Receipt> for AssumptionReceipt {
 /// proven.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResolveInput {
+    /// Image ID of the set builder guest.
+    pub set_builder_image_id: Digest,
+
     /// Conditional claim with at least on assumption on which we want to resolve the first.
     ///
     /// The conditional claim will be verified by composition, using the recursion circuit to
@@ -138,6 +146,8 @@ pub mod test_helpers {
 mod tests {
     use super::*;
     use alloc::{format, string::ToString, vec, vec::Vec};
+    use alloy_sol_types::SolValue;
+    use boundless_market::contracts::ResolveJournal;
     use core::iter;
     use guest_resolve::{RESOLVE_GUEST_ELF, RESOLVE_GUEST_ID};
     use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
@@ -192,6 +202,7 @@ mod tests {
         conditional_receipt.verify(IDENTITY_ID).unwrap_err();
 
         let resolve_input = ResolveInput {
+            set_builder_image_id: Digest::from(SET_BUILDER_ID),
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
             assumption: Assumption {
                 claim: echo_receipt.claim().unwrap().digest(),
@@ -213,9 +224,13 @@ mod tests {
             .unwrap();
         let receipt = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap();
         receipt.verify(RESOLVE_GUEST_ID).unwrap();
+        let journal = ResolveJournal::abi_decode(&receipt.journal.bytes, true).unwrap();
 
-        let resolved_claim_digest = Digest::try_from(receipt.journal.bytes).unwrap();
-        assert_eq!(resolved_claim_digest, ReceiptClaim::ok(IDENTITY_ID, vec![]).digest());
+        assert_eq!(Digest::from(journal.setBuilderImageID.0), Digest::from(SET_BUILDER_ID));
+        assert_eq!(
+            Digest::from(journal.claimDigest.0),
+            ReceiptClaim::ok(IDENTITY_ID, vec![]).digest()
+        );
     }
 
     #[test]
@@ -228,6 +243,7 @@ mod tests {
         conditional_receipt.verify(IDENTITY_ID).unwrap_err();
 
         let resolve_input = ResolveInput {
+            set_builder_image_id: Digest::from(SET_BUILDER_ID),
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
             assumption: echo_receipt.into(),
         };
@@ -244,9 +260,13 @@ mod tests {
             .unwrap();
         let receipt = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap();
         receipt.verify(RESOLVE_GUEST_ID).unwrap();
+        let journal = ResolveJournal::abi_decode(&receipt.journal.bytes, true).unwrap();
 
-        let resolved_claim_digest = Digest::try_from(receipt.journal.bytes).unwrap();
-        assert_eq!(resolved_claim_digest, ReceiptClaim::ok(IDENTITY_ID, vec![]).digest());
+        assert_eq!(Digest::from(journal.setBuilderImageID.0), Digest::from(SET_BUILDER_ID));
+        assert_eq!(
+            Digest::from(journal.claimDigest.0),
+            ReceiptClaim::ok(IDENTITY_ID, vec![]).digest()
+        );
     }
 
     #[test]
@@ -277,11 +297,9 @@ mod tests {
         );
 
         let resolve_input = ResolveInput {
+            set_builder_image_id: Digest::from(SET_BUILDER_ID),
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
-            assumption: AssumptionReceipt::SetInclusion {
-                image_id: SET_BUILDER_ID.into(),
-                receipt: singleton_inclusion_receipt,
-            },
+            assumption: singleton_inclusion_receipt.into(),
         };
 
         // Run with the conditional receipt, and the set receipt for the singleton as assumptions.
@@ -293,9 +311,13 @@ mod tests {
             .unwrap();
         let receipt = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap();
         receipt.verify(RESOLVE_GUEST_ID).unwrap();
+        let journal = ResolveJournal::abi_decode(&receipt.journal.bytes, true).unwrap();
 
-        let resolved_claim_digest = Digest::try_from(receipt.journal.bytes).unwrap();
-        assert_eq!(resolved_claim_digest, ReceiptClaim::ok(IDENTITY_ID, vec![]).digest());
+        assert_eq!(Digest::from(journal.setBuilderImageID.0), Digest::from(SET_BUILDER_ID));
+        assert_eq!(
+            Digest::from(journal.claimDigest.0),
+            ReceiptClaim::ok(IDENTITY_ID, vec![]).digest()
+        );
     }
 
     #[test]
@@ -325,11 +347,9 @@ mod tests {
         .with_root(set_inclusion_receipt);
 
         let resolve_input = ResolveInput {
+            set_builder_image_id: Digest::from(SET_BUILDER_ID),
             conditional: conditional_receipt.claim().unwrap().value().unwrap(),
-            assumption: AssumptionReceipt::SetInclusion {
-                image_id: SET_BUILDER_ID.into(),
-                receipt: singleton_inclusion_receipt,
-            },
+            assumption: singleton_inclusion_receipt.into(),
         };
 
         // Run with the conditional receipt as an assumptions and the set receipt containing a
@@ -341,8 +361,12 @@ mod tests {
             .unwrap();
         let receipt = prove_with_opts(env, RESOLVE_GUEST_ELF, &ProverOpts::succinct()).unwrap();
         receipt.verify(RESOLVE_GUEST_ID).unwrap();
+        let journal = ResolveJournal::abi_decode(&receipt.journal.bytes, true).unwrap();
 
-        let resolved_claim_digest = Digest::try_from(receipt.journal.bytes).unwrap();
-        assert_eq!(resolved_claim_digest, ReceiptClaim::ok(IDENTITY_ID, vec![]).digest());
+        assert_eq!(Digest::from(journal.setBuilderImageID.0), Digest::from(SET_BUILDER_ID));
+        assert_eq!(
+            Digest::from(journal.claimDigest.0),
+            ReceiptClaim::ok(IDENTITY_ID, vec![]).digest()
+        );
     }
 }
