@@ -12,6 +12,10 @@ use risc0_zkvm::{MaybePruned, ProveKeccakRequest};
 use uuid::Uuid;
 use workflow_common::KeccakReq;
 
+// TODO(austinabell): this conversion is necessary because redis does not support [T; N] 
+// and this method requires a 'static lifetime so cannot serialize &[T; N]. Would be
+// a breaking change, but can likely create an owned newtype of [T; N] that re-uses
+// the &[T; N] API to avoid the copies.
 fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
     let chunks = input.chunks_exact(std::mem::size_of::<[u64; 25]>());
     if !chunks.remainder().is_empty() {

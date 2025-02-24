@@ -413,6 +413,10 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
             redis::set_key_with_expiry(
                 &mut coproc_redis,
                 &redis_key,
+                // TODO(austinabell): this cast is necessary because redis does not support [T; N] 
+                // and this method requires a 'static lifetime so cannot serialize &[T; N]. Would be
+                // a breaking change, but can likely create an owned newtype of [T; N] that re-uses
+                // the &[T; N] API.
                 bytemuck::cast_slice::<_, u8>(&keccak_req.input).to_vec(),
                 Some(redis_ttl),
             )
