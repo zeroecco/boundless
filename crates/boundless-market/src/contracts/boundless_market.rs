@@ -1155,6 +1155,7 @@ mod tests {
         sol_types::{eip712_domain, Eip712Domain, SolStruct, SolValue},
     };
     use guest_assessor::ASSESSOR_GUEST_ID;
+    use guest_resolve::RESOLVE_GUEST_ID;
     use guest_set_builder::SET_BUILDER_ID;
     use guest_util::ECHO_ID;
     use risc0_aggregation::{
@@ -1179,6 +1180,7 @@ mod tests {
             biddingStart: 100,
             rampUpPeriod: 100,
             timeout: 500,
+            lockTimeout: 500,
             lockStake: ether("1"),
         }
     }
@@ -1203,6 +1205,7 @@ mod tests {
                 timeout: 100,
                 rampUpPeriod: 1,
                 lockStake: U256::from(10),
+                lockTimeout: 100,
             },
         )
     }
@@ -1224,6 +1227,8 @@ mod tests {
             requestDigests: vec![request.eip712_signing_hash(&eip712_domain)],
             root: to_b256(app_claim_digest),
             prover,
+            setBuilderImageID: to_b256(Digest::from(SET_BUILDER_ID)),
+            resolveImageID: to_b256(Digest::from(RESOLVE_GUEST_ID)),
         };
         let assesor_receipt_claim =
             ReceiptClaim::ok(ASSESSOR_GUEST_ID, assessor_journal.abi_encode());

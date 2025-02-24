@@ -395,7 +395,6 @@ mod tests {
         provers::{encode_input, MockProver},
         AggregationState, Batch, BatchStatus, Order, OrderStatus,
     };
-    use alloy::consensus::EnvKzgSettings::Default;
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
@@ -413,6 +412,7 @@ mod tests {
     };
     use chrono::Utc;
     use guest_assessor::{ASSESSOR_GUEST_ELF, ASSESSOR_GUEST_ID};
+    use guest_resolve::RESOLVE_GUEST_ID;
     use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
     use guest_util::{ECHO_ELF, ECHO_ID};
     use risc0_aggregation::GuestState;
@@ -509,6 +509,7 @@ mod tests {
                 maxPrice: U256::from(4),
                 biddingStart: 0,
                 timeout: 100,
+                lockTimeout: 100,
                 rampUpPeriod: 1,
                 lockStake: U256::from(10),
             },
@@ -533,8 +534,8 @@ mod tests {
                         require_payment: true,
                     }],
                     prover_address: prover_addr,
-                    set_builder_image_id: Default::from(SET_BUILDER_ID),
-                    resolve_image_id: Default::from(RESOLVE_IMAGE),
+                    set_builder_image_id: Digest::from(SET_BUILDER_ID),
+                    resolve_image_id: Digest::from(RESOLVE_GUEST_ID),
                 }
                 .to_vec(),
             )
