@@ -226,7 +226,7 @@ enum BatchStatus {
     Failed,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct AggregationState {
     pub guest_state: risc0_aggregation::GuestState,
     /// All claim digests in this aggregation.
