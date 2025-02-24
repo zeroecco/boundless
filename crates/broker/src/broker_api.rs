@@ -34,11 +34,7 @@ pub struct ErrMsg {
     pub(crate) ty: String,
     pub(crate) msg: String,
 }
-// impl ErrMsg {
-//     pub fn new(r#type: &str, msg: &str) -> Self {
-//         Self { r#type: r#type.into(), msg: msg.into() }
-//     }
-// }
+
 impl std::fmt::Display for ErrMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "error_type: {} msg: {}", self.ty, self.msg)
