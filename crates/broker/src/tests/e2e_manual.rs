@@ -12,7 +12,7 @@ use risc0_zkvm::sha::Digest;
 use tempfile::NamedTempFile;
 use url::Url;
 // use broker::Broker;
-use crate::{config::Config, Args, Batch, Broker, Order};
+use crate::{config::Config, Args, Broker, Order};
 use boundless_market::contracts::{
     hit_points::default_allowance, test_utils::TestCtx, Input, Offer, Predicate, PredicateType,
     ProofRequest, Requirements,
@@ -93,11 +93,10 @@ async fn e2e_manual() {
     for _ in 0..MAX_ATTEMPTS {
         let res = client.get(format!("http://{}/v1/batches/latest", BROKER_URL)).send().await;
         if res.as_ref().map(|r| r.status().is_success()).unwrap_or(false) {
-            println!("batch: {:?}", res.unwrap().json::<Batch>().await.unwrap());
+            // println!("batch: {:?}", res.unwrap().json::<Batch>().await.unwrap());
 
             break;
         }
-		println!("waiting, res {:?}", res);
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
