@@ -14,7 +14,8 @@ use workflow_common::KeccakReq;
 
 // Create a function to convert keccak states to bytes
 fn keccak_states_to_bytes(states: &[[u64; 25]]) -> Vec<u8> {
-    states.iter()
+    states
+        .iter()
         .flat_map(|state| bytemuck::cast_slice::<[u64; 25], u8>(std::slice::from_ref(state)))
         .copied()
         .collect()
