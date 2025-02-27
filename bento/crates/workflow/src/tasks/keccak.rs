@@ -7,20 +7,17 @@ use crate::{
     tasks::{serialize_obj, KECCAK_RECEIPT_PATH, RECEIPT_PATH},
     Agent,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
 use risc0_zkvm::{MaybePruned, ProveKeccakRequest};
 use uuid::Uuid;
 use workflow_common::KeccakReq;
 
-fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
-    let chunks = input.chunks_exact(std::mem::size_of::<[u64; 25]>());
-    if !chunks.remainder().is_empty() {
-        bail!("Input length must be a multiple of KeccakState size");
-    }
-    chunks
-        .map(bytemuck::try_pod_read_unaligned)
-        .collect::<Result<_, _>>()
-        .map_err(|e| anyhow!("Failed to convert input bytes to KeccakState: {}", e))
+// Create a function to convert keccak states to bytes
+fn keccak_states_to_bytes(states: &[[u64; 25]]) -> Vec<u8> {
+    states.iter()
+        .flat_map(|state| bytemuck::cast_slice::<[u64; 25], u8>(std::slice::from_ref(state)))
+        .copied()
+        .collect()
 }
 
 /// Run the keccak prove + lift operation
@@ -42,7 +39,7 @@ pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result
         claim_digest: request.claim_digest,
         po2: request.po2,
         control_root: request.control_root,
-        input: try_keccak_bytes_to_input(&keccak_input)?,
+        input: keccak_states_to_bytes(&keccak_input),
     };
 
     tracing::info!("Keccak proving {}", request.claim_digest);

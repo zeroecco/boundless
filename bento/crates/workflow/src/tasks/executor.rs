@@ -361,8 +361,8 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
 
     let mut writer_tasks = JoinSet::new();
     // queue segments into a spmc queue
-    let (segment_tx, segment_rx) = async_channel::bounded::<Segment>(CONCURRENT_SEGMENTS);
-    let (task_tx, task_rx) = async_channel::bounded::<SenderType>(TASK_QUEUE_SIZE);
+    let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel::<Segment>(CONCURRENT_SEGMENTS);
+    let (task_tx, mut task_rx) = tokio::sync::mpsc::channel::<SenderType>(TASK_QUEUE_SIZE);
     let (tokio_tx, tokio_rx) = tokio::sync::mpsc::channel::<SenderType>(TASK_QUEUE_SIZE);
 
     // Create two Redis connections
@@ -377,7 +377,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let redis_ttl = agent.args.redis_ttl;
 
     writer_tasks.spawn(async move {
-        while let Ok(segment) = segment_rx.recv().await {
+        while let Some(segment) = segment_rx.recv().await {
             let index = segment.index;
             tracing::debug!("Starting write of segment index: {index}");
             let segment_key = format!("{segments_prefix_clone}:{index}");
@@ -397,8 +397,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                 .await
                 .expect("failed to push task into task_tx");
         }
-        // Once the segments wraps up, close the task channel to signal completion
-        task_tx.close();
+        // No need to explicitly close the channel, dropping all senders is sufficient
     });
 
     let aux_stream = taskdb::get_stream(&agent.db_pool, &request.user_id, AUX_WORK_TYPE)
@@ -453,7 +452,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     // Task processing dispatcher
     writer_tasks.spawn(async move {
         let mut planner = Planner::default();
-        while let Ok(task_type) = task_rx.recv().await {
+        while let Some(task_type) = task_rx.recv().await {
             if exec_only {
                 continue;
             }
@@ -595,14 +594,13 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                     segments += 1;
                     // Send segments to write queue, blocking if the queue is full.
                     if !exec_only {
-                        segment_tx.send_blocking(segment).unwrap();
+                        segment_tx.blocking_send(segment).unwrap();
                     }
                     Ok(Box::new(NullSegmentRef {}))
                 })
                 .context("Failed to run executor")?;
 
-            // close the channels to trigger the workers to wrap up and exit
-            segment_tx.close();
+            // No need to explicitly close channels
 
             Ok(SessionData {
                 segment_count: session.segments.len(),

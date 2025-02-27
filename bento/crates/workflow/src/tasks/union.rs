@@ -33,7 +33,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         deserialize_obj(&right_receipt_bytes).context("Failed to deserialize right receipt")?;
 
     // run union
-    tracing::info!("Union {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
+    tracing::debug!("Union {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
 
     let unioned = agent
         .prover
