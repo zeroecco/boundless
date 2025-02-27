@@ -12,15 +12,6 @@ use risc0_zkvm::{MaybePruned, ProveKeccakRequest};
 use uuid::Uuid;
 use workflow_common::KeccakReq;
 
-// Create a function to convert keccak states to bytes
-fn keccak_states_to_bytes(states: &[[u64; 25]]) -> Vec<u8> {
-    states
-        .iter()
-        .flat_map(|state| bytemuck::cast_slice::<[u64; 25], u8>(std::slice::from_ref(state)))
-        .copied()
-        .collect()
-}
-
 /// Run the keccak prove + lift operation
 pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result<()> {
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
@@ -33,14 +24,14 @@ pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result
         .with_context(|| format!("segment data not found for segment key: {keccak_input_path}"))?;
 
     // Deserialize bytes back to the expected type
-    let keccak_input: Vec<[u64; 25]> =
+    let keccak_input: Vec<u8> =
         bincode::deserialize(&keccak_input_bytes).context("Failed to deserialize keccak input")?;
 
     let keccak_req = ProveKeccakRequest {
         claim_digest: request.claim_digest,
         po2: request.po2,
         control_root: request.control_root,
-        input: keccak_states_to_bytes(&keccak_input),
+        input: keccak_input,
     };
 
     tracing::info!("Keccak proving {}", request.claim_digest);
