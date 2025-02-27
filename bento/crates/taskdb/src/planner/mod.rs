@@ -27,7 +27,7 @@ pub struct Planner {
     /// tasks depend on it.
     peaks: Vec<usize>,
 
-     /// List of current `keccak_peaks`. Sorted in order of decreasing height.
+    /// List of current `keccak_peaks`. Sorted in order of decreasing height.
     ///
     /// A task is a `keccak_peak` if (1) it is either a Keccak Segment or Union command AND (2) no other union tasks depend on it.
     pub keccak_peaks: VecDeque<usize>,
@@ -226,12 +226,9 @@ impl Planner {
 
     fn enqueue_union(&mut self, left: usize, right: usize) -> usize {
         let task_number = self.next_task_number();
-        let task_height = 1 + u32::max(
-            self.get_task(left).task_height,
-            self.get_task(right).task_height,
-        );
-        self.tasks
-            .push(Task::new_union(task_number, task_height, left, right));
+        let task_height =
+            1 + u32::max(self.get_task(left).task_height, self.get_task(right).task_height);
+        self.tasks.push(Task::new_union(task_number, task_height, left, right));
         task_number
     }
 
@@ -250,11 +247,7 @@ impl Planner {
     fn enqueue_finalize_keccak(&mut self, depends_on: Vec<usize>) -> usize {
         let task_number = self.next_task_number();
         let task_height = 1 + self.get_task(depends_on[0]).task_height;
-        self.tasks.push(Task::new_finalize_unions(
-            task_number,
-            task_height,
-            depends_on,
-        ));
+        self.tasks.push(Task::new_finalize_unions(task_number, task_height, depends_on));
         task_number
     }
 
