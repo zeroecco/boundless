@@ -145,9 +145,6 @@ interface IBoundlessMarket {
     /// @notice Error when transfer of funds to an external address fails.
     error TransferFailed();
 
-    /// @notice Error when attempting to lock a request with a frozen account.
-    error AccountFrozen(address account);
-
     /// @notice Error when providing a seal with a different selector than required.
     error SelectorMismatch(bytes4 required, bytes4 provided);
 
@@ -344,14 +341,6 @@ interface IBoundlessMarket {
     ///      This method just burn the stake.
     /// @param requestId The ID of the request.
     function slash(RequestId requestId) external;
-
-    /// Returns the frozen state of an account.
-    /// @dev An account gets frozen after a slash occurred. A frozen account cannot lock-in requests.
-    /// To unlock the account, its owner must call `unfreezeAccount`.
-    function accountIsFrozen(address addr) external view returns (bool);
-
-    /// Clear the frozen state of an account, transferring the frozen stake back to the prover's available balance.
-    function unfreezeAccount() external;
 
     /// @notice EIP 712 domain separator getter.
     /// @return The EIP 712 domain separator.
