@@ -192,6 +192,11 @@ contract BoundlessMarketTest is Test {
         require(!boundlessMarket.requestIsSlashed(requestId), "Request should not be slashed");
     }
 
+    function expectRequestFulfilledAndSlashed(RequestId requestId) internal view {
+        require(boundlessMarket.requestIsFulfilled(requestId), "Request should be fulfilled");
+        require(boundlessMarket.requestIsSlashed(requestId), "Request should be slashed");
+    }
+
     function expectRequestNotFulfilled(RequestId requestId) internal view {
         require(!boundlessMarket.requestIsFulfilled(requestId), "Request should not be fulfilled");
     }
@@ -1393,6 +1398,272 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         return (request, locker);
     }
 
+    // One request is locked, fully expires.
+    // A second request with the same id is then fulfilled.
+    // Slash should award stake to the fulfiller of the second request.
+    function testFulfillWasLockedRequestRepeatIndexStakeRollover() public {
+        Client client = getClient(1);
+
+        Offer memory offerA = Offer({
+            minPrice: 1 ether,
+            maxPrice: 2 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(100),
+            timeout: uint32(100),
+            lockStake: 1 ether
+        });
+        Offer memory offerB = Offer({
+            minPrice: 1 ether,
+            maxPrice: 2 ether,
+            biddingStart: uint64(block.number) + uint64(offerA.timeout) + 1,
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(100),
+            timeout: 100,
+            lockStake: 1 ether
+        });
+
+        ProofRequest memory requestA = client.request(1, offerA);
+        ProofRequest memory requestB = client.request(1, offerB);
+        bytes memory clientSignatureA = client.sign(requestA);
+        bytes memory clientSignatureB = client.sign(requestB);
+        Client locker = getProver(1);
+        Client fulfiller = getProver(2);
+
+        client.snapshotBalance();
+        locker.snapshotBalance();
+        fulfiller.snapshotBalance();
+
+        // Lock-in request A.
+        address lockerAddress = locker.addr();
+        vm.prank(lockerAddress);
+        boundlessMarket.lockRequest(requestA, clientSignatureA);
+
+        vm.roll(uint64(block.number) + uint64(offerA.timeout) + 1);
+        // Attempt to fill request B.
+        (Fulfillment memory fill, AssessorReceipt memory assessorReceipt) =
+            createFillAndSubmitRoot(requestB, APP_JOURNAL, fulfiller.addr());
+
+        boundlessMarket.priceAndFulfill(requestB, clientSignatureB, fill, assessorReceipt);
+
+        // Check that the request ID is marked as fulfilled.
+        expectRequestFulfilled(fill.id);
+
+        boundlessMarket.slash(fill.id);
+
+        client.expectBalanceChange(-1 ether);
+        locker.expectBalanceChange(0 ether);
+        locker.expectStakeBalanceChange(-1 ether);
+        fulfiller.expectBalanceChange(1 ether);
+        fulfiller.expectStakeBalanceChange(uint256(expectedSlashTransferAmount(offerA.lockStake)).toInt256());
+        expectMarketBalanceUnchanged();
+    }
+
+    // One request is locked, the lock expires, but the request is not yet expired.
+    // A second request with the same id is then fulfilled.
+    // Slash should award stake to the fulfiller of the second request.
+    function testFulfillWasLockedRequestRepeatIndexStakeRolloverFirstRequestNotExpired() public {
+        Client client = getClient(1);
+
+        Offer memory offerA = Offer({
+            minPrice: 1 ether,
+            maxPrice: 2 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(50),
+            timeout: uint32(100),
+            lockStake: 1 ether
+        });
+        Offer memory offerB = Offer({
+            minPrice: 2 ether,
+            maxPrice: 2 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(0),
+            lockTimeout: offerA.timeout + 101,
+            timeout: offerA.timeout + 101,
+            lockStake: 1 ether
+        });
+
+        ProofRequest memory requestA = client.request(1, offerA);
+        ProofRequest memory requestB = client.request(1, offerB);
+        bytes memory clientSignatureA = client.sign(requestA);
+        bytes memory clientSignatureB = client.sign(requestB);
+        Client locker = getProver(1);
+        Client fulfiller = getProver(2);
+
+        client.snapshotBalance();
+        locker.snapshotBalance();
+        fulfiller.snapshotBalance();
+
+        // Lock-in request A.
+        address lockerAddress = locker.addr();
+        vm.prank(lockerAddress);
+        boundlessMarket.lockRequest(requestA, clientSignatureA);
+
+        vm.roll(uint64(block.number) + uint64(offerA.lockTimeout) + 1);
+        // Attempt to fill request B.
+        (Fulfillment memory fill, AssessorReceipt memory assessorReceipt) =
+            createFillAndSubmitRoot(requestB, APP_JOURNAL, fulfiller.addr());
+
+        boundlessMarket.priceAndFulfill(requestB, clientSignatureB, fill, assessorReceipt);
+
+        // Check that the request ID is marked as fulfilled.
+        expectRequestFulfilled(fill.id);
+
+        // Slash should revert as the original locked request has not yet fully expired.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IBoundlessMarket.RequestIsNotExpired.selector, fill.id, uint64(block.number) + uint64(offerA.timeout)
+            )
+        );
+        boundlessMarket.slash(fill.id);
+
+        // Advance to where the original locked request has fully expired.
+        vm.roll(uint64(block.number) + uint64(offerA.timeout) + 1);
+
+        vm.prank(lockerAddress);
+        boundlessMarket.slash(fill.id);
+
+        client.expectBalanceChange(-2 ether);
+        locker.expectBalanceChange(0 ether);
+        locker.expectStakeBalanceChange(-1 ether);
+        fulfiller.expectBalanceChange(2 ether);
+        fulfiller.expectStakeBalanceChange(uint256(expectedSlashTransferAmount(offerA.lockStake)).toInt256());
+        expectMarketBalanceUnchanged();
+    }
+
+    // One request is locked and the client is charged 2 ether. The request expires unfulfilled.
+    // A second request with the same id is then fulfilled for a cost of just 1 ether.
+    // The client should be refunded the difference.
+    function testFulfillWasLockedRequestRepeatIndexSecondRequestCheaper() public {
+        Client client = getClient(1);
+
+        // Create two distinct requests with the same ID. It should be the case that only one can be
+        // filled, and if one is locked, the other cannot be filled.
+        Offer memory offerA = Offer({
+            minPrice: 2 ether,
+            maxPrice: 3 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(50),
+            timeout: uint32(100),
+            lockStake: 1 ether
+        });
+        Offer memory offerB = Offer({
+            minPrice: 1 ether,
+            maxPrice: 1 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(0),
+            lockTimeout: uint32(100),
+            timeout: uint32(block.number) + offerA.timeout + 101,
+            lockStake: 1 ether
+        });
+
+        ProofRequest memory requestA = client.request(1, offerA);
+        ProofRequest memory requestB = client.request(1, offerB);
+        bytes memory clientSignatureA = client.sign(requestA);
+        bytes memory clientSignatureB = client.sign(requestB);
+        Client locker = getProver(1);
+        Client fulfiller = getProver(2);
+
+        client.snapshotBalance();
+        locker.snapshotBalance();
+        fulfiller.snapshotBalance();
+
+        // Lock-in request A.
+        address lockerAddress = locker.addr();
+        vm.prank(lockerAddress);
+        boundlessMarket.lockRequest(requestA, clientSignatureA);
+
+        client.expectBalanceChange(-2 ether);
+
+        vm.roll(uint64(block.number) + uint64(offerA.lockTimeout) + 1);
+
+        // Attempt to fill request B, which costs just 1 ether at the time of fulfillment.
+        (Fulfillment memory fill, AssessorReceipt memory assessorReceipt) =
+            createFillAndSubmitRoot(requestB, APP_JOURNAL, fulfiller.addr());
+        boundlessMarket.priceAndFulfill(requestB, clientSignatureB, fill, assessorReceipt);
+
+        // Client should be refunded 1 ether, meaning their net balance change is -1
+        client.expectBalanceChange(-1 ether);
+
+        // Check that the request ID is marked as fulfilled.
+        expectRequestFulfilled(fill.id);
+
+        client.expectBalanceChange(-1 ether);
+        locker.expectBalanceChange(0 ether);
+        locker.expectStakeBalanceChange(-1 ether);
+        fulfiller.expectBalanceChange(1 ether);
+        fulfiller.expectStakeBalanceChange(0 ether);
+        expectMarketBalanceUnchanged();
+    }
+
+    // One request is locked, expires, and is slashed.
+    // A second request with the same id is then fulfilled.
+    function testFulfillWasLockedRequestRepeatIndexStakeRolloverSlashedBeforeFulfill() public {
+        Client client = getClient(1);
+
+        // Create two distinct requests with the same ID. It should be the case that only one can be
+        // filled, and if one is locked, the other cannot be filled.
+        Offer memory offerA = Offer({
+            minPrice: 1 ether,
+            maxPrice: 2 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(100),
+            timeout: uint32(100),
+            lockStake: 1 ether
+        });
+        Offer memory offerB = Offer({
+            minPrice: 3 ether,
+            maxPrice: 3 ether,
+            biddingStart: uint64(block.number) + uint64(offerA.timeout) + 1,
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(100),
+            timeout: 100,
+            lockStake: 1 ether
+        });
+
+        ProofRequest memory requestA = client.request(1, offerA);
+        ProofRequest memory requestB = client.request(1, offerB);
+        bytes memory clientSignatureA = client.sign(requestA);
+        bytes memory clientSignatureB = client.sign(requestB);
+        Client locker = getProver(1);
+        Client fulfiller = getProver(2);
+
+        client.snapshotBalance();
+        locker.snapshotBalance();
+        fulfiller.snapshotBalance();
+
+        // Lock-in request A.
+        address lockerAddress = locker.addr();
+        vm.prank(lockerAddress);
+        boundlessMarket.lockRequest(requestA, clientSignatureA);
+
+        vm.roll(uint64(block.number) + uint64(offerA.timeout) + 1);
+
+        // Slash the request first.
+        vm.prank(lockerAddress);
+        boundlessMarket.slash(requestA.id);
+
+        // Attempt to fill request B.
+        (Fulfillment memory fill, AssessorReceipt memory assessorReceipt) =
+            createFillAndSubmitRoot(requestB, APP_JOURNAL, fulfiller.addr());
+
+        address fulfillerAddress = fulfiller.addr();
+        vm.prank(fulfillerAddress);
+        boundlessMarket.priceAndFulfill(requestB, clientSignatureB, fill, assessorReceipt);
+
+        // Check that the request ID is marked as fulfilled.
+        expectRequestFulfilledAndSlashed(fill.id);
+
+        client.expectBalanceChange(-3 ether);
+        locker.expectBalanceChange(0 ether);
+        locker.expectStakeBalanceChange(-1 ether);
+        fulfiller.expectBalanceChange(3 ether);
+        fulfiller.expectStakeBalanceChange(0 ether);
+    }
+
     // Scenario when a prover locks a request, fails to deliver it within the lock expiry,
     // but does deliver it before the request expires. Here they should lose their stake,
     // but receive payment for the request.
@@ -1942,6 +2213,61 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         expectRequestSlashed(request.id);
 
         return (client, request);
+    }
+
+    // Prover locks a request, the request expires, then they fulfill a request with the same ID.
+    // Prover should be slashable, but still able to fulfill the other request and receive payment for it.
+    function testSlashLockedRequestMultipleRequestsSameIndex() public {
+        Client client = getClient(1);
+
+        // Create two distinct requests with the same ID.
+        Offer memory offerA = Offer({
+            minPrice: 1 ether,
+            maxPrice: 2 ether,
+            biddingStart: uint64(block.number),
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(100),
+            timeout: uint32(100),
+            lockStake: 1 ether
+        });
+        Offer memory offerB = Offer({
+            minPrice: 3 ether,
+            maxPrice: 3 ether,
+            biddingStart: uint64(block.number) + uint64(offerA.timeout) + 1,
+            rampUpPeriod: uint32(10),
+            lockTimeout: uint32(100),
+            timeout: 100,
+            lockStake: 1 ether
+        });
+        ProofRequest memory requestA = client.request(1, offerA);
+        ProofRequest memory requestB = client.request(1, offerB);
+        bytes memory clientSignatureA = client.sign(requestA);
+        bytes memory clientSignatureB = client.sign(requestB);
+
+        client.snapshotBalance();
+        testProver.snapshotBalance();
+
+        vm.prank(testProverAddress);
+        boundlessMarket.lockRequest(requestA, clientSignatureA);
+
+        vm.roll(requestA.offer.deadline() + 1);
+
+        // Attempt to fill request B.
+        (Fulfillment memory fill, AssessorReceipt memory assessorReceipt) =
+            createFillAndSubmitRoot(requestB, APP_JOURNAL, testProverAddress);
+        boundlessMarket.priceAndFulfill(requestB, clientSignatureB, fill, assessorReceipt);
+
+        boundlessMarket.slash(requestA.id);
+
+        expectRequestFulfilledAndSlashed(fill.id);
+
+        client.expectBalanceChange(-3 ether);
+        testProver.expectBalanceChange(3 ether);
+        // They lose their original stake, but gain a portion of the slashed stake.
+        testProver.expectStakeBalanceChange(
+            -1 ether + int256(uint256(expectedSlashTransferAmount(requestA.offer.lockStake)))
+        );
+        expectMarketBalanceUnchanged();
     }
 
     // Handles case where a third-party that was not locked fulfills the request, and the locked prover does not.

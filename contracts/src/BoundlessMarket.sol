@@ -5,8 +5,8 @@
 
 pragma solidity ^0.8.24;
 
-import {SafeCastLib} from "solmate/utils/SafeCastLib.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -41,7 +41,8 @@ contract BoundlessMarket is
     UUPSUpgradeable
 {
     using ReceiptClaimLib for ReceiptClaim;
-    using SafeCastLib for uint256;
+    using SafeCast for int256;
+    using SafeCast for uint256;
     using SafeTransferLib for ERC20;
 
     /// @dev The version of the contract, with respect to upgrades.
@@ -158,7 +159,7 @@ contract BoundlessMarket is
         }
 
         // Compute the current price offered by the reverse Dutch auction.
-        uint96 price = request.offer.priceAtBlock(uint64(block.number)).safeCastTo96();
+        uint96 price = request.offer.priceAtBlock(uint64(block.number)).toUint96();
 
         // Deduct payment from the client account and stake from the prover account.
         Account storage clientAccount = accounts[client];
@@ -172,7 +173,7 @@ contract BoundlessMarket is
 
         unchecked {
             clientAccount.balance -= price;
-            proverAccount.stakeBalance -= request.offer.lockStake.safeCastTo96();
+            proverAccount.stakeBalance -= request.offer.lockStake.toUint96();
         }
 
         // Record the lock for the request and emit an event.
@@ -181,8 +182,8 @@ contract BoundlessMarket is
             price: price,
             requestLockFlags: 0,
             lockDeadline: lockDeadline,
-            deadlineDelta: uint256(deadline - lockDeadline).safeCastTo24(),
-            stake: request.offer.lockStake.safeCastTo96(),
+            deadlineDelta: uint256(deadline - lockDeadline).toUint24(),
+            stake: request.offer.lockStake.toUint96(),
             requestDigest: requestDigest
         });
 
@@ -209,7 +210,7 @@ contract BoundlessMarket is
         request.validate();
 
         // Compute the current price offered by the reverse Dutch auction.
-        uint96 price = request.offer.priceAtBlock(uint64(block.number)).safeCastTo96();
+        uint96 price = request.offer.priceAtBlock(uint64(block.number)).toUint96();
 
         // Record the price in transient storage, such that the order can be filled in this same transaction.
         FulfillmentContext({valid: true, price: price}).store(requestHash);
@@ -532,19 +533,28 @@ contract BoundlessMarket is
         }
         uint96 price = context.price;
 
-        // Deduct any additionally owned funds from client account. The client was already charged
-        // for the price at lock time once when the request was locked. We only need to charge any
-        // additional price increases from the dutch auction between lock time to now.
         Account storage clientAccount = accounts[client];
-        uint96 clientOwes = price - lock.price;
-        if (clientAccount.balance < clientOwes) {
-            return abi.encodeWithSelector(InsufficientBalance.selector, client);
-        }
-        requestLocks[id].setProverPaidAfterLockDeadline(assessorProver);
 
-        unchecked {
-            clientAccount.balance -= clientOwes;
+        // If the request has the same id, but is different to the request that was locked, the fulfillment
+        // price could be either higher or lower than the price that was previously locked.
+        // If the price is higher, we charge the client the difference.
+        // If the price is lower, we refund the client the difference.
+        uint96 lockPrice = lock.price;
+        if (price > lockPrice) {
+            uint96 clientOwes = price - lockPrice;
+            if (clientAccount.balance < clientOwes) {
+                return abi.encodeWithSelector(InsufficientBalance.selector, client);
+            }
+            unchecked {
+                clientAccount.balance -= clientOwes;
+            }
+        } else {
+            int256 delta = uint256(price).toInt256() - uint256(lockPrice).toInt256();
+            uint96 clientOwed = (-delta).toUint256().toUint96();
+            clientAccount.balance += clientOwed;
         }
+
+        requestLocks[id].setProverPaidAfterLockDeadline(assessorProver);
         if (MARKET_FEE_BPS > 0) {
             price = _applyMarketFee(price);
         }
@@ -688,7 +698,7 @@ contract BoundlessMarket is
         // receives the unburned portion of the stake as a reward.
         // Otherwise the request expired unfulfilled, unburnt stake accrues to the market treasury,
         // and we refund the client the price they paid for the request at lock time.
-        uint96 transferValue = (uint256(lock.stake) - burnValue).safeCastTo96();
+        uint96 transferValue = (uint256(lock.stake) - burnValue).toUint96();
         address stakeRecipient = lock.prover;
         if (lock.isProverPaidAfterLockDeadline()) {
             // At this point lock.prover is the prover that ultimately fulfilled the request, not
@@ -710,16 +720,16 @@ contract BoundlessMarket is
 
     /// @inheritdoc IBoundlessMarket
     function deposit() public payable {
-        accounts[msg.sender].balance += msg.value.safeCastTo96();
+        accounts[msg.sender].balance += msg.value.toUint96();
         emit Deposit(msg.sender, msg.value);
     }
 
     function _withdraw(address account, uint256 value) internal {
-        if (accounts[account].balance < value.safeCastTo96()) {
+        if (accounts[account].balance < value.toUint96()) {
             revert InsufficientBalance(account);
         }
         unchecked {
-            accounts[account].balance -= value.safeCastTo96();
+            accounts[account].balance -= value.toUint96();
         }
         (bool sent,) = account.call{value: value}("");
         if (!sent) {
@@ -740,11 +750,11 @@ contract BoundlessMarket is
 
     /// @inheritdoc IBoundlessMarket
     function withdrawFromTreasury(uint256 value) public onlyOwner {
-        if (accounts[address(this)].balance < value.safeCastTo96()) {
+        if (accounts[address(this)].balance < value.toUint96()) {
             revert InsufficientBalance(address(this));
         }
         unchecked {
-            accounts[address(this)].balance -= value.safeCastTo96();
+            accounts[address(this)].balance -= value.toUint96();
         }
         (bool sent,) = msg.sender.call{value: value}("");
         if (!sent) {
@@ -768,17 +778,17 @@ contract BoundlessMarket is
 
     function _depositStake(address from, uint256 value) internal {
         ERC20(STAKE_TOKEN_CONTRACT).safeTransferFrom(from, address(this), value);
-        accounts[from].stakeBalance += value.safeCastTo96();
+        accounts[from].stakeBalance += value.toUint96();
         emit StakeDeposit(from, value);
     }
 
     /// @inheritdoc IBoundlessMarket
     function withdrawStake(uint256 value) public {
-        if (accounts[msg.sender].stakeBalance < value.safeCastTo96()) {
+        if (accounts[msg.sender].stakeBalance < value.toUint96()) {
             revert InsufficientBalance(msg.sender);
         }
         unchecked {
-            accounts[msg.sender].stakeBalance -= value.safeCastTo96();
+            accounts[msg.sender].stakeBalance -= value.toUint96();
         }
         // Transfer tokens from market to user
         bool success = ERC20(STAKE_TOKEN_CONTRACT).transfer(msg.sender, value);
@@ -794,11 +804,11 @@ contract BoundlessMarket is
 
     /// @inheritdoc IBoundlessMarket
     function withdrawFromStakeTreasury(uint256 value) public onlyOwner {
-        if (accounts[address(this)].stakeBalance < value.safeCastTo96()) {
+        if (accounts[address(this)].stakeBalance < value.toUint96()) {
             revert InsufficientBalance(address(this));
         }
         unchecked {
-            accounts[address(this)].stakeBalance -= value.safeCastTo96();
+            accounts[address(this)].stakeBalance -= value.toUint96();
         }
         bool success = ERC20(STAKE_TOKEN_CONTRACT).transfer(msg.sender, value);
         if (!success) revert TransferFailed();

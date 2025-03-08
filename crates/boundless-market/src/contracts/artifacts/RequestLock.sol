@@ -67,7 +67,7 @@ library RequestLockLibrary {
 
     function setProverPaidAfterLockDeadline(RequestLock storage requestLock, address prover) internal {
         requestLock.prover = prover;
-        requestLock.requestLockFlags = PROVER_PAID_AFTER_LOCK_FLAG;
+        requestLock.requestLockFlags |= PROVER_PAID_AFTER_LOCK_FLAG;
         // We don't zero out slot 1 as stake information is required for slashing.
         // Zero out slot 2 for gas refund.
         clearSlot2(requestLock);
@@ -78,10 +78,6 @@ library RequestLockLibrary {
         // Zero out slots 1-2 for gas refund. Slot 2 may have already been zeroed out
         // in the case where the request ended up being fulfilled after the lock deadline.
         clearSlot1And2(requestLock);
-    }
-
-    function hasBeenLocked(RequestLock memory requestLock) internal pure returns (bool) {
-        return requestLock.prover != address(0);
     }
 
     /// @notice Returns true if the request was fulfilled by the locker
