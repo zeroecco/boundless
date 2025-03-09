@@ -157,6 +157,9 @@ contract BoundlessMarket is
         if (fulfilled) {
             revert RequestIsFulfilled({requestId: request.id});
         }
+        if (block.timestamp > lockDeadline) {
+            revert RequestLockIsExpired({requestId: request.id, lockDeadline: lockDeadline});
+        }
 
         // Compute the current price offered by the reverse Dutch auction.
         uint96 price = request.offer.priceAt(uint64(block.timestamp)).toUint96();
@@ -525,6 +528,14 @@ contract BoundlessMarket is
         }
         uint96 price = context.price;
 
+        // Deduct any additionally owned funds from client account. The client was already charged
+        // for the price at lock time once when the request was locked. We only need to charge any
+        // additional price for the difference between the price of the fulfilled request, at the
+        // current block, and the price of the locked request.
+        //
+        // Note that although they have the same ID, the locked request and the fulfilled request
+        // could be different. If the request fulfilled is the same as the one locked, the
+        // `context.price` will be zero and the entire fee on the lock will be returned to the client.
         Account storage clientAccount = accounts[client];
 
         // If the request has the same id, but is different to the request that was locked, the fulfillment
