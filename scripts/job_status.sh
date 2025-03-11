@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-source .env-compose
+source .env.broker
+
 JOB=$1
 
 PGPASSWORD="${POSTGRES_PASSWORD}" psql -h 127.0.0.1 -U "${POSTGRES_USER}" "${POSTGRES_DB}" -c "SELECT count(task_id) as jobs_count FROM tasks WHERE job_id = '${JOB}';"
