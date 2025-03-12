@@ -513,7 +513,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        chain_monitor::ChainMonitorService, db::SqliteDb, provers::MockProver, OrderStatus,
+        chain_monitor::ChainMonitorService, db::{DBPoolManager, SqliteDb}, provers::MockProver, OrderStatus,
     };
     use alloy::{
         network::EthereumWallet,

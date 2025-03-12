@@ -20,7 +20,7 @@ use boundless_market::{
 use chrono::{serde::ts_seconds, DateTime, Utc};
 use clap::Parser;
 use config::ConfigWatcher;
-use db::{DbObj, SqliteDb};
+use db::{DBPoolManager, DbObj, SqliteDb};
 use provers::ProverObj;
 use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::sha::Digest;
@@ -121,7 +121,9 @@ pub struct Args {
 }
 
 /// Status of a order as it moves through the lifecycle
+/// Note: any changes to this enum must be reflected in the `order_status` type in the database migrations
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
+#[sqlx(type_name = "order_status")]
 enum OrderStatus {
     /// New order found on chain, waiting pricing analysis
     New,
@@ -200,7 +202,9 @@ impl Order {
     }
 }
 
+/// Note: any changes to this enum must be reflected in the `batch_status` type in the database migrations.
 #[derive(sqlx::Type, Default, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[sqlx(type_name = "batch_status")]
 enum BatchStatus {
     #[default]
     Aggregating,
