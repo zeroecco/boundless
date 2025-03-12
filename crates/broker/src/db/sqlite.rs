@@ -7,6 +7,7 @@ use std::str::FromStr;
 
 use super::*;
 
+#[allow(dead_code)]
 pub type SqliteDb = DbPool<Sqlite>;
 
 const SQL_BLOCK_KEY: i64 = 0;
@@ -1071,6 +1072,30 @@ mod tests {
 
         let res = db.get_pending_lock_orders(bad_end).await.unwrap();
         assert_eq!(res.len(), 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations/sqlite")]
+    async fn get_orders_committed_to_fulfill_count(pool: SqlitePool) {
+        let db: DbObj = Arc::new(SqliteDb::from(pool));
+
+        let count = db.get_orders_committed_to_fulfill_count().await.unwrap();
+        assert_eq!(count, 0);
+
+        let mut order = create_order();
+        order.status = OrderStatus::Locked;
+        db.add_order(U256::ZERO, order.clone()).await.unwrap();
+
+        let mut order = create_order();
+        order.status = OrderStatus::PendingSubmission;
+        db.add_order(U256::from(2), order.clone()).await.unwrap();
+
+        // Skipped orders are not included in the count
+        let mut order = create_order();
+        order.status = OrderStatus::Skipped;
+        db.add_order(U256::from(1), order.clone()).await.unwrap();
+
+        let count = db.get_orders_committed_to_fulfill_count().await.unwrap();
+        assert_eq!(count, 2);
     }
 
     #[sqlx::test(migrations = "./migrations/sqlite")]

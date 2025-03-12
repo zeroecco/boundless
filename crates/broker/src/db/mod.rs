@@ -127,7 +127,7 @@ pub trait BrokerDb {
 
     /// Update a batch with the results of an aggregation step.
     ///
-    /// Sets the aggreagtion state, and adds the given orders to the batch, updating the batch fees
+    /// Sets the aggregation state, and adds the given orders to the batch, updating the batch fees
     /// and deadline. During finalization, the assessor_claim_digest is recorded as well.
     async fn update_batch(
         &self,

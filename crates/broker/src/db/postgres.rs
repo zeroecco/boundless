@@ -326,7 +326,7 @@ impl BrokerDb for DbPool<Postgres> {
 
     async fn get_orders_committed_to_fulfill_count(&self) -> Result<u64, DbError> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6)",
+            "SELECT COUNT(*) FROM orders WHERE data->>'status' IN ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text)",
         )
         .bind(OrderStatus::Locking)
         .bind(OrderStatus::Locked)
@@ -1087,6 +1087,30 @@ mod tests {
 
         let res = db.get_pending_lock_orders(bad_end).await.unwrap();
         assert_eq!(res.len(), 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations/postgres")]
+    async fn get_orders_committed_to_fulfill_count(pool: PgPool) {
+        let db: DbObj = Arc::new(PostgresDb::from(pool));
+
+        let count = db.get_orders_committed_to_fulfill_count().await.unwrap();
+        assert_eq!(count, 0);
+
+        let mut order = create_order();
+        order.status = OrderStatus::Locked;
+        db.add_order(U256::ZERO, order.clone()).await.unwrap();
+
+        let mut order = create_order();
+        order.status = OrderStatus::PendingSubmission;
+        db.add_order(U256::from(2), order.clone()).await.unwrap();
+
+        // Skipped orders are not included in the count
+        let mut order = create_order();
+        order.status = OrderStatus::Skipped;
+        db.add_order(U256::from(1), order.clone()).await.unwrap();
+
+        let count = db.get_orders_committed_to_fulfill_count().await.unwrap();
+        assert_eq!(count, 2);
     }
 
     #[sqlx::test(migrations = "./migrations/postgres")]
