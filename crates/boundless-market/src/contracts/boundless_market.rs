@@ -773,12 +773,7 @@ impl<P: Provider> BoundlessMarketService<P> {
                     .get_receipt()
                     .await
                     .context("failed to confirm tx")?;
-
                 tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
-                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
-
-                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
-
                 Ok(())
             }
             Err(err) => {
@@ -854,12 +849,7 @@ impl<P: Provider> BoundlessMarketService<P> {
                     .get_receipt()
                     .await
                     .context("failed to confirm tx")?;
-
                 tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
-                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
-
-                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
-
                 Ok(())
             }
             Err(err) => {
@@ -1503,7 +1493,9 @@ mod tests {
         node_bindings::Anvil,
         primitives::{aliases::U160, utils::parse_ether, Address, Bytes, B256, U256},
         providers::Provider,
+        rpc::json_rpc::ErrorPayload,
         sol_types::{eip712_domain, Eip712Domain, SolStruct, SolValue},
+        transports::RpcError,
     };
     use alloy_sol_types::SolCall;
     use guest_assessor::ASSESSOR_GUEST_ID;
@@ -2211,5 +2203,89 @@ mod tests {
             assessorReceipt: assessor_receipt.clone(),
         };
         decode_calldata(&call.abi_encode().into()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_handle_fulfillment_rpc_error() {
+        // Setup anvil
+        let anvil = Anvil::new().spawn();
+
+        let ctx = create_test_ctx(&anvil, SET_BUILDER_ID, ASSESSOR_GUEST_ID).await.unwrap();
+
+        let eip712_domain = eip712_domain! {
+            name: "IBoundlessMarket",
+            version: "1",
+            chain_id: anvil.chain_id(),
+            verifying_contract: *ctx.customer_market.instance().address(),
+        };
+
+        // Create and submit a request
+        let request = new_request(1, &ctx).await;
+        let request_id =
+            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
+
+        // Get the customer signature from the event
+        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
+        let (_, log) = logs.first().unwrap();
+        let tx_hash = log.transaction_hash.unwrap();
+        let tx_data = ctx
+            .customer_market
+            .instance()
+            .provider()
+            .get_transaction_by_hash(tx_hash)
+            .await
+            .unwrap()
+            .unwrap();
+        let inputs = tx_data.input();
+        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
+        let request = calldata.request;
+        let customer_sig = calldata.clientSignature;
+
+        // Deposit stake for the prover
+        let deposit = default_allowance();
+        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
+
+        // Lock the request
+        ctx.prover_market.lock_request(&request, &customer_sig, None).await.unwrap();
+
+        // Create mock fulfillment data
+        let (root, set_verifier_seal, fulfillment, assessor_seal) =
+            mock_singleton(&request, eip712_domain, ctx.prover_signer.address());
+
+        // Submit the merkle root
+        ctx.set_verifier.submit_merkle_root(root, set_verifier_seal).await.unwrap();
+
+        let assessor_fill = AssessorReceipt {
+            seal: assessor_seal,
+            selectors: vec![],
+            prover: ctx.prover_signer.address(),
+            callbacks: vec![],
+        };
+
+        // First fulfill normally to create a transaction we can reference
+        ctx.prover_market.fulfill(&fulfillment, assessor_fill.clone()).await.unwrap();
+
+        // Create an "already known" RPC error
+        let error = alloy::contract::Error::TransportError(RpcError::ErrorResp(ErrorPayload {
+            code: -32603,
+            message: "already known".into(),
+            data: None,
+        }));
+
+        // Test the error handler
+        let result = ctx.prover_market.handle_fulfillment_rpc_error(request_id, error).await;
+        assert!(result.is_ok(), "Error handler should succeed for 'already known' error");
+
+        // Test with a different error
+        let different_error =
+            alloy::contract::Error::TransportError(RpcError::ErrorResp(ErrorPayload {
+                code: -32000,
+                message: "different error".into(),
+                data: None,
+            }));
+
+        let result =
+            ctx.prover_market.handle_fulfillment_rpc_error(request_id, different_error).await;
+        assert!(result.is_err(), "Error handler should fail for other errors");
     }
 }
