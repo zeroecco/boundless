@@ -15,7 +15,7 @@
 use std::{
     fmt::Debug,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use alloy::{
@@ -26,6 +26,7 @@ use alloy::{
     providers::Provider,
     rpc::types::{BlockTransactionsKind, Log, TransactionReceipt},
     signers::Signer,
+    transports::RpcError,
 };
 use alloy_sol_types::{SolCall, SolEvent};
 use anyhow::{anyhow, Context, Result};
@@ -108,6 +109,17 @@ struct StakeBalanceAlertConfig {
     warn_threshold: Option<U256>,
     /// Threshold at which to log an error
     error_threshold: Option<U256>,
+}
+
+/// Data returned from querying a fulfilled event
+#[derive(Debug, Clone)]
+pub struct FulfillmentData {
+    /// The journal data from the fulfillment
+    pub journal: Bytes,
+    /// The seal data from the fulfillment
+    pub seal: Bytes,
+    /// The transaction data containing the fulfillment
+    pub tx_data: alloy::rpc::types::Transaction,
 }
 
 impl<P> Clone for BoundlessMarketService<P>
@@ -584,20 +596,66 @@ impl<P: Provider> BoundlessMarketService<P> {
         tracing::debug!("Calling submitRootAndFulfillBatch({root:?}, {seal:x}, {fulfillments:?}, {assessor_fill:?})");
         let call = self
             .instance
-            .submitRootAndFulfillBatch(verifier_address, root, seal, fulfillments, assessor_fill)
+            .submitRootAndFulfillBatch(
+                verifier_address,
+                root,
+                seal.clone(),
+                fulfillments.clone(),
+                assessor_fill,
+            )
             .from(self.caller);
         tracing::debug!("Calldata: {}", call.calldata());
-        let pending_tx = call.send().await?;
-        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
 
-        tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
+        // Get the first fulfillment's ID to query the event
+        let request_id = fulfillments
+            .first()
+            .ok_or_else(|| MarketError::Error(anyhow!("No fulfillments provided")))?
+            .id;
 
-        Ok(())
+        match call.send().await {
+            Ok(pending_tx) => {
+                tracing::debug!("Tx broadcasted with hash: {}", pending_tx.tx_hash());
+                let tx_receipt = pending_tx
+                    .with_timeout(Some(self.timeout))
+                    .get_receipt()
+                    .await
+                    .context("failed to confirm tx")?;
+
+                tracing::info!(
+                    "Submitted merkle root and proof for batch {}",
+                    tx_receipt.transaction_hash
+                );
+                Ok(())
+            }
+            Err(err) => {
+                let tx = self.handle_fulfillment_rpc_error(request_id, err).await?;
+                tracing::info!("Submitted merkle root and proof for batch {}", tx.inner.tx_hash());
+                Ok(())
+            }
+        }
+    }
+
+    // Attempts to handle known errors that can occur when submitting a batch of fulfillments.
+    async fn handle_fulfillment_rpc_error(
+        &self,
+        request_id: U256,
+        err: alloy::contract::Error,
+    ) -> Result<alloy::rpc::types::Transaction, MarketError> {
+        if let alloy::contract::Error::TransportError(RpcError::ErrorResp(resp)) = &err {
+            if resp.code == -32603 && resp.message.contains("already known") {
+                let now =
+                    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                let tx = self
+                    .wait_for_request_fulfillment_with_tx(
+                        request_id,
+                        Duration::from_secs(5),
+                        now + self.timeout.as_secs(),
+                    )
+                    .await?;
+                return Ok(tx.tx_data);
+            }
+        }
+        Err(err.into())
     }
 
     /// Combined function to submit a new merkle root to the set-verifier and call `fulfillBatchAndWithdraw`.
@@ -617,22 +675,39 @@ impl<P: Provider> BoundlessMarketService<P> {
                 verifier_address,
                 root,
                 seal,
-                fulfillments,
+                fulfillments.clone(),
                 assessor_fill,
             )
             .from(self.caller);
         tracing::debug!("Calldata: {}", call.calldata());
-        let pending_tx = call.send().await?;
-        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
 
-        tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
+        // Get the first fulfillment's ID to query the event
+        let request_id = fulfillments
+            .first()
+            .ok_or_else(|| MarketError::Error(anyhow!("No fulfillments provided")))?
+            .id;
 
-        Ok(())
+        match call.send().await {
+            Ok(pending_tx) => {
+                tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+                let tx_receipt = pending_tx
+                    .with_timeout(Some(self.timeout))
+                    .get_receipt()
+                    .await
+                    .context("failed to confirm tx")?;
+
+                tracing::info!(
+                    "Submitted merkle root and proof for batch {}",
+                    tx_receipt.transaction_hash
+                );
+                Ok(())
+            }
+            Err(err) => {
+                let tx = self.handle_fulfillment_rpc_error(request_id, err).await?;
+                tracing::info!("Submitted merkle root and proof for batch {}", tx.inner.tx_hash());
+                Ok(())
+            }
+        }
     }
 
     /// A combined call to `IBoundlessMarket.priceRequest` and `IBoundlessMarket.fulfillBatch`.
@@ -662,7 +737,12 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         let mut call = self
             .instance
-            .priceAndFulfillBatch(requests, client_sigs, fulfillments, assessor_fill)
+            .priceAndFulfillBatch(
+                requests.clone(),
+                client_sigs,
+                fulfillments.clone(),
+                assessor_fill,
+            )
             .from(self.caller);
         tracing::debug!("Calldata: {}", call.calldata());
 
@@ -679,18 +759,34 @@ impl<P: Provider> BoundlessMarketService<P> {
                 .max_priority_fee_per_gas(priority_fee.max_priority_fee_per_gas + gas as u128);
         }
 
-        let pending_tx = call.send().await?;
-        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+        // Get the first fulfillment's ID to query the event
+        let request_id = fulfillments
+            .first()
+            .ok_or_else(|| MarketError::Error(anyhow!("No fulfillments provided")))?
+            .id;
 
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        match call.send().await {
+            Ok(pending_tx) => {
+                tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+                let tx_receipt = pending_tx
+                    .with_timeout(Some(self.timeout))
+                    .get_receipt()
+                    .await
+                    .context("failed to confirm tx")?;
 
-        tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
 
-        Ok(())
+                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+
+                Ok(())
+            }
+            Err(err) => {
+                let tx = self.handle_fulfillment_rpc_error(request_id, err).await?;
+                tracing::info!("Fulfilled proof for batch {}", tx.inner.tx_hash());
+                Ok(())
+            }
+        }
     }
 
     /// A combined call to `IBoundlessMarket.priceRequest` and `IBoundlessMarket.fulfillBatchAndWithdraw`.
@@ -722,7 +818,12 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         let mut call = self
             .instance
-            .priceAndFulfillBatchAndWithdraw(requests, client_sigs, fulfillments, assessor_fill)
+            .priceAndFulfillBatchAndWithdraw(
+                requests.clone(),
+                client_sigs,
+                fulfillments.clone(),
+                assessor_fill,
+            )
             .from(self.caller);
         tracing::debug!("Calldata: {}", call.calldata());
 
@@ -739,18 +840,34 @@ impl<P: Provider> BoundlessMarketService<P> {
                 .max_priority_fee_per_gas(priority_fee.max_priority_fee_per_gas + gas as u128);
         }
 
-        let pending_tx = call.send().await?;
-        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+        // Get the first fulfillment's ID to query the event
+        let request_id = fulfillments
+            .first()
+            .ok_or_else(|| MarketError::Error(anyhow!("No fulfillments provided")))?
+            .id;
 
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        match call.send().await {
+            Ok(pending_tx) => {
+                tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+                let tx_receipt = pending_tx
+                    .with_timeout(Some(self.timeout))
+                    .get_receipt()
+                    .await
+                    .context("failed to confirm tx")?;
 
-        tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
 
-        Ok(())
+                tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+
+                Ok(())
+            }
+            Err(err) => {
+                let tx = self.handle_fulfillment_rpc_error(request_id, err).await?;
+                tracing::info!("Fulfilled proof for batch {}", tx.inner.tx_hash());
+                Ok(())
+            }
+        }
     }
 
     /// Checks if a request is locked in.
@@ -840,7 +957,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         request_id: U256,
         lower_bound: Option<u64>,
         upper_bound: Option<u64>,
-    ) -> Result<(Bytes, Bytes), MarketError> {
+    ) -> Result<FulfillmentData, MarketError> {
         let mut upper_block = upper_bound.unwrap_or(self.get_latest_block_number().await?);
         let start_block = lower_bound.unwrap_or(upper_block.saturating_sub(
             self.event_query_config.block_range * self.event_query_config.max_iterations,
@@ -869,7 +986,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
             if let Some((_, data)) = logs.first() {
                 // get the calldata inputs
-                let tx_data = self
+                let tx_data: alloy::rpc::types::Transaction = self
                     .instance
                     .provider()
                     .get_transaction_by_hash(data.transaction_hash.context("tx hash is none")?)
@@ -880,7 +997,11 @@ impl<P: Provider> BoundlessMarketService<P> {
                 let fills = decode_calldata(inputs).context("Failed to decode calldata")?;
                 for fill in fills {
                     if fill.id == request_id {
-                        return Ok((fill.journal.clone(), fill.seal.clone()));
+                        return Ok(FulfillmentData {
+                            journal: fill.journal,
+                            seal: fill.seal,
+                            tx_data,
+                        });
                     }
                 }
             }
@@ -963,7 +1084,10 @@ impl<P: Provider> BoundlessMarketService<P> {
     ) -> Result<(Bytes, Bytes), MarketError> {
         match self.get_status(request_id, None).await? {
             ProofStatus::Expired => Err(MarketError::RequestHasExpired(request_id)),
-            ProofStatus::Fulfilled => self.query_fulfilled_event(request_id, None, None).await,
+            ProofStatus::Fulfilled => {
+                let fulfillment = self.query_fulfilled_event(request_id, None, None).await?;
+                Ok((fulfillment.journal, fulfillment.seal))
+            }
             _ => Err(MarketError::RequestNotFulfilled(request_id)),
         }
     }
@@ -1001,12 +1125,30 @@ impl<P: Provider> BoundlessMarketService<P> {
         retry_interval: Duration,
         expires_at: u64,
     ) -> Result<(Bytes, Bytes), MarketError> {
+        let fulfillment = self
+            .wait_for_request_fulfillment_with_tx(request_id, retry_interval, expires_at)
+            .await?;
+        Ok((fulfillment.journal, fulfillment.seal))
+    }
+
+    /// Returns journal, seal, and tx data if the request is fulfilled.
+    ///
+    /// This method will poll the status of the request until it is Fulfilled or Expired.
+    /// Polling is done at intervals of `retry_interval` until the request is Fulfilled, Expired or
+    /// the optional timeout is reached.
+    pub async fn wait_for_request_fulfillment_with_tx(
+        &self,
+        request_id: U256,
+        retry_interval: Duration,
+        expires_at: u64,
+    ) -> Result<FulfillmentData, MarketError> {
         loop {
             let status = self.get_status(request_id, Some(expires_at)).await?;
             match status {
                 ProofStatus::Expired => return Err(MarketError::RequestHasExpired(request_id)),
                 ProofStatus::Fulfilled => {
-                    return self.query_fulfilled_event(request_id, None, None).await;
+                    let fulfillment = self.query_fulfilled_event(request_id, None, None).await?;
+                    return Ok(fulfillment);
                 }
                 _ => {
                     tracing::info!(
