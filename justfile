@@ -53,9 +53,9 @@ test-cargo-db:
     just test-db clean
 
 # Manage test postgres instance (setup or clean, defaults to setup)
-test-db action="setup":
+test-db action="up":
     #!/usr/bin/env bash
-    if [ "{{action}}" = "setup" ]; then
+    if [ "{{action}}" = "up" ]; then
         docker inspect postgres-test > /dev/null 2>&1 || \
         docker run -d \
             --name postgres-test \
@@ -64,12 +64,12 @@ test-db action="setup":
             postgres:latest
         # Wait for PostgreSQL to be ready
         sleep 3
-    elif [ "{{action}}" = "clean" ]; then
+    elif [ "{{action}}" = "down" ]; then
         docker stop postgres-test
         docker rm postgres-test
     else
         echo "Unknown action: {{action}}"
-        echo "Available actions: setup, clean"
+        echo "Available actions: up, down"
         exit 1
     fi
 
@@ -135,7 +135,7 @@ localnet action="up": check-deps
     ANVIL_BLOCK_TIME="2"
     RISC0_DEV_MODE="1"
     CHAIN_KEY="anvil"
-    RUST_LOG="info,broker=debug,boundless_market=debug"
+    RUST_LOG="info,broker=debug,boundless_market=debug,order_stream=debug"
     # This key is a prefunded address for the anvil test configuration (index 0)
     DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -155,6 +155,7 @@ localnet action="up": check-deps
         forge build || { echo "Failed to build contracts"; just localnet down; exit 1; }
         echo "Building Rust project..."
         cargo build --bin broker || { echo "Failed to build broker binary"; just localnet down; exit 1; }
+        cargo build --bin order_stream || { echo "Failed to build order-stream binary"; just localnet down; exit 1; }
         # Check if Anvil is already running
         if nc -z localhost $ANVIL_PORT; then
             echo "Anvil is already running on port $ANVIL_PORT. Reusing existing instance."
@@ -187,11 +188,20 @@ localnet action="up": check-deps
         cast send --private-key $DEPLOYER_PRIVATE_KEY \
             --rpc-url http://localhost:$ANVIL_PORT \
             $HIT_POINTS_ADDRESS "mint(address, uint256)" $ADMIN_ADDRESS $DEPOSIT_AMOUNT
+
+        # Start order stream server
+        just test-db up
+        DATABASE_URL={{DATABASE_URL}} RUST_LOG=$RUST_LOG ./target/debug/order_stream \
+            --min-balance 0 \
+            --bypass-addrs="0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f" \
+            --boundless-market-address $BOUNDLESS_MARKET_ADDRESS > {{LOGS_DIR}}/order_stream.txt 2>&1 & echo $! >> {{PID_FILE}}
+        # Start a broker
         RISC0_DEV_MODE=$RISC0_DEV_MODE RUST_LOG=$RUST_LOG ./target/debug/broker \
             --private-key $PRIVATE_KEY \
             --boundless-market-address $BOUNDLESS_MARKET_ADDRESS \
             --set-verifier-address $SET_VERIFIER_ADDRESS \
             --rpc-url http://localhost:$ANVIL_PORT \
+            --order-stream-url http://localhost:8585 \
             --deposit-amount $DEPOSIT_AMOUNT > {{LOGS_DIR}}/broker.txt 2>&1 & echo $! >> {{PID_FILE}}
         echo "Localnet is running!"
         echo "Make sure to run 'source .env.localnet' to load the environment variables before interacting with the network."
@@ -202,6 +212,7 @@ localnet action="up": check-deps
             done < {{PID_FILE}}
             rm {{PID_FILE}}
         fi
+        just test-db down
     else
         echo "Unknown action: {{action}}"
         echo "Available actions: up, down"
