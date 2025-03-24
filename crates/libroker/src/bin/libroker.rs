@@ -6,7 +6,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::{
     consensus::Transaction,
-    primitives::{utils::parse_ether, Address, Bytes, U256},
+    primitives::{utils::parse_ether, Address, U256},
     providers::{network::EthereumWallet, Provider, ProviderBuilder, WalletProvider, WsConnect},
     rpc::types::Log,
     signers::local::PrivateKeySigner,
@@ -15,7 +15,6 @@ use alloy::{
 use alloy_chains::NamedChain;
 use anyhow::{bail, Context, Result};
 use balance_alerts_layer::{BalanceAlertConfig, BalanceAlertLayer};
-use boundless_cli::DefaultProver;
 use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, IBoundlessMarket},
     order_stream_client::{order_stream, Client as OrderStreamClient},
@@ -23,11 +22,13 @@ use boundless_market::{
 use broker::{
     config::{ConfigLock, ConfigWatcher},
     provers::{self, ProverObj},
+    UriHandlerBuilder,
 };
 use clap::Parser;
 use futures::StreamExt;
 use libroker::{now_timestamp_secs, Order, OrderLockTiming, PriceOrderErr, State};
 use risc0_ethereum_contracts::set_verifier::SetVerifierService;
+use risc0_zkvm::sha::Digest;
 use tokio::{
     sync::{watch, Semaphore},
     task::JoinSet,
@@ -127,13 +128,12 @@ async fn main() -> Result<()> {
     let wallet = EthereumWallet::from(args.private_key.clone());
     let broker_address = args.private_key.address();
 
-    let (balance_warn_threshold, balance_error_threshold, max_concurrent_locks, tx_timeout) = {
+    let (balance_warn_threshold, balance_error_threshold, max_concurrent_locks) = {
         let config = config.lock_all()?;
         (
             config.market.balance_warn_threshold.clone(),
             config.market.balance_error_threshold.clone(),
             config.market.max_concurrent_locks,
-            config.batcher.txn_timeout,
         )
     };
     // let rpc_client = RpcClient::builder().layer(retry_layer).http(args.rpc_url.clone());
@@ -174,10 +174,28 @@ async fn main() -> Result<()> {
         broker_address,
     );
 
+    let set_verifier =
+        SetVerifierService::new(args.set_verifier_address, provider.clone(), broker_address);
+
     let mut locked_requests =
         boundless_market.instance().RequestLocked_filter().watch().await?.into_stream();
     let mut submitted_requests =
         boundless_market.instance().RequestSubmitted_filter().watch().await?.into_stream();
+
+    let (set_builder_guest_id, set_builder_guest) =
+        get_set_builder_image(&config, &set_verifier).await?;
+    let (assessor_guest_id, assessor_guest) =
+        get_assessor_image(&config, &boundless_market).await?;
+    prover
+        .upload_image(&set_builder_guest_id.to_string(), set_builder_guest)
+        .await
+        .context("Failed to upload set-builder guest")?;
+
+    prover
+        .upload_image(&assessor_guest_id.to_string(), assessor_guest)
+        .await
+        .context("Failed to upload assessor guest")?;
+    tracing::info!("Uploaded set-builder and assessor guests");
 
     // let mut set_verifier =
     //     SetVerifierService::new(args.set_verifier_address, provider.clone(), broker_address);
@@ -217,6 +235,10 @@ async fn main() -> Result<()> {
         config,
         market: boundless_market,
         concurrent_locks,
+        set_builder_guest_id,
+        assessor_guest_id,
+        set_verifier,
+        prover_address: broker_address,
     });
 
     let mut pricing_tasks = JoinSet::new();
@@ -374,7 +396,7 @@ where
 
 async fn lock_and_fulfill_order<P>(
     state: Arc<State<P>>,
-    order: Order,
+    mut order: Order,
     pricing: OrderLockTiming,
 ) -> Result<()>
 where
@@ -395,17 +417,34 @@ where
 
         if let Err(e) = state.lock_order(&order).await {
             tracing::error!("Failed to lock order {:x}: {:?}", order.request.id, e);
+            return;
         }
         tracing::info!("Order {:x} locked", order.request.id);
-        
+
         match state.prove_order(order.request.id, &order).await {
             Ok(proof_id) => {
                 tracing::info!("Order {:x} proof id: {}", order.request.id, proof_id);
+                order.proof_id = Some(proof_id);
             }
             Err(e) => {
                 tracing::error!("Failed to prove order {:x}: {:?}", order.request.id, e);
+                return;
             }
         }
+
+        let order_id = *order.id();
+        let batch = match state.aggregate(&[order]).await {
+            Ok(Some(batch)) => {
+                batch
+            }
+            Ok(None) => {
+                todo!("should always finalize for now");
+            }
+            Err(e) => {
+                tracing::error!("Failed to aggregate order {:x}: {:?}", order_id, e);
+                return;
+            }
+        };
     });
 
     Ok(())
@@ -451,7 +490,7 @@ where
 /// Fetches the content of a URL.
 /// Supported URL schemes are `http`, `https`, and `file`.
 // TODO duplicate logic with boundless-cli
-pub async fn fetch_url(url_str: &str) -> Result<Vec<u8>> {
+async fn fetch_url(url_str: &str) -> Result<Vec<u8>> {
     tracing::debug!("Fetching URL: {}", url_str);
     let url = Url::parse(url_str)?;
 
@@ -476,4 +515,68 @@ async fn fetch_file(url: &Url) -> Result<Vec<u8>> {
     let path = std::path::Path::new(url.path());
     let data = tokio::fs::read(path).await?;
     Ok(data)
+}
+
+async fn get_assessor_image<P>(
+    config: &ConfigLock,
+    boundless_market: &BoundlessMarketService<P>,
+) -> Result<(Digest, Vec<u8>)>
+where
+    P: Provider + 'static + Clone + WalletProvider,
+{
+    let (assessor_path, max_file_size) = {
+        let config = config.lock_all().context("Failed to lock config")?;
+        (config.prover.assessor_set_guest_path.clone(), config.market.max_file_size)
+    };
+
+    if let Some(path) = assessor_path {
+        let elf_buf = std::fs::read(path).context("Failed to read assessor path")?;
+        let img_id =
+            risc0_zkvm::compute_image_id(&elf_buf).context("Failed to compute assessor imageId")?;
+
+        Ok((img_id, elf_buf))
+    } else {
+        let (image_id, image_url_str) =
+            boundless_market.image_info().await.context("Failed to get contract image_info")?;
+        let image_uri = UriHandlerBuilder::new(&image_url_str)
+            .set_max_size(max_file_size)
+            .build()
+            .context("Failed to parse image URI")?;
+        tracing::debug!("Downloading assessor image from: {image_uri}");
+        let image_data = image_uri.fetch().await.context("Failed to download sot image")?;
+
+        Ok((Digest::from_bytes(image_id.0), image_data))
+    }
+}
+
+async fn get_set_builder_image<P>(
+    config: &ConfigLock,
+    set_verifier: &SetVerifierService<P>,
+) -> Result<(Digest, Vec<u8>)>
+where
+    P: Provider + 'static + Clone + WalletProvider,
+{
+    let (set_builder_path, max_file_size) = {
+        let config = config.lock_all().context("Failed to lock config")?;
+        (config.prover.set_builder_guest_path.clone(), config.market.max_file_size)
+    };
+
+    if let Some(path) = set_builder_path {
+        let elf_buf = std::fs::read(path).context("Failed to read set-builder path")?;
+        let img_id = risc0_zkvm::compute_image_id(&elf_buf)
+            .context("Failed to compute set-builder imageId")?;
+
+        Ok((img_id, elf_buf))
+    } else {
+        let (image_id, image_url_str) =
+            set_verifier.image_info().await.context("Failed to get contract image_info")?;
+        let image_uri = UriHandlerBuilder::new(&image_url_str)
+            .set_max_size(max_file_size)
+            .build()
+            .context("Failed to parse image URI")?;
+        tracing::debug!("Downloading aggregation-set image from: {image_uri}");
+        let image_data = image_uri.fetch().await.context("Failed to download sot image")?;
+
+        Ok((Digest::from_bytes(image_id.0), image_data))
+    }
 }

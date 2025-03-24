@@ -26,13 +26,14 @@ use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::sha::Digest;
 pub use rpc_retry_policy::CustomRetryPolicy;
 use serde::{Deserialize, Serialize};
-use storage::UriHandlerBuilder;
+// TODO(libroker) exposed
+pub use storage::UriHandlerBuilder;
 use tokio::task::JoinSet;
 use url::Url;
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
-// TODO exposed
+// TODO(libroker) exposed
 pub mod config;
 pub(crate) mod db;
 pub mod futures_retry;
@@ -40,7 +41,7 @@ pub(crate) mod market_monitor;
 pub(crate) mod offchain_market_monitor;
 pub(crate) mod order_monitor;
 pub(crate) mod order_picker;
-// TODO avoid exposing this if actually using this code
+// TODO(libroker) avoid exposing this if actually using this code
 pub mod provers;
 pub(crate) mod proving;
 pub(crate) mod rpc_retry_policy;
