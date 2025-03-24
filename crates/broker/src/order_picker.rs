@@ -1366,8 +1366,8 @@ mod tests {
         assert_eq!(pricing_tasks.len(), 2);
 
         // Finish pricing an order and mark it as complete to free up capacity
-        let (order, priced) = pricing_tasks.join_next().await.unwrap().unwrap().unwrap();
-        assert!(priced);
+        let (order, priced) = pricing_tasks.join_next().await.unwrap().unwrap();
+        assert!(priced.unwrap());
         ctx.db.set_order_complete(order).await.unwrap();
 
         let capacity = ctx.picker.get_pricing_order_capacity().await.unwrap();
