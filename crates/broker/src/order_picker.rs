@@ -180,11 +180,11 @@ where
         }
 
         // TODO: Move URI handling like this into the prover impls
-        let image_id = crate::upload_image_uri(&self.prover, order, max_size, fetch_retries)
+        let image_id = crate::upload_image_uri(&self.prover, &order.request, max_size, fetch_retries)
             .await
             .map_err(PriceOrderErr::FetchImageErr)?;
 
-        let input_id = crate::upload_input_uri(&self.prover, order, max_size, fetch_retries)
+        let input_id = crate::upload_input_uri(&self.prover, &order.request, max_size, fetch_retries)
             .await
             .map_err(PriceOrderErr::FetchInputErr)?;
 

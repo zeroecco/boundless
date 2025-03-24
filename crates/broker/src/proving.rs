@@ -53,13 +53,13 @@ impl ProvingService {
         // Mostly hit by skipping pre-flight
         let image_id = match order.image_id.as_ref() {
             Some(val) => val.clone(),
-            None => crate::upload_image_uri(&self.prover, &order, max_file_size, fetch_retries)
+            None => crate::upload_image_uri(&self.prover, &order.request, max_file_size, fetch_retries)
                 .await
                 .context("Failed to upload image")?,
         };
         let input_id = match order.input_id.as_ref() {
             Some(val) => val.clone(),
-            None => crate::upload_input_uri(&self.prover, &order, max_file_size, fetch_retries)
+            None => crate::upload_input_uri(&self.prover, &order.request, max_file_size, fetch_retries)
                 .await
                 .context("Failed to upload input")?,
         };

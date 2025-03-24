@@ -32,14 +32,16 @@ use url::Url;
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
-pub(crate) mod config;
+// TODO exposed
+pub mod config;
 pub(crate) mod db;
 pub mod futures_retry;
 pub(crate) mod market_monitor;
 pub(crate) mod offchain_market_monitor;
 pub(crate) mod order_monitor;
 pub(crate) mod order_picker;
-pub(crate) mod provers;
+// TODO avoid exposing this if actually using this code
+pub mod provers;
 pub(crate) mod proving;
 pub(crate) mod rpc_retry_policy;
 pub(crate) mod storage;
@@ -550,13 +552,14 @@ where
     }
 }
 
-async fn upload_image_uri(
+// TODO(libroker): exposed these endpoints
+pub async fn upload_image_uri(
     prover: &ProverObj,
-    order: &Order,
+    request: &ProofRequest,
     max_size: usize,
     retries: Option<u8>,
 ) -> Result<String> {
-    let mut uri = UriHandlerBuilder::new(&order.request.imageUrl).set_max_size(max_size);
+    let mut uri = UriHandlerBuilder::new(&request.imageUrl).set_max_size(max_size);
 
     if let Some(retry) = retries {
         uri = uri.set_retries(retry);
@@ -567,11 +570,11 @@ async fn upload_image_uri(
         let image_data = uri
             .fetch()
             .await
-            .with_context(|| format!("Failed to fetch image URI: {}", order.request.imageUrl))?;
+            .with_context(|| format!("Failed to fetch image URI: {}", request.imageUrl))?;
         let image_id =
             risc0_zkvm::compute_image_id(&image_data).context("Failed to compute image ID")?;
 
-        let required_image_id = Digest::from(order.request.requirements.imageId.0);
+        let required_image_id = Digest::from(request.requirements.imageId.0);
         ensure!(
             image_id == required_image_id,
             "image ID does not match requirements; expect {}, got {}",
@@ -590,16 +593,17 @@ async fn upload_image_uri(
         Ok(uri.id().context("Invalid image URI type")?)
     }
 }
-async fn upload_input_uri(
+// TODO(libroker): exposed
+pub async fn upload_input_uri(
     prover: &ProverObj,
-    order: &Order,
+    request: &ProofRequest,
     max_size: usize,
     retries: Option<u8>,
 ) -> Result<String> {
-    Ok(match order.request.input.inputType {
+    Ok(match request.input.inputType {
         InputType::Inline => prover
             .upload_input(
-                GuestEnv::decode(&order.request.input.data)
+                GuestEnv::decode(&request.input.data)
                     .with_context(|| "Failed to decode input")?
                     .stdin,
             )
@@ -608,7 +612,7 @@ async fn upload_input_uri(
 
         InputType::Url => {
             let input_uri_str =
-                std::str::from_utf8(&order.request.input.data).context("input url is not utf8")?;
+                std::str::from_utf8(&request.input.data).context("input url is not utf8")?;
             tracing::debug!("Input URI string: {input_uri_str}");
             let mut input_uri = UriHandlerBuilder::new(input_uri_str).set_max_size(max_size);
 
@@ -633,7 +637,7 @@ async fn upload_input_uri(
             }
         }
         //???
-        _ => anyhow::bail!("Invalid input type: {:?}", order.request.input.inputType),
+        _ => anyhow::bail!("Invalid input type: {:?}", request.input.inputType),
     })
 }
 

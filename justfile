@@ -154,7 +154,7 @@ localnet action="up": check-deps
         echo "Building contracts..."
         forge build || { echo "Failed to build contracts"; just localnet down; exit 1; }
         echo "Building Rust project..."
-        cargo build --bin broker || { echo "Failed to build broker binary"; just localnet down; exit 1; }
+        cargo build --bin libroker || { echo "Failed to build broker binary"; just localnet down; exit 1; }
         cargo build --bin order_stream || { echo "Failed to build order-stream binary"; just localnet down; exit 1; }
         # Check if Anvil is already running
         if nc -z localhost $ANVIL_PORT; then
@@ -196,13 +196,14 @@ localnet action="up": check-deps
             --bypass-addrs="0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f" \
             --boundless-market-address $BOUNDLESS_MARKET_ADDRESS > {{LOGS_DIR}}/order_stream.txt 2>&1 & echo $! >> {{PID_FILE}}
         # Start a broker
-        RISC0_DEV_MODE=$RISC0_DEV_MODE RUST_LOG=$RUST_LOG ./target/debug/broker \
-            --private-key $PRIVATE_KEY \
-            --boundless-market-address $BOUNDLESS_MARKET_ADDRESS \
-            --set-verifier-address $SET_VERIFIER_ADDRESS \
-            --rpc-url http://localhost:$ANVIL_PORT \
-            --order-stream-url http://localhost:8585 \
-            --deposit-amount $DEPOSIT_AMOUNT > {{LOGS_DIR}}/broker.txt 2>&1 & echo $! >> {{PID_FILE}}
+        # RISC0_DEV_MODE=$RISC0_DEV_MODE RUST_LOG=$RUST_LOG ./target/debug/libroker \
+        #     --private-key $PRIVATE_KEY \
+        #     --boundless-market-address $BOUNDLESS_MARKET_ADDRESS \
+        #     --set-verifier-address $SET_VERIFIER_ADDRESS \
+        #     --rpc-ws-url ws://localhost:$ANVIL_PORT \
+        #     --order-stream-url http://localhost:8585 \
+        #     --deposit-amount $DEPOSIT_AMOUNT 
+            # --deposit-amount $DEPOSIT_AMOUNT > {{LOGS_DIR}}/broker.txt 2>&1 & echo $! >> {{PID_FILE}}
         echo "Localnet is running!"
         echo "Make sure to run 'source .env.localnet' to load the environment variables before interacting with the network."
     elif [ "{{action}}" = "down" ]; then
