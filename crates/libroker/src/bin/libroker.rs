@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
         .order_stream_url
         .clone()
         .map(|url| OrderStreamClient::new(url, args.boundless_market_address, chain_id))
-        // TODO remove mandatory order stream
+        // TODO make order stream optional
         .unwrap();
     let socket = client.connect_async(&args.private_key).await?;
     let mut orders = order_stream(socket);
@@ -250,7 +250,8 @@ async fn main() -> Result<()> {
                 let (order, order_price_result): (Order, PricingTaskResult) = pricing_result?;
                 match order_price_result {
                     Ok(Some(order_lock_timing)) => {
-                        tracing::trace!("order lock timing: {:?}", order_lock_timing);
+                        tracing::trace!("order lock timing for {:x}: {:?}", order.request.id, order_lock_timing);
+                        lock_and_fulfill_order(state.clone(), order, order_lock_timing).await?;
                     }
                     Ok(None) => {
                         tracing::trace!("order not priced: {:?}", order.request.id);
@@ -395,19 +396,17 @@ where
         if let Err(e) = state.lock_order(&order).await {
             tracing::error!("Failed to lock order {:x}: {:?}", order.request.id, e);
         }
+        tracing::info!("Order {:x} locked", order.request.id);
     });
 
     Ok(())
 }
-
-
 
 // // TODO deduplicate some code with the fulfill logic in boundless-cli
 // async fn fulfill_order<P>(state: Arc<State<P>>, order: Order) -> Result<()>
 // where
 //     P: Provider + 'static + Clone + WalletProvider,
 // {
-
 
 //     // let client = ClientBuilder::default()
 //     //     .with_private_key(args.private_key.clone())
