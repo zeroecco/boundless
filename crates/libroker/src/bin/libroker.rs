@@ -397,6 +397,15 @@ where
             tracing::error!("Failed to lock order {:x}: {:?}", order.request.id, e);
         }
         tracing::info!("Order {:x} locked", order.request.id);
+        
+        match state.prove_order(order.request.id, &order).await {
+            Ok(proof_id) => {
+                tracing::info!("Order {:x} proof id: {}", order.request.id, proof_id);
+            }
+            Err(e) => {
+                tracing::error!("Failed to prove order {:x}: {:?}", order.request.id, e);
+            }
+        }
     });
 
     Ok(())
