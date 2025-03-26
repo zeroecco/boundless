@@ -12,7 +12,7 @@ members = [
     "crates/order-generator",
     "crates/order-stream",
     "crates/slasher",
-    "crates/market-monitor",
+    "crates/market-tracker",
     "documentation/doc-test",
 ]
 
