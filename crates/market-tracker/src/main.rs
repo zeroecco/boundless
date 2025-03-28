@@ -27,6 +27,7 @@ use tokio::time;
 use url::Url;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
+use colored::*;
 
 #[derive(Error, Debug)]
 pub enum PulseError {
@@ -262,6 +263,7 @@ where
                     Ok(deadline) => {
                         let mut active_requests = self.stats.active_requests.write().await;
                         active_requests.insert(log.requestId, deadline._0);
+                        drop(active_requests);
                         tracing::debug!(
                             "Added request 0x{:x} with deadline {}",
                             log.requestId,
@@ -301,6 +303,7 @@ where
             for (log, _) in logs {
                 let mut active_requests = self.stats.active_requests.write().await;
                 active_requests.remove(&log.requestId);
+                drop(active_requests);
                 tracing::debug!("Removed delivered request 0x{:x}", log.requestId);
             }
         }
@@ -328,6 +331,7 @@ where
             for (log, _) in logs {
                 let mut active_requests = self.stats.active_requests.write().await;
                 active_requests.remove(&log.requestId);
+                drop(active_requests);
                 tracing::debug!("Removed fulfilled request 0x{:x}", log.requestId);
             }
 
@@ -378,20 +382,21 @@ where
 
     async fn print_pulse(&self) {
         let active_count = self.stats.active_requests.read().await.len();
+        let period_requests = self.stats.period_requests.load(Ordering::SeqCst);
+        let period_delivered = self.stats.period_delivered.load(Ordering::SeqCst);
+        let period_expired = self.stats.period_expired.load(Ordering::SeqCst);
         
-        println!("=== BOUNDLESS MARKET PULSE ===");
-        println!("Time: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
-        println!("Last processed block: {}", self.last_processed_block);
-        println!("Active Requests: {}", active_count);
-        println!("Period Stats (last {} seconds):", self.interval.as_secs());
-        println!("  New Requests: {}", self.stats.period_requests.load(Ordering::SeqCst));
-        println!("  Delivered Proofs: {}", self.stats.period_delivered.load(Ordering::SeqCst));
-        println!("  Expired Requests: {}", self.stats.period_expired.load(Ordering::SeqCst));
-        println!("Cumulative Stats:");
-        println!("  Total Requests: {}", self.stats.total_requests.load(Ordering::SeqCst));
-        println!("  Total Delivered: {}", self.stats.total_delivered.load(Ordering::SeqCst));
-        println!("  Total Expired: {}", self.stats.total_expired.load(Ordering::SeqCst));
-        println!("===============================");
+        println!("{} | Block: {} | Active: {} | Period: +{} {} {} | Total: {} {} {}", 
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            self.last_processed_block,
+            active_count.to_string().yellow(),
+            period_requests.to_string().bright_blue(),
+            format!("✓{}", period_delivered).green(),
+            format!("✗{}", period_expired).red(),
+            self.stats.total_requests.load(Ordering::SeqCst),
+            format!("✓{}", self.stats.total_delivered.load(Ordering::SeqCst)).green(),
+            format!("✗{}", self.stats.total_expired.load(Ordering::SeqCst)).red()
+        );
     }
 }
 

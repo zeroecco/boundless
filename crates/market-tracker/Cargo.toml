@@ -18,6 +18,7 @@ balance-alerts-layer = { workspace = true }
 boundless-market = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+colored = { version = "3.0" }
 dotenvy = { workspace = true }
 hex = { workspace = true }
 reqwest = { workspace = true }
