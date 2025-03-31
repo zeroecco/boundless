@@ -25,7 +25,14 @@ check-deps:
 	@command -v gcc >/dev/null 2>&1 || { echo "Error: gcc is not installed. Please install build-essential."; exit 1; }
 	@command -v nvcc >/dev/null 2>&1 || { echo "Error: nvcc is not installed. Please install CUDA toolkit."; exit 1; }
 	@ldconfig -p | grep -q libssl.so || { echo "Error: libssl-dev is not installed."; exit 1; }
-	@echo "All dependencies found."
+	@command -v psql >/dev/null 2>&1 || { echo "Error: PostgreSQL is not installed. Please install postgresql and postgresql-contrib."; exit 1; }
+	@command -v redis-cli >/dev/null 2>&1 || { echo "Error: Redis is not installed. Please install redis-server."; exit 1; }
+	@command -v mc >/dev/null 2>&1 || { echo "Error: MinIO client is not installed. Please install minio-client."; exit 1; }
+	@echo "Checking service configurations..."
+	@pg_isready >/dev/null 2>&1 || { echo "Error: PostgreSQL is not running. Please start the service: sudo systemctl start postgresql"; exit 1; }
+	@redis-cli ping >/dev/null 2>&1 || { echo "Error: Redis is not running. Please start the service: sudo systemctl start redis-server"; exit 1; }
+	@mc alias ls myminio >/dev/null 2>&1 || { echo "Error: MinIO is not configured. Please configure MinIO client: mc alias set myminio http://localhost:9000 minioadmin minioadmin"; exit 1; }
+	@echo "All dependencies found and services configured."
 
 # Default target
 .PHONY: all
@@ -58,6 +65,10 @@ deb: check-deps all prepare-deb
 		--depends systemd \
 		--depends libssl-dev \
 		--depends nvidia-cuda-toolkit \
+		--depends postgresql \
+		--depends postgresql-contrib \
+		--depends redis \
+		--depends minio \
 		--deb-systemd $(DEB_BUILD_DIR)/bento-agent.service \
 		--deb-systemd $(DEB_BUILD_DIR)/bento-api.service \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-agent=/usr/local/bin/bento-agent \
@@ -74,7 +85,7 @@ prepare-deb: all
 		mkdir -p $(TEMPLATES_DIR); \
 		echo "[Unit]" > $(TEMPLATES_DIR)/bento-agent.service; \
 		echo "Description=Bento Agent Service" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "After=network.target" >> $(TEMPLATES_DIR)/bento-agent.service; \
+		echo "After=network.target postgresql.service redis-server.service" >> $(TEMPLATES_DIR)/bento-agent.service; \
 		echo "" >> $(TEMPLATES_DIR)/bento-agent.service; \
 		echo "[Service]" >> $(TEMPLATES_DIR)/bento-agent.service; \
 		echo "Type=simple" >> $(TEMPLATES_DIR)/bento-agent.service; \
@@ -86,7 +97,7 @@ prepare-deb: all
 		\
 		echo "[Unit]" > $(TEMPLATES_DIR)/bento-api.service; \
 		echo "Description=Bento API Service" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "After=network.target" >> $(TEMPLATES_DIR)/bento-api.service; \
+		echo "After=network.target postgresql.service redis-server.service" >> $(TEMPLATES_DIR)/bento-api.service; \
 		echo "" >> $(TEMPLATES_DIR)/bento-api.service; \
 		echo "[Service]" >> $(TEMPLATES_DIR)/bento-api.service; \
 		echo "Type=simple" >> $(TEMPLATES_DIR)/bento-api.service; \
@@ -136,3 +147,11 @@ help:
 	@echo "  - Build essentials (gcc)"
 	@echo "  - libssl-dev"
 	@echo "  - NVIDIA CUDA toolkit"
+	@echo "  - PostgreSQL (postgresql and postgresql-contrib)"
+	@echo "  - Redis (redis-server)"
+	@echo "  - MinIO (minio-client)"
+	@echo ""
+	@echo "Service Configuration:"
+	@echo "  - PostgreSQL must be running: sudo systemctl start postgresql"
+	@echo "  - Redis must be running: sudo systemctl start redis-server"
+	@echo "  - MinIO must be configured: mc alias set myminio http://localhost:9000 minioadmin minioadmin"
