@@ -16,9 +16,20 @@ DEB_BUILD_DIR = $(BUILD_DIR)/deb
 
 export NVCC_APPEND_FLAGS
 
+# Check dependencies
+.PHONY: check-deps
+check-deps:
+	@echo "Checking dependencies..."
+	@command -v $(CARGO) >/dev/null 2>&1 || { echo "Error: cargo is not installed. Please install Rust toolchain."; exit 1; }
+	@command -v $(FPM) >/dev/null 2>&1 || { echo "Error: fpm is not installed. Please install with: gem install fpm"; exit 1; }
+	@command -v gcc >/dev/null 2>&1 || { echo "Error: gcc is not installed. Please install build-essential."; exit 1; }
+	@command -v nvcc >/dev/null 2>&1 || { echo "Error: nvcc is not installed. Please install CUDA toolkit."; exit 1; }
+	@ldconfig -p | grep -q libssl.so || { echo "Error: libssl-dev is not installed."; exit 1; }
+	@echo "All dependencies found."
+
 # Default target
 .PHONY: all
-all: $(BUILD_DIR)/bento-agent $(BUILD_DIR)/bento-api
+all: check-deps $(BUILD_DIR)/bento-agent $(BUILD_DIR)/bento-api
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -32,19 +43,21 @@ $(BUILD_DIR)/bento-api: | $(BUILD_DIR)
 	cp $(TARGET_DIR)/rest_api $@
 
 .PHONY: agent
-agent: $(BUILD_DIR)/bento-agent
+agent: check-deps $(BUILD_DIR)/bento-agent
 
 .PHONY: api
-api: $(BUILD_DIR)/bento-api
+api: check-deps $(BUILD_DIR)/bento-api
 
 .PHONY: deb
-deb: all prepare-deb
+deb: check-deps all prepare-deb
 	$(FPM) -s dir -t deb \
 		-n $(PACKAGE_NAME) \
 		-v $(VERSION) \
 		--iteration $(ITERATION) \
 		--description "Bento Cluster Services" \
 		--depends systemd \
+		--depends libssl-dev \
+		--depends nvidia-cuda-toolkit \
 		--deb-systemd $(DEB_BUILD_DIR)/bento-agent.service \
 		--deb-systemd $(DEB_BUILD_DIR)/bento-api.service \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-agent=/usr/local/bin/bento-agent \
@@ -116,3 +129,10 @@ help:
 	@echo "Variables:"
 	@echo "  VERSION  - Package version (default: $(VERSION))"
 	@echo "  ITERATION- Package iteration (default: $(ITERATION))"
+	@echo ""
+	@echo "Required dependencies:"
+	@echo "  - Rust toolchain (cargo)"
+	@echo "  - Ruby's fpm (gem install fpm)"
+	@echo "  - Build essentials (gcc)"
+	@echo "  - libssl-dev"
+	@echo "  - NVIDIA CUDA toolkit"
