@@ -11,8 +11,8 @@ publish = false
 release = false
 
 [dependencies]
-alloy = { workspace = true, features = ["network", "providers", "transports", "sol-types", "contract", "signers", "signer-local", "json-rpc", "rpc", "rpc-types"] }
-alloy-chains = "0.1"
+alloy = { workspace = true, features = ["network", "providers", "transports", "sol-types", "contract", "signers", "signer-local", "rpc", "rpc-types"] }
+alloy-chains = "=0.1.67"
 anyhow = { workspace = true }
 async-channel = "2.3"
 async-trait = { workspace = true }
@@ -61,7 +61,7 @@ guest-util = { workspace = true }
 hex = { workspace = true }
 httpmock = "0.7"
 proptest = "1.4"
-proptest-derive = "0.4"
+proptest-derive = "0.5"
 rand = { workspace = true }
 risc0-zkvm = { workspace = true, default-features = true }
 tokio = { workspace = true, features = ["full"] }

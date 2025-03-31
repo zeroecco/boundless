@@ -550,7 +550,7 @@ mod tests {
         chain_monitor::ChainMonitorService,
         db::SqliteDb,
         now_timestamp,
-        provers::{encode_input, MockProver, Prover},
+        provers::{encode_input, DefaultProver, Prover},
         BatchStatus, Order, OrderStatus,
     };
     use alloy::{
@@ -577,7 +577,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -588,7 +588,7 @@ mod tests {
             config.batcher.batch_size = Some(2);
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -731,7 +731,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -742,7 +742,7 @@ mod tests {
             config.batcher.batch_size = Some(2);
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -900,7 +900,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -912,7 +912,7 @@ mod tests {
             config.batcher.batch_max_fees = Some("0.1".into());
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -1005,7 +1005,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -1017,7 +1017,7 @@ mod tests {
             config.batcher.block_deadline_buffer_secs = 100;
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -1117,7 +1117,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -1132,7 +1132,7 @@ mod tests {
             config.batcher.batch_max_journal_bytes = 30;
         }
 
-        let mock_prover = MockProver::default();
+        let mock_prover = DefaultProver::new();
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
