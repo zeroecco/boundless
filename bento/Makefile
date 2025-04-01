@@ -24,16 +24,10 @@ setup:
 	sudo apt-get install -y \
 		build-essential \
 		libssl-dev \
-		postgresql \
-		postgresql-contrib \
-		redis \
 		ruby \
 		ruby-dev
 	@command -v cargo >/dev/null 2>&1 || { echo "Installing Rust toolchain..."; curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; }
 	@command -v fpm >/dev/null 2>&1 || { echo "Installing FPM..."; sudo gem install fpm; }
-	@echo "Starting required services..."
-	sudo systemctl start postgresql
-	sudo systemctl start redis-server
 
 # Check dependencies
 .PHONY: check-deps
@@ -44,14 +38,7 @@ check-deps:
 	@command -v gcc >/dev/null 2>&1 || { echo "Error: gcc is not installed. Please run: make setup"; exit 1; }
 	@command -v nvcc >/dev/null 2>&1 || { echo "Error: nvcc is not installed. Please install CUDA toolkit."; exit 1; }
 	@ldconfig -p | grep -q libssl.so || { echo "Error: libssl-dev is not installed. Please run: make setup"; exit 1; }
-	@command -v psql >/dev/null 2>&1 || { echo "Error: PostgreSQL is not installed. Please run: make setup"; exit 1; }
-	@command -v redis-cli >/dev/null 2>&1 || { echo "Error: Redis is not installed. Please run: make setup"; exit 1; }
-	@command -v mc >/dev/null 2>&1 || { echo "Error: MinIO client is not installed. Please run: make setup"; exit 1; }
-	@echo "Checking service configurations..."
-	@pg_isready >/dev/null 2>&1 || { echo "Error: PostgreSQL is not running. Please run: make setup"; exit 1; }
-	@redis-cli ping >/dev/null 2>&1 || { echo "Error: Redis is not running. Please run: make setup"; exit 1; }
-	@mc alias ls myminio >/dev/null 2>&1 || { echo "Error: MinIO is not configured. Please run: make setup"; exit 1; }
-	@echo "All dependencies found and services configured."
+	@echo "All dependencies found."
 
 # Default target
 .PHONY: all
@@ -83,9 +70,6 @@ deb-agent: check-deps $(BUILD_DIR)/bento-agent prepare-deb-agent
 		--description "Bento Agent Service" \
 		--depends libssl-dev \
 		--depends nvidia-cuda-toolkit \
-		--depends postgresql \
-		--depends redis \
-		--depends minio \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-agent=/usr/local/bin/bento-agent
 
 deb-api: check-deps $(BUILD_DIR)/bento-api prepare-deb-api
@@ -95,9 +79,6 @@ deb-api: check-deps $(BUILD_DIR)/bento-api prepare-deb-api
 		--iteration $(ITERATION) \
 		--description "Bento API Service" \
 		--depends libssl-dev \
-		--depends postgresql \
-		--depends redis \
-		--depends minio \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-api=/usr/local/bin/bento-api
 
 .PHONY: prepare-deb-agent prepare-deb-api
@@ -126,7 +107,7 @@ rebuild: clean all
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  setup    - Install all required dependencies and configure services"
+	@echo "  setup    - Install all required dependencies"
 	@echo "  all      - Build both Agent and API (default)"
 	@echo "  agent    - Build just the Agent"
 	@echo "  api      - Build just the API"
@@ -147,12 +128,9 @@ help:
 	@echo "  - Build essentials (gcc)"
 	@echo "  - libssl-dev"
 	@echo "  - NVIDIA CUDA toolkit"
-	@echo "  - PostgreSQL (postgresql and postgresql-contrib)"
-	@echo "  - Redis (redis-server)"
-	@echo "  - MinIO (minio-client)"
 	@echo ""
 	@echo "Quick start:"
-	@echo "  1. Run 'make setup' to install dependencies and configure services"
+	@echo "  1. Run 'make setup' to install dependencies"
 	@echo "  2. Run 'make' to build the project"
 	@echo "  3. Run 'make deb-agent' to create Agent package"
 	@echo "  4. Run 'make deb-api' to create API package"
