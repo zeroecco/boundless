@@ -1,4 +1,3 @@
-encryptionsalt: v1:QMYqJWywW1U=:v1:NgTPXoOyalNTqjyZ:rgEHlIZ47MUlGnF/0VjZllpP9kH48g==
 config:
   prover:DOCKER_DIR: "../../"
   prover:SET_VERIFIER_ADDR: 0xEf0A93B2310d52358F1eCA0C946aD7D25596e7dd

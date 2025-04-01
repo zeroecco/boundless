@@ -5,7 +5,7 @@ import * as vpc from './lib/vpc';
 const OPS_ACCOUNT_PIPELINE_ROLE_ARN = "arn:aws:iam::968153779208:role/pipeline-role-3b97f1a";
 
 const config = new pulumi.Config();
-const prefix = config.get("DEV_NAME") ? `${config.get("DEV_NAME")}-` : "";
+const prefix = process.env.DEV_NAME ? `${process.env.DEV_NAME}-` : "";
 
 export = async () => {
   // Create a deployment role that can be used to deploy to the current account.
