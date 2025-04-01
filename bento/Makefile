@@ -8,7 +8,8 @@ TARGET_DIR = target/release
 FPM = fpm
 VERSION ?= 1.0.0
 ITERATION ?= 1
-PACKAGE_NAME = bento
+AGENT_PACKAGE_NAME = bento-agent
+API_PACKAGE_NAME = bento-api
 INSTALL_DIR = /usr/local/bin
 DEB_BUILD_DIR = $(BUILD_DIR)/deb
 
@@ -73,25 +74,39 @@ agent: check-deps $(BUILD_DIR)/bento-agent
 .PHONY: api
 api: check-deps $(BUILD_DIR)/bento-api
 
-.PHONY: deb
-deb: check-deps all prepare-deb
+.PHONY: deb-agent deb-api
+deb-agent: check-deps $(BUILD_DIR)/bento-agent prepare-deb-agent
 	$(FPM) -s dir -t deb \
-		-n $(PACKAGE_NAME) \
+		-n $(AGENT_PACKAGE_NAME) \
 		-v $(VERSION) \
 		--iteration $(ITERATION) \
-		--description "Bento Cluster Services" \
+		--description "Bento Agent Service" \
 		--depends libssl-dev \
 		--depends nvidia-cuda-toolkit \
 		--depends postgresql \
 		--depends redis \
 		--depends minio \
-		$(DEB_BUILD_DIR)/usr/local/bin/bento-agent=/usr/local/bin/bento-agent \
+		$(DEB_BUILD_DIR)/usr/local/bin/bento-agent=/usr/local/bin/bento-agent
+
+deb-api: check-deps $(BUILD_DIR)/bento-api prepare-deb-api
+	$(FPM) -s dir -t deb \
+		-n $(API_PACKAGE_NAME) \
+		-v $(VERSION) \
+		--iteration $(ITERATION) \
+		--description "Bento API Service" \
+		--depends libssl-dev \
+		--depends postgresql \
+		--depends redis \
+		--depends minio \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-api=/usr/local/bin/bento-api
 
-.PHONY: prepare-deb
-prepare-deb: all
+.PHONY: prepare-deb-agent prepare-deb-api
+prepare-deb-agent: $(BUILD_DIR)/bento-agent
 	mkdir -p $(DEB_BUILD_DIR)/usr/local/bin
 	cp $(BUILD_DIR)/bento-agent $(DEB_BUILD_DIR)/usr/local/bin/
+
+prepare-deb-api: $(BUILD_DIR)/bento-api
+	mkdir -p $(DEB_BUILD_DIR)/usr/local/bin
 	cp $(BUILD_DIR)/bento-api $(DEB_BUILD_DIR)/usr/local/bin/
 
 .PHONY: clean clean-deb
@@ -117,7 +132,8 @@ help:
 	@echo "  api      - Build just the API"
 	@echo "  clean    - Remove built binaries"
 	@echo "  rebuild  - Clean and rebuild everything"
-	@echo "  deb      - Create Debian package"
+	@echo "  deb-agent- Create Debian package for Agent"
+	@echo "  deb-api  - Create Debian package for API"
 	@echo "  clean-deb- Clean Debian package files"
 	@echo "  help     - Show this help message"
 	@echo ""
@@ -138,4 +154,5 @@ help:
 	@echo "Quick start:"
 	@echo "  1. Run 'make setup' to install dependencies and configure services"
 	@echo "  2. Run 'make' to build the project"
-	@echo "  3. Run 'make deb' to create a Debian package"
+	@echo "  3. Run 'make deb-agent' to create Agent package"
+	@echo "  4. Run 'make deb-api' to create API package"
