@@ -16,22 +16,45 @@ DEB_BUILD_DIR = $(BUILD_DIR)/deb
 
 export NVCC_APPEND_FLAGS
 
+# Setup build environment
+.PHONY: setup
+setup:
+	@echo "Installing build dependencies..."
+	@command -v apt-get >/dev/null 2>&1 || { echo "Error: This setup script requires apt-get (Debian/Ubuntu)"; exit 1; }
+	sudo apt-get update
+	sudo apt-get install -y \
+		build-essential \
+		libssl-dev \
+		postgresql \
+		postgresql-contrib \
+		redis \
+		ruby \
+		ruby-dev
+	@command -v cargo >/dev/null 2>&1 || { echo "Installing Rust toolchain..."; curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; }
+	@command -v fpm >/dev/null 2>&1 || { echo "Installing FPM..."; sudo gem install fpm; }
+	@echo "Starting required services..."
+	sudo systemctl start postgresql
+	sudo systemctl start redis-server
+	@echo "Configuring MinIO..."
+	@mc alias ls myminio >/dev/null 2>&1 || mc alias set myminio http://localhost:9000 minioadmin minioadmin
+	@echo "Setup complete!"
+
 # Check dependencies
 .PHONY: check-deps
 check-deps:
 	@echo "Checking dependencies..."
-	@command -v $(CARGO) >/dev/null 2>&1 || { echo "Error: cargo is not installed. Please install Rust toolchain."; exit 1; }
-	@command -v $(FPM) >/dev/null 2>&1 || { echo "Error: fpm is not installed. Please install with: gem install fpm"; exit 1; }
-	@command -v gcc >/dev/null 2>&1 || { echo "Error: gcc is not installed. Please install build-essential."; exit 1; }
+	@command -v $(CARGO) >/dev/null 2>&1 || { echo "Error: cargo is not installed. Please run: make setup"; exit 1; }
+	@command -v $(FPM) >/dev/null 2>&1 || { echo "Error: fpm is not installed. Please run: make setup"; exit 1; }
+	@command -v gcc >/dev/null 2>&1 || { echo "Error: gcc is not installed. Please run: make setup"; exit 1; }
 	@command -v nvcc >/dev/null 2>&1 || { echo "Error: nvcc is not installed. Please install CUDA toolkit."; exit 1; }
-	@ldconfig -p | grep -q libssl.so || { echo "Error: libssl-dev is not installed."; exit 1; }
-	@command -v psql >/dev/null 2>&1 || { echo "Error: PostgreSQL is not installed. Please install postgresql and postgresql-contrib."; exit 1; }
-	@command -v redis-cli >/dev/null 2>&1 || { echo "Error: Redis is not installed. Please install redis-server."; exit 1; }
-	@command -v mc >/dev/null 2>&1 || { echo "Error: MinIO client is not installed. Please install minio-client."; exit 1; }
+	@ldconfig -p | grep -q libssl.so || { echo "Error: libssl-dev is not installed. Please run: make setup"; exit 1; }
+	@command -v psql >/dev/null 2>&1 || { echo "Error: PostgreSQL is not installed. Please run: make setup"; exit 1; }
+	@command -v redis-cli >/dev/null 2>&1 || { echo "Error: Redis is not installed. Please run: make setup"; exit 1; }
+	@command -v mc >/dev/null 2>&1 || { echo "Error: MinIO client is not installed. Please run: make setup"; exit 1; }
 	@echo "Checking service configurations..."
-	@pg_isready >/dev/null 2>&1 || { echo "Error: PostgreSQL is not running. Please start the service: sudo systemctl start postgresql"; exit 1; }
-	@redis-cli ping >/dev/null 2>&1 || { echo "Error: Redis is not running. Please start the service: sudo systemctl start redis-server"; exit 1; }
-	@mc alias ls myminio >/dev/null 2>&1 || { echo "Error: MinIO is not configured. Please configure MinIO client: mc alias set myminio http://localhost:9000 minioadmin minioadmin"; exit 1; }
+	@pg_isready >/dev/null 2>&1 || { echo "Error: PostgreSQL is not running. Please run: make setup"; exit 1; }
+	@redis-cli ping >/dev/null 2>&1 || { echo "Error: Redis is not running. Please run: make setup"; exit 1; }
+	@mc alias ls myminio >/dev/null 2>&1 || { echo "Error: MinIO is not configured. Please run: make setup"; exit 1; }
 	@echo "All dependencies found and services configured."
 
 # Default target
@@ -66,7 +89,6 @@ deb: check-deps all prepare-deb
 		--depends libssl-dev \
 		--depends nvidia-cuda-toolkit \
 		--depends postgresql \
-		--depends postgresql-contrib \
 		--depends redis \
 		--depends minio \
 		--deb-systemd $(DEB_BUILD_DIR)/bento-agent.service \
@@ -128,6 +150,7 @@ rebuild: clean all
 .PHONY: help
 help:
 	@echo "Available targets:"
+	@echo "  setup    - Install all required dependencies and configure services"
 	@echo "  all      - Build both Agent and API (default)"
 	@echo "  agent    - Build just the Agent"
 	@echo "  api      - Build just the API"
@@ -151,7 +174,7 @@ help:
 	@echo "  - Redis (redis-server)"
 	@echo "  - MinIO (minio-client)"
 	@echo ""
-	@echo "Service Configuration:"
-	@echo "  - PostgreSQL must be running: sudo systemctl start postgresql"
-	@echo "  - Redis must be running: sudo systemctl start redis-server"
-	@echo "  - MinIO must be configured: mc alias set myminio http://localhost:9000 minioadmin minioadmin"
+	@echo "Quick start:"
+	@echo "  1. Run 'make setup' to install dependencies and configure services"
+	@echo "  2. Run 'make' to build the project"
+	@echo "  3. Run 'make deb' to create a Debian package"
