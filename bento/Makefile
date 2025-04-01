@@ -10,8 +10,6 @@ VERSION ?= 1.0.0
 ITERATION ?= 1
 PACKAGE_NAME = bento
 INSTALL_DIR = /usr/local/bin
-SYSTEMD_DIR = /etc/systemd/system
-TEMPLATES_DIR = systemd
 DEB_BUILD_DIR = $(BUILD_DIR)/deb
 
 export NVCC_APPEND_FLAGS
@@ -35,9 +33,6 @@ setup:
 	@echo "Starting required services..."
 	sudo systemctl start postgresql
 	sudo systemctl start redis-server
-	@echo "Configuring MinIO..."
-	@mc alias ls myminio >/dev/null 2>&1 || mc alias set myminio http://localhost:9000 minioadmin minioadmin
-	@echo "Setup complete!"
 
 # Check dependencies
 .PHONY: check-deps
@@ -85,14 +80,11 @@ deb: check-deps all prepare-deb
 		-v $(VERSION) \
 		--iteration $(ITERATION) \
 		--description "Bento Cluster Services" \
-		--depends systemd \
 		--depends libssl-dev \
 		--depends nvidia-cuda-toolkit \
 		--depends postgresql \
 		--depends redis \
 		--depends minio \
-		--deb-systemd $(DEB_BUILD_DIR)/bento-agent.service \
-		--deb-systemd $(DEB_BUILD_DIR)/bento-api.service \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-agent=/usr/local/bin/bento-agent \
 		$(DEB_BUILD_DIR)/usr/local/bin/bento-api=/usr/local/bin/bento-api
 
@@ -101,37 +93,6 @@ prepare-deb: all
 	mkdir -p $(DEB_BUILD_DIR)/usr/local/bin
 	cp $(BUILD_DIR)/bento-agent $(DEB_BUILD_DIR)/usr/local/bin/
 	cp $(BUILD_DIR)/bento-api $(DEB_BUILD_DIR)/usr/local/bin/
-
-	# Create systemd service files if they don't exist
-	if [ ! -d "$(TEMPLATES_DIR)" ]; then \
-		mkdir -p $(TEMPLATES_DIR); \
-		echo "[Unit]" > $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "Description=Bento Agent Service" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "After=network.target postgresql.service redis-server.service" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "[Service]" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "Type=simple" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "ExecStart=/usr/local/bin/bento-agent" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "Restart=on-failure" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "[Install]" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		echo "WantedBy=multi-user.target" >> $(TEMPLATES_DIR)/bento-agent.service; \
-		\
-		echo "[Unit]" > $(TEMPLATES_DIR)/bento-api.service; \
-		echo "Description=Bento API Service" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "After=network.target postgresql.service redis-server.service" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "[Service]" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "Type=simple" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "ExecStart=/usr/local/bin/bento-api" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "Restart=on-failure" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "[Install]" >> $(TEMPLATES_DIR)/bento-api.service; \
-		echo "WantedBy=multi-user.target" >> $(TEMPLATES_DIR)/bento-api.service; \
-	fi
-
-	# Copy systemd service files to the deb build directory
-	cp $(TEMPLATES_DIR)/*.service $(DEB_BUILD_DIR)/ 2>/dev/null || true
 
 .PHONY: clean clean-deb
 clean:
