@@ -4,7 +4,7 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj, COPROC_CB_PATH},
+    tasks::{deserialize_obj, serialize_obj, RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
@@ -17,9 +17,9 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
 
     // setup redis keys
-    let keccak_receipts_prefix = format!("job:{job_id}:{COPROC_CB_PATH}");
-    let left_receipt_key = format!("{keccak_receipts_prefix}:{}", request.left);
-    let right_receipt_key = format!("{keccak_receipts_prefix}:{}", request.right);
+    let receipts_prefix = format!("job:{job_id}:{RECEIPT_PATH}");
+    let left_receipt_key = format!("{receipts_prefix}:{}", request.left);
+    let right_receipt_key = format!("{receipts_prefix}:{}", request.right);
 
     // get assets from redis
     let left_receipt_bytes: Vec<u8> = conn.get(&left_receipt_key).await.with_context(|| {
@@ -47,7 +47,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
 
     // send result to redis
     let union_result = serialize_obj(&unioned).context("Failed to serialize union receipt")?;
-    let output_key = format!("{keccak_receipts_prefix}:{}", request.idx);
+    let output_key = format!("{receipts_prefix}:{}", request.idx);
     redis::set_key_with_expiry(&mut conn, &output_key, union_result, Some(agent.args.redis_ttl))
         .await
         .context("Failed to set redis key for union receipt")?;
