@@ -1,13 +1,16 @@
 import { PulumiStateBucket } from "./components/pulumiState";
 import { PulumiSecrets } from "./components/pulumiSecrets";
 import { SamplePipeline } from "./pipelines/sample";
+import { ProverPipeline } from "./pipelines/prover";
 import { CodePipelineSharedResources } from "./components/codePipelineResources";
 import * as aws from "@pulumi/aws";
 import { 
   BOUNDLESS_DEV_ADMIN_ROLE_ARN, 
   BOUNDLESS_OPS_ACCOUNT_ID, 
   BOUNDLESS_STAGING_DEPLOYMENT_ROLE_ARN, 
-  BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN 
+  BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN, 
+  BOUNDLESS_STAGING_ADMIN_ROLE_ARN,
+  BOUNDLESS_PROD_ADMIN_ROLE_ARN
 } from "./accountConstants";
 
 // Defines the S3 bucket used for storing the Pulumi state backend for staging and prod accounts.
@@ -17,6 +20,8 @@ const pulumiStateBucket = new PulumiStateBucket("pulumiStateBucket", {
     BOUNDLESS_DEV_ADMIN_ROLE_ARN,
   ],
   readWriteStateBucketArns: [
+    BOUNDLESS_STAGING_ADMIN_ROLE_ARN,
+    BOUNDLESS_PROD_ADMIN_ROLE_ARN,
     BOUNDLESS_STAGING_DEPLOYMENT_ROLE_ARN,
     BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN,
   ],
@@ -62,6 +67,12 @@ const samplePipeline = new SamplePipeline("samplePipeline", {
   artifactBucket: codePipelineSharedResources.artifactBucket,
   role: codePipelineSharedResources.role,
 });
+
+const proverPipeline = new ProverPipeline("proverPipeline", {
+  connection: githubConnection,
+  artifactBucket: codePipelineSharedResources.artifactBucket,
+  role: codePipelineSharedResources.role,
+})
 
 export const bucketName = pulumiStateBucket.bucket.id;
 export const kmsKeyArn = pulumiSecrets.kmsKey.arn;

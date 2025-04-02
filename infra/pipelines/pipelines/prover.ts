@@ -2,7 +2,7 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import { BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN, BOUNDLESS_STAGING_DEPLOYMENT_ROLE_ARN } from "../accountConstants";
 
-interface SamplePipelineArgs {
+interface ProverPipelineArgs {
   connection: aws.codestarconnections.Connection;
   artifactBucket: aws.s3.Bucket;
   role: aws.iam.Role;
@@ -41,9 +41,9 @@ const BUILD_SPEC = `
 
 // A sample deployment pipeline that deploys to the staging account, then requires a manual approval before
 // deploying to prod.
-export class SamplePipeline extends pulumi.ComponentResource {
-  constructor(name: string, args: SamplePipelineArgs, opts?: pulumi.ComponentResourceOptions) {
-    super("boundless:pipelines:SamplePipeline", name, args, opts);
+export class ProverPipeline extends pulumi.ComponentResource {
+  constructor(name: string, args: ProverPipelineArgs, opts?: pulumi.ComponentResourceOptions) {
+    super(`boundless:pipelines:${APP_NAME}Pipeline`, name, args, opts);
 
     const { connection, artifactBucket, role } = args;
 
@@ -149,12 +149,12 @@ export class SamplePipeline extends pulumi.ComponentResource {
 
   private codeBuildProjectArgs(appName: string, stackName: string, role: aws.iam.Role, serviceAccountRoleArn: string): aws.codebuild.ProjectArgs {
     return {
-      buildTimeout: 5,
+      buildTimeout: 60,
       description: `Deployment for ${APP_NAME}`,
       serviceRole: role.arn,
       environment: {
-        computeType: "BUILD_GENERAL1_SMALL",
-        image: "aws/codebuild/amazonlinux2-x86_64-standard:4.0",
+        computeType: "BUILD_GENERAL1_MEDIUM",
+        image: "aws/codebuild/standard:7.0",
         type: "LINUX_CONTAINER",
         privilegedMode: true,
         environmentVariables: [
