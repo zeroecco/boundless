@@ -30,7 +30,12 @@ export = () => {
   const orderStreamUrl = config.require('ORDER_STREAM_URL');
   const brokerTomlPath = config.require('BROKER_TOML_PATH')
   
-
+  const ethRpcUrlSecret = new aws.secretsmanager.Secret(`${serviceName}-brokerEthRpc`);
+  const _ethRpcUrlSecretSecretVersion = new aws.secretsmanager.SecretVersion(`${serviceName}-brokerEthRpc`, {
+    secretId: ethRpcUrlSecret.id,
+    secretString: ethRpcUrl,
+  });
+  
   const privateKeySecret = new aws.secretsmanager.Secret(`${serviceName}-brokerPrivateKey`);
   const _privateKeySecretVersion = new aws.secretsmanager.SecretVersion(`${serviceName}-privateKeyValue`, {
     secretId: privateKeySecret.id,
@@ -95,7 +100,7 @@ export = () => {
         {
           Effect: 'Allow',
           Action: ['secretsmanager:GetSecretValue', 'ssm:GetParameters'],
-          Resource: [privateKeySecret.arn, bonsaiSecret.arn],
+          Resource: [privateKeySecret.arn, bonsaiSecret.arn, ethRpcUrlSecret.arn],
         },
       ],
     },
@@ -308,13 +313,16 @@ export = () => {
             name: 'BONSAI_API_KEY',
             valueFrom: bonsaiSecret.arn,
           },
+          {
+            name: 'RPC_URL',
+            valueFrom: ethRpcUrlSecret.arn,
+          }
         ],
         environment: [
           { name: 'NO_COLOR', value: '1' },
           { name: 'RUST_LOG', value: 'broker=debug,boundless_market=debug' },
           { name: 'RUST_BACKTRACE', value: '1' },
           { name: 'BONSAI_API_URL', value: bonsaiApiUrl },
-          { name: 'RPC_URL', value: ethRpcUrl },
         ],
       },
     },
