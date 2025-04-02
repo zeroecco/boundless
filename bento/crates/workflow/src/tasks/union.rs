@@ -18,8 +18,8 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
 
     // setup redis keys
     let keccak_receipts_prefix = format!("job:{job_id}:{COPROC_CB_PATH}");
-    let left_receipt_key = format!("{keccak_receipts_prefix}:{0}", request.left);
-    let right_receipt_key = format!("{keccak_receipts_prefix}:{0}", request.right);
+    let left_receipt_key = format!("{keccak_receipts_prefix}:{}", request.left);
+    let right_receipt_key = format!("{keccak_receipts_prefix}:{}", request.right);
 
     // get assets from redis
     let left_receipt_bytes: Vec<u8> = conn.get(&left_receipt_key).await.with_context(|| {
