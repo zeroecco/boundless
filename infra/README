@@ -1,18 +1,22 @@
 # Onboarding for development deployments
 
-First you must deploy your bootstrap stack to the developer account. This is a one time setup that creates your personal VPC.
-1. pulumi login --local
-2. cd infra/bootstrap
-3. pulumi stack select staging-dev
-4. pulumi up
+This is a one time setup that enables you to deploy applications to a development AWS accout for testing.
+This bootstraps the account with your personal VPC.
+
+1. `cd infra/bootstrap`
+2. `export DEV_NAME="<your name>"`
+3. `pulumi login --local`
+4. `pulumi stack select staging-dev`
+5. `pulumi up`
 
 # Creating a new project
 
-1. vault in as developer admin
-1. pulumi login "s3://boundless-pulumi-state?region=us-west-2&awssdk=v2"
-1. pulumi new aws-typescript --secrets-provider="awskms:///arn:aws:kms:us-west-2:968153779208:alias/pulumi-secrets-key" --name prover --stack staging --yes
-1. pulumi stack init --secrets-provider="awskms:///arn:aws:kms:us-west-2:968153779208:alias/pulumi-secrets-key" prod
-1. pulumi login --local
-1. pulumi stack init dev
-1. git commit
-1. add Pulumi.dev.yaml to .gitignore
+1. Vault in as developer admin
+1. `pulumi login "s3://boundless-pulumi-state?region=us-west-2&awssdk=v2"`
+1. `pulumi new aws-typescript --secrets-provider="awskms:///arn:aws:kms:us-west-2:968153779208:alias/pulumi-secrets-key" --name prover --stack staging --yes`
+1. `pulumi stack init --secrets-provider="awskms:///arn:aws:kms:us-west-2:968153779208:alias/pulumi-secrets-key" prod`
+1. `pulumi login --local`
+1. `pulumi stack init dev`
+1. `git add -u && git commit -m "<commit message>"`
+1. Add `Pulumi.dev.yaml` to `.gitignore`
+1. `git add -u && git commit -m ".gitignore"`

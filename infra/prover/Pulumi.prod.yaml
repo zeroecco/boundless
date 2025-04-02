@@ -9,10 +9,12 @@ config:
   prover:ORDER_STREAM_URL: https://order-stream.beboundless.xyz/
   prover:DOCKER_TAG: latest
   prover:BROKER_TOML_PATH: broker-prod.toml
-  prover:BASE_STACK: organization/bootstrap/services-dev
+  prover:BASE_STACK: organization/bootstrap/services-prod
   prover:ETH_RPC_URL:
     secure: v1:CHmozgrsQ1DIiZ6/:EpHWBQDlO7U3oL1Jp5nAYxL4SQghhuTiGOLCpaGuM21O5RW6eiMfLE145bHvK9+VJaY2F0wZS82IzdHAzateo/3YdHCtgFjjqZoT7VZnbTSmGaIkNw==
   prover:BONSAI_API_KEY:
     secure: v1:DBLnIT+fWqeYZsZd:FEOPSijO1WHd24xhepKtRB37SnovAt7A+7QmgJJ84yUvoKAmntUYalyrTN3TvSspnpgR23dQlfM=
   prover:PRIVATE_KEY:
     secure: v1:j5fu2VrpM4iMtqx0:44th6mCirhEI2znqmXOYsAEYUyrjIdArEuX6upMQf5jtHbB+PYwcie1JoSPGtFSQzs0EYFtJ9xa2Rxlu8Bhafa1WM3ZNipR+0Tg6+zgAaEg=
+  prover:GH_TOKEN_SECRET:
+    secure: v1:KXu1uWAeTAyQlH22:Vz6MTNAKYLeZYsRD8xMgdoGMPB1RER5UaONIyN9mRvt79nEGBkgia+Ikn2E4PNvVzVoZGkul8EKw4pacbWel591tUwddGlUUSCYFIlL/YEJNLm0tu6pLjXbs5BJng854LMuiw0/EK2KswzZUUQ==

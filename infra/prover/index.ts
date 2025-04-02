@@ -11,7 +11,7 @@ export = () => {
 
   const isDev = pulumi.getStack() === "dev";
   const prefix = isDev ? `${getEnvVar("DEV_NAME")}-` : "";
-  const serviceName = `${prefix}broker`;
+  const serviceName = `${prefix}bonsai-prover`;
   
   const baseStackName = config.require('BASE_STACK');
   const baseStack = new pulumi.StackReference(baseStackName);
@@ -27,6 +27,7 @@ export = () => {
   const bonsaiApiUrl = config.require('BONSAI_API_URL');
   const bonsaiApiKey = isDev ? getEnvVar("BONSAI_API_KEY") : config.getSecret('BONSAI_API_KEY');
   const ciCacheSecret = config.getSecret('CI_CACHE_SECRET');
+  const githubTokenSecret = config.getSecret('GH_TOKEN_SECRET');
   const orderStreamUrl = config.require('ORDER_STREAM_URL');
   const brokerTomlPath = config.require('BROKER_TOML_PATH')
   
@@ -49,7 +50,7 @@ export = () => {
   });
 
   const brokerS3Bucket = new aws.s3.Bucket(serviceName, {
-    bucket: `boundless-${serviceName}`,
+    bucketPrefix: `boundless-${serviceName}`,
     tags: {
       Name: serviceName,
     },
@@ -57,7 +58,7 @@ export = () => {
 
   const fileToUpload = new pulumi.asset.FileAsset(brokerTomlPath);
 
-  const bucket_object = new aws.s3.BucketObject(serviceName, {
+  const bucketObject = new aws.s3.BucketObject(serviceName, {
     bucket: brokerS3Bucket.id,
     key: 'broker.toml',
     source: fileToUpload,
@@ -94,8 +95,8 @@ export = () => {
       Statement: [
         {
           Effect: 'Allow',
-          Action: ['s3:GetObject', 's3:ListObject'],
-          Resource: [bucket_object.arn],
+          Action: ['s3:GetObject', 's3:ListObject', 's3:HeadObject'],
+          Resource: [bucketObject.arn],
         },
         {
           Effect: 'Allow',
@@ -120,15 +121,15 @@ export = () => {
     name: serviceName,
   });
 
-  const ecsExecRole = new aws.iam.Role(`${serviceName}-ecs-exec-role`, {
+  const executionRole = new aws.iam.Role(`${serviceName}-ecs-execution-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
       Service: 'ecs-tasks.amazonaws.com',
     }),
   });
 
   brokerEcr.repository.arn.apply(arn => {
-    new aws.iam.RolePolicy(`${serviceName}-ecs-exec-pol`, {
-      role: ecsExecRole.id,
+    new aws.iam.RolePolicy(`${serviceName}-ecs-execution-pol`, {
+      role: executionRole.id,
       policy: {
         Version: '2012-10-17',
         Statement: [
@@ -140,7 +141,7 @@ export = () => {
               'ecr:GetDownloadUrlForLayer',
               'ecr:BatchGetImage',
             ],
-            Resource: arn,
+            Resource: '*',
           },
           {
             Effect: 'Allow',
@@ -153,7 +154,7 @@ export = () => {
           {
             Effect: 'Allow',
             Action: ['secretsmanager:GetSecretValue', 'ssm:GetParameters'],
-            Resource: [privateKeySecret.arn, bonsaiSecret.arn],
+            Resource: [privateKeySecret.arn, bonsaiSecret.arn, ethRpcUrlSecret.arn],
           },
         ],
       },
@@ -164,13 +165,19 @@ export = () => {
     registryId: brokerEcr.repository.registryId,
   });
 
-  // Optionally add in the sccache s3 creds to the build ctx
-  let buildSecrets = undefined;
+  // Optionally add in the gh token secret and sccache s3 creds to the build ctx
+  let buildSecrets = {};
   if (ciCacheSecret !== undefined) {
     const cacheFileData = ciCacheSecret.apply((filePath) => fs.readFileSync(filePath, 'utf8'));
     buildSecrets = {
       ci_cache_creds: cacheFileData,
     };
+  }
+  if (githubTokenSecret !== undefined) {
+    buildSecrets = {
+      ...buildSecrets,
+      githubTokenSecret
+    }
   }
 
   const dockerTagPath = pulumi.interpolate`${brokerEcr.repository.repositoryUrl}:${dockerTag}`;
@@ -242,6 +249,8 @@ export = () => {
     sourceSecurityGroupId: brokerSecGroup.id,
   });
 
+  const brokerS3BucketName = brokerS3Bucket.bucket.apply(n => n);
+
   const service = new awsx.ecs.FargateService(serviceName, {
     name: serviceName,
     cluster: cluster.arn,
@@ -263,7 +272,7 @@ export = () => {
     taskDefinitionArgs: {
       family: 'broker',
       executionRole: {
-        roleArn: ecsExecRole.arn,
+        roleArn: executionRole.arn,
       },
       taskRole: {
         roleArn: taskRole.arn,
@@ -302,7 +311,7 @@ export = () => {
           initProcessEnabled: true,
         },
         command: [
-          `/usr/bin/aws s3 cp s3://boundless-${serviceName}/broker.toml /app/broker.toml && /app/broker --set-verifier-address ${setVerifierAddr} --boundless-market-address ${proofMarketAddr} --order-stream-url ${orderStreamUrl} --config-file /app/broker.toml --db-url sqlite:///app/data/broker.db`,
+          `/usr/bin/aws s3 cp s3://$BUCKET/broker.toml /app/broker.toml && /app/broker --set-verifier-address ${setVerifierAddr} --boundless-market-address ${proofMarketAddr} --order-stream-url ${orderStreamUrl} --config-file /app/broker.toml --db-url sqlite:///app/data/broker.db`,
         ],
         secrets: [
           {
@@ -323,6 +332,7 @@ export = () => {
           { name: 'RUST_LOG', value: 'broker=debug,boundless_market=debug' },
           { name: 'RUST_BACKTRACE', value: '1' },
           { name: 'BONSAI_API_URL', value: bonsaiApiUrl },
+          { name: 'BUCKET', value: brokerS3BucketName }
         ],
       },
     },

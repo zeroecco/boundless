@@ -12,6 +12,7 @@ import {
   BOUNDLESS_STAGING_ADMIN_ROLE_ARN,
   BOUNDLESS_PROD_ADMIN_ROLE_ARN
 } from "./accountConstants";
+import * as pulumi from '@pulumi/pulumi';
 
 // Defines the S3 bucket used for storing the Pulumi state backend for staging and prod accounts.
 const pulumiStateBucket = new PulumiStateBucket("pulumiStateBucket", {
@@ -61,6 +62,12 @@ const codePipelineSharedResources = new CodePipelineSharedResources("codePipelin
   ],
 });
 
+// The Docker and GH tokens are used to avoid rate limiting issues when building in the pipelines.
+const config = new pulumi.Config();
+const githubToken = config.requireSecret("GITHUB_TOKEN");
+const dockerUsername = config.require("DOCKER_USER");
+const dockerToken = config.requireSecret("DOCKER_PAT");
+
 // Create the deployment pipeline for the "sample" app.
 const samplePipeline = new SamplePipeline("samplePipeline", {
   connection: githubConnection,
@@ -72,6 +79,9 @@ const proverPipeline = new ProverPipeline("proverPipeline", {
   connection: githubConnection,
   artifactBucket: codePipelineSharedResources.artifactBucket,
   role: codePipelineSharedResources.role,
+  githubToken,
+  dockerUsername,
+  dockerToken
 })
 
 export const bucketName = pulumiStateBucket.bucket.id;
