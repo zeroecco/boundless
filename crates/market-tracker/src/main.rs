@@ -2,19 +2,14 @@
 //
 // All rights reserved.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::time::Instant;
 
 use alloy::{
-    network::{Ethereum},
+    network::Ethereum,
     primitives::{Address, U256},
     providers::{
-        fillers::{
-            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
-        },
+        fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
         Identity, Provider, ProviderBuilder, RootProvider,
     },
     rpc::types::BlockTransactionsKind,
@@ -22,12 +17,12 @@ use alloy::{
 };
 use boundless_market::contracts::boundless_market::{BoundlessMarketService, MarketError};
 use clap::Parser;
+use colored::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
+use tokio::sync::RwLock;
 use tokio::time;
 use url::Url;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::RwLock;
-use colored::*;
 
 #[derive(Error, Debug)]
 pub enum PulseError {
@@ -45,7 +40,9 @@ pub enum PulseError {
 }
 
 type ProviderWallet = FillProvider<
-    JoinFill<Identity, JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>
+    JoinFill<
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
     >,
     RootProvider,
 >;
@@ -79,13 +76,13 @@ struct MarketStats {
     total_requests: AtomicU64,
     total_delivered: AtomicU64,
     total_expired: AtomicU64,
-    
+
     period_requests: AtomicU64,
     period_delivered: AtomicU64,
     period_expired: AtomicU64,
-    
+
     // Concurrent hashmap for active requests
-    active_requests: RwLock<HashMap<U256, u64>>,
+    locked_requests: RwLock<HashMap<U256, u64>>,
 }
 
 impl MarketStats {
@@ -97,25 +94,25 @@ impl MarketStats {
             period_requests: AtomicU64::new(0),
             period_delivered: AtomicU64::new(0),
             period_expired: AtomicU64::new(0),
-            active_requests: Default::default(),
+            locked_requests: Default::default(),
         }
     }
-    
+
     fn increment_total_requests(&self, count: u64) {
         self.total_requests.fetch_add(count, Ordering::SeqCst);
         self.period_requests.fetch_add(count, Ordering::SeqCst);
     }
-    
+
     fn increment_total_delivered(&self, count: u64) {
         self.total_delivered.fetch_add(count, Ordering::SeqCst);
         self.period_delivered.fetch_add(count, Ordering::SeqCst);
     }
-    
+
     fn increment_total_expired(&self, count: u64) {
         self.total_expired.fetch_add(count, Ordering::SeqCst);
         self.period_expired.fetch_add(count, Ordering::SeqCst);
     }
-    
+
     fn reset_period_stats(&self) {
         self.period_requests.store(0, Ordering::SeqCst);
         self.period_delivered.store(0, Ordering::SeqCst);
@@ -129,6 +126,7 @@ struct MarketPulseMonitor<P> {
     interval: Duration,
     retries: u32,
     last_processed_block: u64,
+    start_time: Instant,
 }
 
 impl MarketPulseMonitor<ProviderWallet> {
@@ -154,6 +152,7 @@ impl MarketPulseMonitor<ProviderWallet> {
             interval,
             retries,
             last_processed_block: 0,
+            start_time: Instant::now(),
         })
     }
 }
@@ -172,24 +171,24 @@ where
 
         loop {
             interval.tick().await;
-            
+
             match self.current_block().await {
                 Ok(to_block) => {
                     if to_block <= from_block {
                         continue;
                     }
 
-                    tracing::info!("Processing blocks from {} to {}", from_block, to_block);
+                    tracing::debug!("Processing blocks from {} to {}", from_block, to_block);
 
                     match self.process_blocks(from_block, to_block).await {
                         Ok(_) => {
                             attempt = 0;
                             from_block = to_block + 1;
                             self.last_processed_block = to_block;
-                            
+
                             // Print the pulse
                             self.print_pulse().await;
-                            
+
                             // Reset period stats
                             self.stats.reset_period_stats();
                         }
@@ -211,7 +210,11 @@ where
                 }
                 Err(e) => {
                     attempt += 1;
-                    tracing::warn!("Failed to get current block: {:?}, attempt number {}", e, attempt);
+                    tracing::warn!(
+                        "Failed to get current block: {:?}, attempt number {}",
+                        e,
+                        attempt
+                    );
 
                     if attempt > self.retries {
                         return Err(PulseError::MaxRetries);
@@ -237,7 +240,11 @@ where
         Ok(())
     }
 
-    async fn process_locked_events(&self, from_block: u64, to_block: u64) -> Result<(), PulseError> {
+    async fn process_locked_events(
+        &self,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<(), PulseError> {
         let event_filter = self
             .boundless_market
             .instance()
@@ -247,7 +254,7 @@ where
 
         // Query the logs for the event
         let logs = event_filter.query().await?;
-        tracing::info!(
+        tracing::debug!(
             "Found {} locked events from block {} to block {}",
             logs.len(),
             from_block,
@@ -261,17 +268,21 @@ where
                 // Get the deadline for this request
                 match self.boundless_market.instance().requestDeadline(log.requestId).call().await {
                     Ok(deadline) => {
-                        let mut active_requests = self.stats.active_requests.write().await;
-                        active_requests.insert(log.requestId, deadline._0);
-                        drop(active_requests);
+                        let mut locked_requests = self.stats.locked_requests.write().await;
+                        locked_requests.insert(log.requestId, deadline._0);
+                        drop(locked_requests);
                         tracing::debug!(
                             "Added request 0x{:x} with deadline {}",
                             log.requestId,
                             deadline._0
                         );
-                    },
+                    }
                     Err(e) => {
-                        tracing::warn!("Failed to get deadline for request 0x{:x}: {:?}", log.requestId, e);
+                        tracing::warn!(
+                            "Failed to get deadline for request 0x{:x}: {:?}",
+                            log.requestId,
+                            e
+                        );
                     }
                 }
             }
@@ -280,7 +291,12 @@ where
         Ok(())
     }
 
-    async fn process_proof_delivered_events(&self, from_block: u64, to_block: u64) -> Result<(), PulseError> {
+    // TODO this should be a bit redundant for this use
+    async fn process_proof_delivered_events(
+        &self,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<(), PulseError> {
         let event_filter = self
             .boundless_market
             .instance()
@@ -290,7 +306,7 @@ where
 
         // Query the logs for the event
         let logs = event_filter.query().await?;
-        tracing::info!(
+        tracing::debug!(
             "Found {} proof delivered events from block {} to block {}",
             logs.len(),
             from_block,
@@ -301,9 +317,9 @@ where
             self.stats.increment_total_delivered(logs.len() as u64);
 
             for (log, _) in logs {
-                let mut active_requests = self.stats.active_requests.write().await;
-                active_requests.remove(&log.requestId);
-                drop(active_requests);
+                let mut locked_requests = self.stats.locked_requests.write().await;
+                locked_requests.remove(&log.requestId);
+                drop(locked_requests);
                 tracing::debug!("Removed delivered request 0x{:x}", log.requestId);
             }
         }
@@ -311,7 +327,11 @@ where
         Ok(())
     }
 
-    async fn process_fulfilled_events(&self, from_block: u64, to_block: u64) -> Result<(), PulseError> {
+    async fn process_fulfilled_events(
+        &self,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<(), PulseError> {
         let event_filter = self
             .boundless_market
             .instance()
@@ -321,19 +341,19 @@ where
 
         // Query the logs for the event
         let logs = event_filter.query().await?;
-        tracing::info!(
+        tracing::debug!(
             "Found {} fulfilled events from block {} to block {}",
             logs.len(),
             from_block,
             to_block
         );
 
-            for (log, _) in logs {
-                let mut active_requests = self.stats.active_requests.write().await;
-                active_requests.remove(&log.requestId);
-                drop(active_requests);
-                tracing::debug!("Removed fulfilled request 0x{:x}", log.requestId);
-            }
+        for (log, _) in logs {
+            let mut locked_requests = self.stats.locked_requests.write().await;
+            locked_requests.remove(&log.requestId);
+            drop(locked_requests);
+            tracing::debug!("Removed fulfilled request 0x{:x}", log.requestId);
+        }
 
         Ok(())
     }
@@ -341,22 +361,22 @@ where
     async fn process_expired_requests(&self, current_block: u64) -> Result<(), PulseError> {
         let current_timestamp = self.block_timestamp(current_block).await?;
         let mut expired_requests = Vec::new();
-        
+
         {
-            let active_requests = self.stats.active_requests.read().await;
-            for (request_id, deadline) in active_requests.iter() {
+            let locked_requests = self.stats.locked_requests.read().await;
+            for (request_id, deadline) in locked_requests.iter() {
                 if current_timestamp > *deadline {
                     expired_requests.push(*request_id);
                 }
             }
         }
-        
+
         if !expired_requests.is_empty() {
             self.stats.increment_total_expired(expired_requests.len() as u64);
-            
-            let mut active_requests = self.stats.active_requests.write().await;
+
+            let mut locked_requests = self.stats.locked_requests.write().await;
             for request_id in expired_requests {
-                active_requests.remove(&request_id);
+                locked_requests.remove(&request_id);
                 tracing::debug!("Marked request 0x{:x} as expired", request_id);
             }
         }
@@ -381,21 +401,27 @@ where
     }
 
     async fn print_pulse(&self) {
-        let active_count = self.stats.active_requests.read().await.len();
+        let active_count = self.stats.locked_requests.read().await.len();
         let period_requests = self.stats.period_requests.load(Ordering::SeqCst);
         let period_delivered = self.stats.period_delivered.load(Ordering::SeqCst);
         let period_expired = self.stats.period_expired.load(Ordering::SeqCst);
-        
-        println!("{} | Block: {} | Active: {} | Period: +{} {} {} | Total: {} {} {}", 
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let total_delivered = self.stats.total_delivered.load(Ordering::SeqCst);
+        let total_fulfilled_per_sec = total_delivered as f64 / elapsed;
+
+        let period_fulfilled_per_sec = period_delivered as f64 / self.interval.as_secs_f64();
+
+        tracing::info!(
+            "Block: {} | Locked: {} | Period: +{} {} {} | Total: {} {} {}",
             self.last_processed_block,
             active_count.to_string().yellow(),
             period_requests.to_string().bright_blue(),
-            format!("✓{}", period_delivered).green(),
+            format!("✓{} ({:.2}/s)", period_delivered, period_fulfilled_per_sec).green(),
             format!("✗{}", period_expired).red(),
             self.stats.total_requests.load(Ordering::SeqCst),
-            format!("✓{}", self.stats.total_delivered.load(Ordering::SeqCst)).green(),
-            format!("✗{}", self.stats.total_expired.load(Ordering::SeqCst)).red()
+            format!("✓{} ({:.2}/s)", total_delivered, total_fulfilled_per_sec).green(),
+            format!("✗{}", self.stats.total_expired.load(Ordering::SeqCst)).red(),
         );
     }
 }
@@ -420,6 +446,6 @@ async fn main() -> Result<(), PulseError> {
     println!("Starting Market Pulse Monitor...");
     println!("Monitoring BoundlessMarket at: {}", args.boundless_market_address);
     println!("Pulse interval: {} seconds", args.interval);
-    
+
     monitor.run(args.starting_block).await
 }
