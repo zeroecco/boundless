@@ -37,8 +37,6 @@ COPY lib/ ./lib/
 COPY remappings.txt .
 COPY foundry.toml .
 
-RUN ls -l
-
 ENV PATH="$PATH:/root/.foundry/bin"
 RUN forge build
 
