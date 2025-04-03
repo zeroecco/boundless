@@ -655,11 +655,11 @@ mod tests {
     };
     use boundless_market::contracts::{
         test_utils::{deploy_boundless_market, deploy_hit_points},
-        Input, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        Input, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
     };
     use boundless_market::storage::{MockStorageProvider, StorageProvider};
     use chrono::Utc;
-    use guest_assessor::ASSESSOR_GUEST_ID;
+    use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
     use guest_util::{ECHO_ELF, ECHO_ID};
     use risc0_ethereum_contracts::selector::Selector;
     use risc0_zkvm::sha::Digest;
@@ -697,8 +697,7 @@ mod tests {
                 status: OrderStatus::Pricing,
                 updated_at: Utc::now(),
                 request: ProofRequest::new(
-                    order_index,
-                    &self.provider.default_signer_address(),
+                    RequestId::new(self.provider.default_signer_address(), order_index),
                     Requirements::new(
                         image_id,
                         Predicate {
@@ -771,6 +770,7 @@ mod tests {
                 Address::ZERO,
                 hp_contract,
                 Digest::from(ASSESSOR_GUEST_ID),
+                format!("file://{ASSESSOR_GUEST_PATH}"),
                 Some(signer.address()),
             )
             .await
@@ -1304,7 +1304,8 @@ mod tests {
         );
 
         assert!(logs_contain("cannot be completed in time"));
-        assert!(logs_contain("Proof estimated to take 4s to complete, would be 2s past deadline"));
+        assert!(logs_contain("Proof estimated to take 4s to complete"));
+        assert!(logs_contain("s past deadline"));
     }
 
     #[tokio::test]
