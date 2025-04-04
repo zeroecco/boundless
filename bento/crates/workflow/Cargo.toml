@@ -16,7 +16,6 @@ bincode = { workspace = true }
 bytemuck = { workspace = true }
 clap = { workspace = true, features = ["env", "derive"] }
 deadpool-redis = { workspace = true }
-futures = { workspace = true }
 hex = { workspace = true }
 nix = { version = "0.29", features = ["fs"] }
 redis = { workspace = true, features = ["tokio-rustls-comp", "tokio-comp"] }

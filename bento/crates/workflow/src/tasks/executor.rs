@@ -26,8 +26,8 @@ use workflow_common::{
         RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
     },
     CompressType, ExecutorReq, ExecutorResp, FinalizeReq, JoinReq, KeccakReq, ProveReq, ResolveReq,
-    SnarkReq, UnionReq, AUX_WORK_TYPE, COPROC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
-    SNARK_WORK_TYPE, UNION_WORK_TYPE,
+    SnarkReq, UnionReq, AUX_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
+    SNARK_WORK_TYPE, UNION_WORK_TYPE, KECCAK_RECEIPT_PATH,
 };
 // use tempfile::NamedTempFile;
 use tokio::task::{JoinHandle, JoinSet};
@@ -434,7 +434,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     };
 
     let coproc_stream = if std::env::var("COPROC_STREAM").is_ok() {
-        taskdb::get_stream(&agent.db_pool, &request.user_id, COPROC_WORK_TYPE)
+        taskdb::get_stream(&agent.db_pool, &request.user_id, KECCAK_RECEIPT_PATH)
             .await
             .context("Failed to get GPU Coproc stream")?
             .with_context(|| format!("Customer {} missing gpu coproc stream", request.user_id))?

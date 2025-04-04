@@ -8,7 +8,6 @@ use crate::{
     Agent,
 };
 use anyhow::{Context, Result};
-use futures::future;
 use risc0_zkvm::{ReceiptClaim, SegmentReceipt, SuccinctReceipt};
 use std::rc::Rc;
 use uuid::Uuid;
@@ -38,14 +37,12 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         request.idx
     );
 
-    // Create both processed receipts in parallel, handling fetching, lifting if needed, and joining
-    let (left_receipt, right_receipt) = future::join(
+    // Process both receipts in parallel, using try_join! to stop on first error
+    let (left_receipt, right_receipt) = tokio::try_join!(
         async {
-            // Get left receipt
+            // Get left receipt and process it
             let mut conn = redis::get_connection(&pool).await?;
-            let bytes = conn.get::<_, Vec<u8>>(&left_path_key).await.with_context(|| {
-                format!("segment data not found for segment key: {left_path_key}")
-            })?;
+            let bytes = conn.get::<_, Vec<u8>>(&left_path_key).await?;
 
             // Process left receipt - lift if needed
             if let Ok(segment) = deserialize_obj::<SegmentReceipt>(&bytes) {
@@ -54,7 +51,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
                     .lift(&segment)
                     .with_context(|| format!("Failed to lift left segment {}", request.left))?;
                 tracing::info!("Left receipt lifted {job_id} - {}", request.left);
-                Ok::<SuccinctReceipt<ReceiptClaim>, anyhow::Error>(lifted)
+                Ok(lifted)
             } else {
                 // Try to deserialize as already-lifted SuccinctReceipt
                 deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(&bytes)
@@ -62,11 +59,9 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             }
         },
         async {
-            // Get right receipt
+            // Get right receipt and process it
             let mut conn = redis::get_connection(&pool).await?;
-            let bytes = conn.get::<_, Vec<u8>>(&right_path_key).await.with_context(|| {
-                format!("segment data not found for segment key: {right_path_key}")
-            })?;
+            let bytes = conn.get::<_, Vec<u8>>(&right_path_key).await?;
 
             // Process right receipt - lift if needed
             if let Ok(segment) = deserialize_obj::<SegmentReceipt>(&bytes) {
@@ -75,19 +70,14 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
                     .lift(&segment)
                     .with_context(|| format!("Failed to lift right segment {}", request.right))?;
                 tracing::info!("Right receipt lifted {job_id} - {}", request.right);
-                Ok::<SuccinctReceipt<ReceiptClaim>, anyhow::Error>(lifted)
+                Ok(lifted)
             } else {
                 // Try to deserialize as already-lifted SuccinctReceipt
                 deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(&bytes)
                     .context("Failed to deserialize right receipt")
             }
         },
-    )
-    .await;
-
-    // Unwrap results
-    let left_receipt = left_receipt?;
-    let right_receipt = right_receipt?;
+    )?;
 
     // Join the receipts
     tracing::info!(

@@ -20,7 +20,7 @@ use std::{
 };
 use taskdb::ReadyTask;
 use tokio::time;
-use workflow_common::{TaskType, COPROC_WORK_TYPE};
+use workflow_common::{TaskType, KECCAK_RECEIPT_PATH};
 
 mod redis;
 mod tasks;
@@ -182,7 +182,7 @@ impl Agent {
         let verifier_ctx = VerifierContext::default();
         let prover = if args.task_stream == PROVE_WORK_TYPE
             || args.task_stream == JOIN_WORK_TYPE
-            || args.task_stream == COPROC_WORK_TYPE
+            || args.task_stream == KECCAK_RECEIPT_PATH
             || args.task_stream == UNION_WORK_TYPE
         {
             let opts = ProverOpts::default();
