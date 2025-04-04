@@ -30,7 +30,8 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         async {
             // Process left receipt
             let mut conn = redis::get_connection(&pool).await?;
-            let bytes = conn.get::<_, Vec<u8>>(&left_receipt_key)
+            let bytes = conn
+                .get::<_, Vec<u8>>(&left_receipt_key)
                 .await
                 .with_context(|| format!("Left receipt not found for key: {left_receipt_key}"))?;
 
@@ -39,7 +40,8 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         async {
             // Process right receipt
             let mut conn = redis::get_connection(&pool).await?;
-            let bytes = conn.get::<_, Vec<u8>>(&right_receipt_key)
+            let bytes = conn
+                .get::<_, Vec<u8>>(&right_receipt_key)
                 .await
                 .with_context(|| format!("Right receipt not found for key: {right_receipt_key}"))?;
 
@@ -65,14 +67,13 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
 
     tokio::task::spawn(async move {
         // Serialize in a blocking task
-        let union_result = match tokio::task::spawn_blocking(move || {
-            serialize_obj(&unioned)
-        }).await {
+        let union_result = match tokio::task::spawn_blocking(move || serialize_obj(&unioned)).await
+        {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
                 tracing::error!("Failed to serialize union receipt: {}", e);
                 return;
-            },
+            }
             Err(e) => {
                 tracing::error!("Failed to join serialization task: {}", e);
                 return;
@@ -82,12 +83,15 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         // Store in Redis
         match redis::get_connection(&pool_storage).await {
             Ok(mut conn) => {
-                if let Err(e) = redis::set_key_with_expiry(&mut conn, &output_key, union_result, Some(ttl)).await {
+                if let Err(e) =
+                    redis::set_key_with_expiry(&mut conn, &output_key, union_result, Some(ttl))
+                        .await
+                {
                     tracing::error!("Failed to store union receipt: {}", e);
                     return;
                 }
                 tracing::info!("Union result stored for {job_id_clone} - {left_idx}");
-            },
+            }
             Err(e) => {
                 tracing::error!("Failed to get Redis connection for storage: {}", e);
             }
