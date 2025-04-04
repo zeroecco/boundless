@@ -12,7 +12,6 @@ use alloy::{
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
         Identity, Provider, ProviderBuilder, RootProvider,
     },
-    rpc::types::BlockTransactionsKind,
     transports::{RpcError, TransportErrorKind},
 };
 use boundless_market::contracts::boundless_market::{BoundlessMarketService, MarketError};
@@ -228,9 +227,6 @@ where
         // Process locked events
         self.process_locked_events(from, to).await?;
 
-        // Process delivered proofs
-        self.process_proof_delivered_events(from, to).await?;
-
         // Process fulfilled events
         self.process_fulfilled_events(from, to).await?;
 
@@ -291,42 +287,6 @@ where
         Ok(())
     }
 
-    // TODO this should be a bit redundant for this use
-    async fn process_proof_delivered_events(
-        &self,
-        from_block: u64,
-        to_block: u64,
-    ) -> Result<(), PulseError> {
-        let event_filter = self
-            .boundless_market
-            .instance()
-            .ProofDelivered_filter()
-            .from_block(from_block)
-            .to_block(to_block);
-
-        // Query the logs for the event
-        let logs = event_filter.query().await?;
-        tracing::debug!(
-            "Found {} proof delivered events from block {} to block {}",
-            logs.len(),
-            from_block,
-            to_block
-        );
-
-        if !logs.is_empty() {
-            self.stats.increment_total_delivered(logs.len() as u64);
-
-            for (log, _) in logs {
-                let mut locked_requests = self.stats.locked_requests.write().await;
-                locked_requests.remove(&log.requestId);
-                drop(locked_requests);
-                tracing::debug!("Removed delivered request 0x{:x}", log.requestId);
-            }
-        }
-
-        Ok(())
-    }
-
     async fn process_fulfilled_events(
         &self,
         from_block: u64,
@@ -350,7 +310,10 @@ where
 
         for (log, _) in logs {
             let mut locked_requests = self.stats.locked_requests.write().await;
-            locked_requests.remove(&log.requestId);
+            let entry = locked_requests.remove(&log.requestId);
+            if entry.is_none() {
+                tracing::warn!("Request 0x{:x} not found in locked requests", log.requestId);
+            }
             drop(locked_requests);
             tracing::debug!("Removed fulfilled request 0x{:x}", log.requestId);
         }
