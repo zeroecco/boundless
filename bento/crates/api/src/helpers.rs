@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use sqlx::PgPool;
 use uuid::Uuid;
 use workflow_common::{
-    ExecutorResp, AUX_WORK_TYPE, KECCAK_RECEIPT_PATH, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
-    SNARK_WORK_TYPE, UNION_WORK_TYPE,
+    ExecutorResp, AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, KECCAK_RECEIPT_PATH,
+    PROVE_WORK_TYPE, SNARK_WORK_TYPE, UNION_WORK_TYPE,
 };
 
 pub async fn get_or_create_streams(
@@ -50,9 +50,10 @@ pub async fn get_or_create_streams(
             .context("Failed to create taskdb gpu prove stream")?
     };
 
-    let gpu_coproc_stream = if let Some(res) = taskdb::get_stream(pool, user_id, KECCAK_RECEIPT_PATH)
-        .await
-        .context("Failed to get gpu prove stream")?
+    let gpu_coproc_stream = if let Some(res) =
+        taskdb::get_stream(pool, user_id, KECCAK_RECEIPT_PATH)
+            .await
+            .context("Failed to get gpu prove stream")?
     {
         res
     } else {
