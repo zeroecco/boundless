@@ -111,6 +111,8 @@ pub struct UnionReq {
 pub struct ResolveReq {
     /// Index of the final joined receipt
     pub max_idx: usize,
+    /// Optional index of the union receipt to resolve first
+    pub union_max_idx: Option<usize>,
 }
 
 /// Input request

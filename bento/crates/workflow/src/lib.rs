@@ -26,7 +26,8 @@ mod redis;
 mod tasks;
 
 pub use workflow_common::{
-    s3::S3Client, AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE, SNARK_WORK_TYPE, UNION_WORK_TYPE,
+    s3::S3Client, AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE, SNARK_WORK_TYPE,
+    UNION_WORK_TYPE,
 };
 
 /// Workflow agent
@@ -311,7 +312,9 @@ impl Agent {
             )
             .context("failed to serialize snark response")?,
             TaskType::Keccak(req) => serde_json::to_value(
-                tasks::keccak::keccak(self, &task.job_id, &req).await.context("Keccak failed")?,
+                tasks::keccak::keccak(self, &task.job_id, &task.task_id, &req)
+                    .await
+                    .context("Keccak failed")?,
             )
             .context("failed to serialize keccak response")?,
             TaskType::Union(req) => serde_json::to_value(

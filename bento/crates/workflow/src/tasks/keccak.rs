@@ -8,7 +8,7 @@ use crate::{
     Agent,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use risc0_zkvm::{MaybePruned, ProveKeccakRequest};
+use risc0_zkvm::ProveKeccakRequest;
 use uuid::Uuid;
 use workflow_common::KeccakReq;
 
@@ -24,7 +24,12 @@ fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
 }
 
 /// Run the keccak prove + lift operation
-pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result<()> {
+pub async fn keccak(
+    agent: &Agent,
+    job_id: &Uuid,
+    task_id: &str,
+    request: &KeccakReq,
+) -> Result<()> {
     let mut conn = redis::get_connection(&agent.redis_pool).await?;
 
     let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
@@ -46,6 +51,7 @@ pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result
 
     tracing::info!("Keccak proving {}", request.claim_digest);
 
+    // Main computational work
     let keccak_receipt = agent
         .prover
         .as_ref()
@@ -53,25 +59,50 @@ pub async fn keccak(agent: &Agent, job_id: &Uuid, request: &KeccakReq) -> Result
         .prove_keccak(&keccak_req)
         .context("Failed to prove_keccak")?;
 
-    let claim_digest = match keccak_receipt.claim {
-        MaybePruned::Value(_) => unreachable!(),
-        MaybePruned::Pruned(claim_digest) => claim_digest,
-    };
-
+    // Clone data needed for background task
+    let pool = agent.redis_pool.clone();
     let job_prefix = format!("job:{job_id}");
-    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}:{claim_digest}");
-    let keccak_receipt_bytes =
-        serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
-    redis::set_key_with_expiry(
-        &mut conn,
-        &receipts_key,
-        keccak_receipt_bytes,
-        Some(agent.args.redis_ttl),
-    )
-    .await
-    .context("Failed to write keccak receipt to redis")?;
+    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}:{task_id}");
+    let ttl = agent.args.redis_ttl;
+    let claim_digest = request.claim_digest;
 
-    tracing::info!("Completed keccak proving {}", request.claim_digest);
+    // Spawn background task for serialization and storage
+    tokio::spawn(async move {
+        // Serialize the receipt (CPU-bound)
+        let keccak_receipt_bytes = match serialize_obj(&keccak_receipt) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!("Failed to serialize keccak receipt: {}", e);
+                return;
+            }
+        };
 
+        // Store in Redis (I/O bound)
+        let mut task_conn = match redis::get_connection(&pool).await {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::error!("Failed to get Redis connection for keccak storage: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = redis::set_key_with_expiry(
+            &mut task_conn,
+            &receipts_key,
+            keccak_receipt_bytes,
+            Some(ttl),
+        )
+        .await
+        {
+            tracing::error!("Failed to write keccak receipt to redis: {}", e);
+            return;
+        }
+
+        tracing::info!("Completed keccak proving and storage for {}", claim_digest);
+    });
+
+    tracing::info!("Completed keccak computation for {}", request.claim_digest);
+
+    // Return immediately after computation
     Ok(())
 }

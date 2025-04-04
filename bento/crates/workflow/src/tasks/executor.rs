@@ -161,47 +161,47 @@ async fn process_task(
             .context("create_task failure during Union creation")?;
         }
         TaskCmd::Finalize => {
-            // Optionally create the Resolve task ahead of the finalize
-            let assumption_count = (assumptions.len() + tree_task.keccak_depends_on.len()) as i32;
+            // Handle union work - if we have keccak/union work, treat it specially
+            let has_union_work = !tree_task.keccak_depends_on.is_empty();
+            let keccak_count = if has_union_work { 1 } else { 0 };
+            let assumption_count = (assumptions.len() + keccak_count) as i32;
 
-            let dep_task = if assumption_count == 0 {
-                tree_task.depends_on[0].to_string()
-            } else {
-                let task_def = serde_json::to_value(TaskType::Resolve(ResolveReq {
-                    max_idx: tree_task.depends_on[0],
-                }))
-                .context("Failed to serialize resolve req")?;
+            // Create the resolve task with appropriate prereqs
+            let mut prereqs = vec![format!("{}", tree_task.depends_on[0])];
+            let mut union_max_idx = None;
 
-                let mut prereqs = vec![format!("{}", tree_task.depends_on[0])];
-                // If we have keccak / coproc work, include it into the prereq's
-                for task_id in &tree_task.keccak_depends_on {
-                    prereqs.push(format!("{task_id}"));
-                }
+            // If we have union work, add it as a prereq and set the union_max_idx
+            if has_union_work {
+                // With union optimization, we only need the highest index of keccak work
+                union_max_idx = Some(tree_task.keccak_depends_on[0]);
+                prereqs.push(format!("{}", tree_task.keccak_depends_on[0]));
+            }
 
-                let prereqs = serde_json::json!(prereqs);
-                let task_id = "resolve";
+            let task_id = "resolve";
+            let task_def = serde_json::to_value(TaskType::Resolve(ResolveReq {
+                max_idx: tree_task.depends_on[0],
+                union_max_idx,
+            }))
+            .context("Failed to serialize resolve req")?;
 
-                taskdb::create_task(
-                    pool,
-                    job_id,
-                    task_id,
-                    join_stream,
-                    &task_def,
-                    &prereqs,
-                    args.resolve_retries,
-                    args.resolve_timeout * assumption_count,
-                )
-                .await
-                .context("create_task (resolve) failure during finalize creation")?;
-
-                task_id.to_string()
-            };
+            taskdb::create_task(
+                pool,
+                job_id,
+                task_id,
+                join_stream,
+                &task_def,
+                &serde_json::json!(prereqs),
+                args.resolve_retries,
+                args.resolve_timeout * assumption_count,
+            )
+            .await
+            .context("create_task (resolve) failure during finalize creation")?;
 
             let task_def = serde_json::to_value(TaskType::Finalize(FinalizeReq {
                 max_idx: tree_task.depends_on[0],
             }))
             .context("Failed to serialize finalize task-type")?;
-            let prereqs = serde_json::json!([dep_task]);
+            let prereqs = serde_json::json!([task_id]);
 
             let finalize_name = "finalize";
             taskdb::create_task(
