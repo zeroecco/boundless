@@ -27,7 +27,7 @@ use workflow_common::{
     },
     CompressType, ExecutorReq, ExecutorResp, FinalizeReq, JoinReq, KeccakReq, ProveReq, ResolveReq,
     SnarkReq, UnionReq, AUX_WORK_TYPE, COPROC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
-    SNARK_WORK_TYPE,
+    SNARK_WORK_TYPE, UNION_WORK_TYPE,
 };
 // use tempfile::NamedTempFile;
 use tokio::task::{JoinHandle, JoinSet};
@@ -425,7 +425,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     };
 
     let union_stream = if std::env::var("UNION_STREAM").is_ok() {
-        taskdb::get_stream(&agent.db_pool, &request.user_id, JOIN_WORK_TYPE)
+        taskdb::get_stream(&agent.db_pool, &request.user_id, UNION_WORK_TYPE)
             .await
             .context("Failed to get GPU Union stream")?
             .with_context(|| format!("Customer {} missing gpu union stream", request.user_id))?

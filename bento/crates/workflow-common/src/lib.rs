@@ -22,6 +22,9 @@ pub const COPROC_WORK_TYPE: &str = "coproc";
 /// join worker stream identifier
 pub const JOIN_WORK_TYPE: &str = "join";
 
+/// union worker stream identifier
+pub const UNION_WORK_TYPE: &str = "union";
+
 /// SNARK worker stream identifier
 pub const SNARK_WORK_TYPE: &str = "snark";
 
