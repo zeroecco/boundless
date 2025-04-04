@@ -102,7 +102,7 @@ impl MarketStats {
         self.period_requests.fetch_add(count, Ordering::SeqCst);
     }
 
-    fn increment_total_delivered(&self, count: u64) {
+    fn increment_total_fulfilled(&self, count: u64) {
         self.total_delivered.fetch_add(count, Ordering::SeqCst);
         self.period_delivered.fetch_add(count, Ordering::SeqCst);
     }
@@ -308,14 +308,18 @@ where
             to_block
         );
 
-        for (log, _) in logs {
-            let mut locked_requests = self.stats.locked_requests.write().await;
-            let entry = locked_requests.remove(&log.requestId);
-            if entry.is_none() {
-                tracing::warn!("Request 0x{:x} not found in locked requests", log.requestId);
+        if !logs.is_empty() {
+            self.stats.increment_total_fulfilled(logs.len() as u64);
+
+            for (log, _) in logs {
+                let mut locked_requests = self.stats.locked_requests.write().await;
+                let entry = locked_requests.remove(&log.requestId);
+                if entry.is_none() {
+                    tracing::warn!("Request 0x{:x} not found in locked requests", log.requestId);
+                }
+                drop(locked_requests);
+                tracing::debug!("Removed fulfilled request 0x{:x}", log.requestId);
             }
-            drop(locked_requests);
-            tracing::debug!("Removed fulfilled request 0x{:x}", log.requestId);
         }
 
         Ok(())
