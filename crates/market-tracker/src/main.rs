@@ -393,7 +393,7 @@ where
             .boundless_market
             .instance()
             .provider()
-            .get_block_by_number(block_number.into(), BlockTransactionsKind::Hashes)
+            .get_block_by_number(block_number.into())
             .await?
             .unwrap()
             .header

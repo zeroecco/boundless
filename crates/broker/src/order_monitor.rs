@@ -13,12 +13,11 @@ use alloy::{
     network::Ethereum,
     primitives::{utils::parse_ether, Address, U256},
     providers::{Provider, WalletProvider},
-    rpc::types::BlockTransactionsKind,
 };
 use anyhow::{Context, Result};
 use boundless_market::contracts::{
     boundless_market::{BoundlessMarketService, MarketError},
-    ProofStatus,
+    RequestStatus,
 };
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
@@ -104,7 +103,7 @@ where
             .get_status(order_id, Some(order.request.expires_at()))
             .await
             .context("Failed to get order status")?;
-        if order_status != ProofStatus::Unknown {
+        if order_status != RequestStatus::Unknown {
             tracing::warn!("Order {order_id:x} not open: {order_status:?}, skipping");
             // TODO: fetch some chain data to find out who / and for how much the order
             // was locked in at
@@ -125,7 +124,7 @@ where
 
         let lock_timestamp = self
             .provider
-            .get_block_by_number(lock_block.into(), BlockTransactionsKind::Hashes)
+            .get_block_by_number(lock_block.into())
             .await
             .with_context(|| format!("failed to get block {lock_block}"))?
             .with_context(|| format!("failed to get block {lock_block}: block not found"))?
@@ -279,10 +278,10 @@ mod tests {
     };
     use boundless_market::contracts::{
         test_utils::{deploy_boundless_market, deploy_hit_points},
-        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
     };
     use chrono::Utc;
-    use guest_assessor::ASSESSOR_GUEST_ID;
+    use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
     use risc0_zkvm::sha::Digest;
     use tracing_test::traced_test;
 
@@ -294,19 +293,20 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
 
-        let hit_points = deploy_hit_points(&signer, provider.clone()).await.unwrap();
+        let hit_points = deploy_hit_points(signer.address(), provider.clone()).await.unwrap();
 
         let market_address = deploy_boundless_market(
-            &signer,
+            signer.address(),
             provider.clone(),
             Address::ZERO,
             hit_points,
             Digest::from(ASSESSOR_GUEST_ID),
+            format!("file://{ASSESSOR_GUEST_PATH}"),
             Some(signer.address()),
         )
         .await
@@ -325,8 +325,7 @@ mod tests {
         let max_price = 2;
 
         let request = ProofRequest::new(
-            1,
-            &signer.address(),
+            RequestId::new(signer.address(), 1),
             Requirements::new(
                 Digest::ZERO,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -359,6 +358,7 @@ mod tests {
             image_id: None,
             input_id: None,
             proof_id: None,
+            compressed_proof_id: None,
             expire_timestamp: None,
             client_sig: client_sig.into(),
             lock_price: None,
@@ -403,19 +403,20 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
 
-        let hit_points = deploy_hit_points(&signer, provider.clone()).await.unwrap();
+        let hit_points = deploy_hit_points(signer.address(), provider.clone()).await.unwrap();
 
         let market_address = deploy_boundless_market(
-            &signer,
+            signer.address(),
             provider.clone(),
             Address::ZERO,
             hit_points,
             Digest::from(ASSESSOR_GUEST_ID),
+            format!("file://{ASSESSOR_GUEST_PATH}"),
             Some(signer.address()),
         )
         .await
@@ -434,8 +435,7 @@ mod tests {
         let max_price = 2;
 
         let request = ProofRequest::new(
-            boundless_market.index_from_nonce().await.unwrap(),
-            &signer.address(),
+            RequestId::new(signer.address(), boundless_market.index_from_nonce().await.unwrap()),
             Requirements::new(
                 Digest::ZERO,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -470,6 +470,7 @@ mod tests {
             image_id: None,
             input_id: None,
             proof_id: None,
+            compressed_proof_id: None,
             expire_timestamp: None,
             client_sig,
             lock_price: None,

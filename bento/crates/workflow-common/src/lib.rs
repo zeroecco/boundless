@@ -19,6 +19,9 @@ pub const PROVE_WORK_TYPE: &str = "prove";
 /// keccak/coproc worker stream identifier
 pub const COPROC_WORK_TYPE: &str = "coproc";
 
+/// Keccak receipts directory for job dir
+pub const KECCAK_RECEIPT_PATH: &str = "keccak_receipts";
+
 /// join worker stream identifier
 pub const JOIN_WORK_TYPE: &str = "join";
 
@@ -92,11 +95,24 @@ pub struct JoinReq {
     pub right: usize,
 }
 
+/// Union Request
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct UnionReq {
+    /// Node index
+    pub idx: usize,
+    /// index of the left branch
+    pub left: usize,
+    /// index of the right branch
+    pub right: usize,
+}
+
 /// Resolve Request
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ResolveReq {
     /// Index of the final joined receipt
     pub max_idx: usize,
+    /// Index of the union task
+    pub union_max_idx: Option<usize>,
 }
 
 /// Input request
@@ -150,6 +166,8 @@ pub enum TaskType {
     Snark(SnarkReq),
     /// Keccak coproc callback req
     Keccak(KeccakReq),
+    /// Union task
+    Union(UnionReq),
 }
 
 impl TaskType {
@@ -164,6 +182,7 @@ impl TaskType {
             Self::Finalize(_) => "finalize".into(),
             Self::Snark(_) => "snark".into(),
             Self::Keccak(_) => "keccak".into(),
+            Self::Union(_) => "union".into(),
         }
     }
 }

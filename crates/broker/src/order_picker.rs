@@ -9,12 +9,15 @@ use alloy::{
     network::Ethereum,
     primitives::{
         utils::{format_ether, parse_ether},
-        Address, FixedBytes, U256,
+        Address, U256,
     },
     providers::{Provider, WalletProvider},
 };
 use anyhow::{Context, Result};
-use boundless_market::contracts::{boundless_market::BoundlessMarketService, RequestError};
+use boundless_market::{
+    contracts::{boundless_market::BoundlessMarketService, RequestError},
+    selector::SupportedSelectors,
+};
 use thiserror::Error;
 use tokio::task::JoinSet;
 
@@ -52,6 +55,9 @@ pub struct OrderPicker<P> {
     prover: ProverObj,
     provider: Arc<P>,
     market: BoundlessMarketService<Arc<P>>,
+    supported_selectors: SupportedSelectors,
+    // Tracks the timestamp when the prover estimates it will complete the locked orders.
+    prover_available_at: Arc<tokio::sync::Mutex<u64>>,
 }
 
 impl<P> OrderPicker<P>
@@ -70,7 +76,15 @@ where
             provider.clone(),
             provider.default_signer_address(),
         );
-        Self { db, config, prover, provider, market }
+        Self {
+            db,
+            config,
+            prover,
+            provider,
+            market,
+            supported_selectors: SupportedSelectors::default(),
+            prover_available_at: Arc::new(tokio::sync::Mutex::new(now_timestamp())),
+        }
     }
 
     async fn price_order(&self, order_id: U256, order: &Order) -> Result<bool, PriceOrderErr> {
@@ -91,13 +105,17 @@ where
             }
         }
 
-        // TODO(#BM-536): Filter based on supported selectors
-        // Drop orders that specify a selector
-        if order.request.requirements.selector != FixedBytes::<4>([0; 4]) {
-            tracing::warn!("Removing order {order_id:x} because it has a selector requirement");
-            self.db.skip_order(order_id).await.context("Order has a selector requirement")?;
+        // TODO(BM-40): When accounting for gas costs of orders, a groth16 selector has much higher cost.
+        if !self.supported_selectors.is_supported(&order.request.requirements.selector) {
+            tracing::warn!(
+                "Removing order {order_id:x} because it has an unsupported selector requirement"
+            );
+            self.db
+                .skip_order(order_id)
+                .await
+                .context("Order has an unsupported selector requirement")?;
             return Ok(false);
-        }
+        };
 
         // is the order expired already?
         // TODO: Handle lockTimeout separately from timeout.
@@ -251,17 +269,39 @@ where
             }
         }
 
-        // TODO: this only checks that we could prove this at peak_khz, not if the cluster currently
-        // can absorb that proving load, we need to cordinate this check with parallel
-        // proofs and the current state of Bento
-        if let Some(prove_khz) = peak_prove_khz {
-            let required_khz = (proof_res.stats.total_cycles / 1_000) / seconds_left;
-            tracing::debug!("peak_prove_khz checking: {prove_khz} required: {required_khz}");
-            if required_khz >= prove_khz {
-                tracing::warn!("Order {order_id:x} peak_prove_khz check failed req: {required_khz} | config: {prove_khz}");
+        // Check if the order can be completed before its deadline
+        if let Some(peak_prove_khz) = peak_prove_khz {
+            // TODO: this is a naive solution for the following reasons:
+            // 1. Time estimate based on `peak_prove_khz`, which may not be the actual proving time
+            // 2. This doesn't take into account the aggregation proving time
+            // 3. Doesn't account for non-proving slop
+            // 4. Assumes proofs are prioritized by order of scheduling, and may be cases where a
+            //    previously locked order cannot complete within the deadline if more orders locked.
+            // So if using, a conservative peak_prove_khz should be used.
+
+            // Calculate how long this proof will take to complete in seconds, rounded up.
+            let proof_time_seconds =
+                (proof_res.stats.total_cycles.div_ceil(1_000)).div_ceil(peak_prove_khz);
+
+            // Get the current prover availability time
+            let mut prover_available = self.prover_available_at.lock().await;
+            let start_time = std::cmp::max(*prover_available, now);
+            let completion_time = start_time + proof_time_seconds;
+
+            if completion_time >= expiration {
+                drop(prover_available);
+                // Proof estimated that it cannot complete before the expiration
+                tracing::warn!(
+                    "Order {order_id:x} cannot be completed in time. Proof estimated to take {proof_time_seconds}s to complete, would be {}s past deadline",
+                    completion_time.saturating_sub(expiration)
+                );
                 self.db.skip_order(order_id).await.context("Failed to delete order")?;
                 return Ok(false);
             }
+
+            *prover_available = completion_time;
+            drop(prover_available);
+            tracing::debug!("Order {order_id:x} estimated to take {proof_time_seconds}s to prove");
         }
 
         let journal = self
@@ -604,23 +644,24 @@ where
 mod tests {
     use super::*;
     use crate::{
-        chain_monitor::ChainMonitorService, db::SqliteDb, provers::MockProver, OrderStatus,
+        chain_monitor::ChainMonitorService, db::SqliteDb, provers::DefaultProver, OrderStatus,
     };
     use alloy::{
         network::EthereumWallet,
         node_bindings::{Anvil, AnvilInstance},
-        primitives::{aliases::U96, Address, Bytes, B256},
+        primitives::{aliases::U96, Address, Bytes, FixedBytes, B256},
         providers::{ext::AnvilApi, ProviderBuilder},
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
         test_utils::{deploy_boundless_market, deploy_hit_points},
-        Input, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        Input, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
     };
+    use boundless_market::storage::{MockStorageProvider, StorageProvider};
     use chrono::Utc;
-    use guest_assessor::ASSESSOR_GUEST_ID;
+    use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
     use guest_util::{ECHO_ELF, ECHO_ID};
-    use httpmock::prelude::*;
+    use risc0_ethereum_contracts::selector::Selector;
     use risc0_zkvm::sha::Digest;
     use tracing_test::traced_test;
 
@@ -629,7 +670,7 @@ mod tests {
         anvil: AnvilInstance,
         picker: OrderPicker<P>,
         boundless_market: BoundlessMarketService<Arc<P>>,
-        image_server: MockServer,
+        storage_provider: MockStorageProvider,
         db: DbObj,
         provider: Arc<P>,
     }
@@ -638,10 +679,6 @@ mod tests {
     where
         P: Provider + WalletProvider,
     {
-        fn image_uri(&self) -> String {
-            format!("http://{}/image", self.image_server.address())
-        }
-
         fn signer(&self, index: usize) -> PrivateKeySigner {
             self.anvil.keys()[index].clone().into()
         }
@@ -653,13 +690,14 @@ mod tests {
             max_price: U256,
             lock_stake: U256,
         ) -> Order {
+            let image_url = self.storage_provider.upload_image(ECHO_ELF).await.unwrap();
             let image_id = Digest::from(ECHO_ID);
+
             Order {
                 status: OrderStatus::Pricing,
                 updated_at: Utc::now(),
                 request: ProofRequest::new(
-                    order_index,
-                    &self.provider.default_signer_address(),
+                    RequestId::new(self.provider.default_signer_address(), order_index),
                     Requirements::new(
                         image_id,
                         Predicate {
@@ -667,7 +705,7 @@ mod tests {
                             data: Default::default(),
                         },
                     ),
-                    self.image_uri(),
+                    image_url,
                     Input::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
                     Offer {
                         minPrice: min_price,
@@ -683,6 +721,7 @@ mod tests {
                 image_id: None,
                 input_id: None,
                 proof_id: None,
+                compressed_proof_id: None,
                 expire_timestamp: None,
                 client_sig: Bytes::new(),
                 lock_price: None,
@@ -717,20 +756,21 @@ mod tests {
             let provider = Arc::new(
                 ProviderBuilder::new()
                     .wallet(EthereumWallet::from(signer.clone()))
-                    .on_builtin(&anvil.endpoint())
+                    .connect(&anvil.endpoint())
                     .await
                     .unwrap(),
             );
 
             provider.anvil_mine(Some(4), Some(2)).await.unwrap();
 
-            let hp_contract = deploy_hit_points(&signer, provider.clone()).await.unwrap();
+            let hp_contract = deploy_hit_points(signer.address(), provider.clone()).await.unwrap();
             let market_address = deploy_boundless_market(
-                &signer,
+                signer.address(),
                 provider.clone(),
                 Address::ZERO,
                 hp_contract,
                 Digest::from(ASSESSOR_GUEST_ID),
+                format!("file://{ASSESSOR_GUEST_PATH}"),
                 Some(signer.address()),
             )
             .await
@@ -754,22 +794,18 @@ mod tests {
                 );
             }
 
-            let image_server = MockServer::start();
-            let _get_mock = image_server.mock(|when, then| {
-                when.method(GET).path("/image");
-                then.status(200).body(ECHO_ELF);
-            });
+            let storage_provider = MockStorageProvider::start();
 
             let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
             let config = self.config.unwrap_or_default();
-            let prover: ProverObj = Arc::new(MockProver::default());
+            let prover: ProverObj = Arc::new(DefaultProver::new());
             let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
             tokio::spawn(chain_monitor.spawn());
 
             let picker =
                 OrderPicker::new(db.clone(), config, prover, market_address, provider.clone());
 
-            TestCtx { anvil, picker, boundless_market, image_server, db, provider }
+            TestCtx { anvil, picker, boundless_market, storage_provider, db, provider }
         }
     }
 
@@ -832,6 +868,38 @@ mod tests {
         assert_eq!(db_order.status, OrderStatus::Skipped);
 
         assert!(logs_contain("predicate check failed, skipping"));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn skip_unsupported_selector() {
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
+        }
+        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+
+        let min_price = 200000000000u64;
+        let max_price = 400000000000u64;
+
+        let mut order = ctx
+            .generate_next_order(1, U256::from(min_price), U256::from(max_price), U256::from(0))
+            .await;
+        let order_id = order.request.id;
+
+        // set an unsupported selector
+        order.request.requirements.selector = FixedBytes::from(Selector::Groth16V1_1 as u32);
+
+        let _request_id =
+            ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
+
+        ctx.db.add_order(order_id, order.clone()).await.unwrap();
+        ctx.picker.price_order(order_id, &order).await.unwrap();
+
+        let db_order = ctx.db.get_order(order_id).await.unwrap().unwrap();
+        assert_eq!(db_order.status, OrderStatus::Skipped);
+
+        assert!(logs_contain("has an unsupported selector requirement"));
     }
 
     #[tokio::test]
@@ -1142,6 +1210,106 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn accept_order_that_completes_before_expiration() {
+        let config = ConfigLock::default();
+        {
+            let mut config_write = config.load_write().unwrap();
+            config_write.market.mcycle_price = "0.0000001".into();
+            config_write.market.peak_prove_khz = Some(1);
+            config_write.market.min_deadline = 0;
+        }
+        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+
+        let min_price = 200000000000u64;
+        let max_price = 400000000000u64;
+
+        let mut order = ctx
+            .generate_next_order(1, U256::from(min_price), U256::from(max_price), U256::from(0))
+            .await;
+        let order_id = order.request.id;
+
+        // Modify the order to have a longer expiration time
+        let current_time = now_timestamp();
+        order.request.offer.biddingStart = current_time;
+        order.request.offer.lockTimeout = 60;
+
+        let _request_id =
+            ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
+
+        ctx.db.add_order(order_id, order.clone()).await.unwrap();
+
+        ctx.picker.price_order(order_id, &order).await.unwrap();
+
+        let db_order = ctx.db.get_order(order_id).await.unwrap().unwrap();
+        assert_eq!(db_order.status, OrderStatus::Locking);
+
+        // Verify that the debug log contains the estimated proving time
+        assert!(logs_contain("estimated to take 4s to prove"));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn orders_queue_up_completion_times() {
+        let config = ConfigLock::default();
+        {
+            let mut config_write = config.load_write().unwrap();
+            config_write.market.mcycle_price = "0.0000001".into();
+            config_write.market.peak_prove_khz = Some(1);
+            config_write.market.min_deadline = 0;
+        }
+        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+
+        // First order
+        let mut order1 = ctx
+            .generate_next_order(
+                1,
+                U256::from(200000000000u64),
+                U256::from(400000000000u64),
+                U256::from(0),
+            )
+            .await;
+        let order_id1 = order1.request.id;
+        let current_time = now_timestamp();
+        order1.request.offer.biddingStart = current_time;
+        order1.request.offer.lockTimeout = 6;
+
+        ctx.db.add_order(order_id1, order1.clone()).await.unwrap();
+        ctx.picker.price_order(order_id1, &order1).await.unwrap();
+
+        // Second order will be rejected because it would finish after its deadline with first order
+        let mut order2 = ctx
+            .generate_next_order(
+                2,
+                U256::from(200000000000u64),
+                U256::from(400000000000u64),
+                U256::from(0),
+            )
+            .await;
+        let order_id2 = order2.request.id;
+
+        order2.request.offer.biddingStart = current_time;
+        order2.request.offer.lockTimeout = 6;
+
+        ctx.db.add_order(order_id2, order2.clone()).await.unwrap();
+        ctx.picker.price_order(order_id2, &order2).await.unwrap();
+
+        // Check results
+        assert_eq!(
+            ctx.db.get_order(order_id1).await.unwrap().unwrap().status,
+            OrderStatus::Locking
+        );
+        assert_eq!(
+            ctx.db.get_order(order_id2).await.unwrap().unwrap().status,
+            OrderStatus::Skipped
+        );
+
+        assert!(logs_contain("cannot be completed in time"));
+        assert!(logs_contain("Proof estimated to take 4s to complete"));
+        assert!(logs_contain("s past deadline"));
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn respects_max_concurrent_locks() {
         let max_concurrent_locks = 2;
         let config = ConfigLock::default();
@@ -1210,11 +1378,14 @@ mod tests {
         let order = pricing_tasks.join_next().await.unwrap().unwrap().unwrap().unwrap();
         ctx.db.set_order_complete(order).await.unwrap();
 
+        // Await other pricing task to avoid race conditions
+        pricing_tasks.join_next().await.unwrap().unwrap().unwrap().unwrap();
+
         let capacity = ctx.picker.get_pricing_order_capacity().await.unwrap();
         assert_eq!(capacity, Some(1));
-        assert_eq!(pricing_tasks.len(), 1);
+        assert_eq!(pricing_tasks.len(), 0);
 
         ctx.picker.spawn_pricing_tasks(&mut pricing_tasks, capacity.unwrap()).await.unwrap();
-        assert_eq!(pricing_tasks.len(), 2);
+        assert_eq!(pricing_tasks.len(), 1);
     }
 }

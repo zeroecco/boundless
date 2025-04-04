@@ -33,13 +33,13 @@ use alloy::{
 use alloy_primitives::{PrimitiveSignature, B256};
 use alloy_sol_types::SolStruct;
 use anyhow::{anyhow, Context, Result};
-use balance_alerts_layer::{BalanceAlertConfig, BalanceAlertLayer, BalanceAlertProvider};
 use risc0_aggregation::SetInclusionReceipt;
 use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::{sha::Digest, ReceiptClaim};
 use url::Url;
 
 use crate::{
+    balance_alerts_layer::{BalanceAlertConfig, BalanceAlertLayer, BalanceAlertProvider},
     contracts::{
         boundless_market::{BoundlessMarketService, MarketError},
         ProofRequest, RequestError,
@@ -47,8 +47,8 @@ use crate::{
     now_timestamp,
     order_stream_client::{Client as OrderStreamClient, Order},
     storage::{
-        storage_provider_from_config, storage_provider_from_env, BuiltinStorageProvider,
-        BuiltinStorageProviderError, StorageProvider, StorageProviderConfig,
+        storage_provider_from_env, BuiltinStorageProvider, BuiltinStorageProviderError,
+        StorageProvider, StorageProviderConfig,
     },
 };
 
@@ -85,20 +85,23 @@ pub enum ClientError {
 }
 
 /// Builder for the client
-pub struct ClientBuilder {
+pub struct ClientBuilder<P> {
     boundless_market_addr: Option<Address>,
     set_verifier_addr: Option<Address>,
     rpc_url: Option<Url>,
     wallet: Option<EthereumWallet>,
     local_signer: Option<PrivateKeySigner>,
     order_stream_url: Option<Url>,
-    storage_config: Option<StorageProviderConfig>,
+    storage_provider: Option<P>,
     tx_timeout: Option<std::time::Duration>,
     bidding_start_delay: u64,
     balance_alerts: Option<BalanceAlertConfig>,
 }
 
-impl Default for ClientBuilder {
+impl<P> Default for ClientBuilder<P> {
+    /// Creates a new `ClientBuilder` with all configuration options set to their default values.
+    ///
+    /// This implementation works with any storage provider type `P`.
     fn default() -> Self {
         Self {
             boundless_market_addr: None,
@@ -107,7 +110,7 @@ impl Default for ClientBuilder {
             wallet: None,
             local_signer: None,
             order_stream_url: None,
-            storage_config: None,
+            storage_provider: None,
             tx_timeout: None,
             bidding_start_delay: BIDDING_START_DELAY,
             balance_alerts: None,
@@ -115,25 +118,42 @@ impl Default for ClientBuilder {
     }
 }
 
-impl ClientBuilder {
-    /// Create a new client builder
+impl ClientBuilder<BuiltinStorageProvider> {
+    /// Create a new client builder using the built-in storage provider.
+    ///
+    /// For a different storage provider, use [`ClientBuilder::default()`] with an
+    /// explicit type parameter:
+    /// ```rust
+    /// # use boundless_market::{client::ClientBuilder, storage::S3StorageProvider};
+    /// let builder = ClientBuilder::<S3StorageProvider>::default();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the storage provider from the given config
+    pub async fn with_storage_provider_config(
+        self,
+        config: Option<StorageProviderConfig>,
+    ) -> Result<Self, <BuiltinStorageProvider as StorageProvider>::Error> {
+        let storage_provider = match config {
+            Some(cfg) => Some(BuiltinStorageProvider::from_config(&cfg).await?),
+            None => None,
+        };
+        Ok(self.with_storage_provider(storage_provider))
+    }
+}
+
+impl<P: StorageProvider> ClientBuilder<P> {
     /// Build the client
-    pub async fn build(self) -> Result<Client<ProviderWallet, BuiltinStorageProvider>> {
+    pub async fn build(self) -> Result<Client<ProviderWallet, P>> {
         let mut client = Client::from_parts(
             self.wallet.context("Wallet not set")?,
             self.rpc_url.context("RPC URL not set")?,
             self.boundless_market_addr.context("Boundless market address not set")?,
             self.set_verifier_addr.context("Set verifier address not set")?,
             self.order_stream_url,
-            if let Some(storage_config) = self.storage_config {
-                Some(storage_provider_from_config(&storage_config).await?)
-            } else {
-                None
-            },
+            self.storage_provider,
             self.balance_alerts,
         )
         .await?;
@@ -181,12 +201,9 @@ impl ClientBuilder {
         Self { order_stream_url, ..self }
     }
 
-    /// Set the storage provider config
-    pub fn with_storage_provider_config(
-        self,
-        storage_config: Option<StorageProviderConfig>,
-    ) -> Self {
-        Self { storage_config, ..self }
+    /// Set the storage provider
+    pub fn with_storage_provider(self, storage_provider: Option<P>) -> Self {
+        Self { storage_provider, ..self }
     }
 
     /// Set the transaction timeout in seconds
@@ -227,7 +244,7 @@ pub struct Client<P, S> {
 impl<P, S> Client<P, S>
 where
     P: Provider<Ethereum> + 'static + Clone,
-    S: StorageProvider + Clone,
+    S: StorageProvider,
 {
     /// Create a new client
     pub fn new(
@@ -359,6 +376,22 @@ where
         request.validate()?;
 
         let request_id = self.boundless_market.submit_request(&request, signer).await?;
+        Ok((request_id, request.expires_at()))
+    }
+
+    /// Submit a proof request with a signature bytes.
+    ///
+    /// Accepts a signature bytes to be used as the request signature.
+    pub async fn submit_request_with_signature_bytes(
+        &self,
+        request: &ProofRequest,
+        signature: &Bytes,
+    ) -> Result<(U256, u64), ClientError> {
+        let request = request.clone();
+        request.validate()?;
+
+        let request_id =
+            self.boundless_market.submit_request_with_signature_bytes(&request, signature).await?;
         Ok((request_id, request.expires_at()))
     }
 
@@ -563,7 +596,9 @@ impl Client<ProviderWallet, BuiltinStorageProvider> {
             bidding_start_delay: BIDDING_START_DELAY,
         })
     }
+}
 
+impl<P: StorageProvider> Client<ProviderWallet, P> {
     /// Create a new client from parts
     pub async fn from_parts(
         wallet: EthereumWallet,
@@ -571,13 +606,13 @@ impl Client<ProviderWallet, BuiltinStorageProvider> {
         boundless_market_address: Address,
         set_verifier_address: Address,
         order_stream_url: Option<Url>,
-        storage_provider: Option<BuiltinStorageProvider>,
+        storage_provider: Option<P>,
         balance_alerts: Option<BalanceAlertConfig>,
     ) -> Result<Self, ClientError> {
         let caller = wallet.default_signer().address();
 
         let provider = ProviderBuilder::new()
-            .wallet(wallet.clone())
+            .wallet(wallet)
             .layer(BalanceAlertLayer::new(balance_alerts.unwrap_or_default()))
             .on_http(rpc_url);
 

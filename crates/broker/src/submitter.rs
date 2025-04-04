@@ -8,11 +8,15 @@ use alloy::{
     network::Ethereum,
     primitives::{utils::format_ether, Address, B256, U256},
     providers::{Provider, WalletProvider},
-    sol_types::SolStruct,
+    sol_types::{SolStruct, SolValue},
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use boundless_market::contracts::{
-    boundless_market::BoundlessMarketService, encode_seal, AssessorReceipt, Fulfillment,
+use boundless_market::{
+    contracts::{
+        boundless_market::BoundlessMarketService, encode_seal, AssessorJournal, AssessorReceipt,
+        Fulfillment,
+    },
+    selector::is_groth16_selector,
 };
 use guest_assessor::ASSESSOR_GUEST_ID;
 use risc0_aggregation::{SetInclusionReceipt, SetInclusionReceiptVerifierParameters};
@@ -123,10 +127,7 @@ where
             !aggregation_state.claim_digests.is_empty(),
             "Cannot submit batch with no claim digests"
         );
-        ensure!(
-            batch.assessor_claim_digest.is_some(),
-            "Cannot submit batch with no assessor claim digest"
-        );
+        ensure!(batch.assessor_proof_id.is_some(), "Cannot submit batch with no assessor receipt");
         ensure!(
             aggregation_state.guest_state.mmr.is_finalized(),
             "Cannot submit guest state that is not finalized"
@@ -143,6 +144,23 @@ where
         );
 
         // Collect the needed parts for the fulfillBatch:
+        let assessor_proof_id = &batch.assessor_proof_id.clone().unwrap();
+        let assessor_receipt = self
+            .prover
+            .get_receipt(assessor_proof_id)
+            .await
+            .context("Failed to get assessor receipt")?
+            .context("Assessor receipt missing")?;
+        let assessor_claim_digest = assessor_receipt
+            .claim()
+            .with_context(|| format!("Receipt for assessor {assessor_proof_id} missing claim"))?
+            .value()
+            .with_context(|| format!("Receipt for assessor {assessor_proof_id} claims pruned"))?
+            .digest();
+        let assessor_journal =
+            AssessorJournal::abi_decode(&assessor_receipt.journal.bytes, true)
+                .context("Failed to decode assessor journal for {assessor_proof_id}")?;
+
         let inclusion_params =
             SetInclusionReceiptVerifierParameters { image_id: self.set_builder_img_id };
 
@@ -167,31 +185,44 @@ where
                     .context("Failed to get order journal from prover")?
                     .context("Order proof Journal missing")?;
 
-                // NOTE: We assume here that the order execution ended with exit code 0.
-                let order_claim =
-                    ReceiptClaim::ok(order_img_id.0, MaybePruned::Pruned(order_journal.digest()));
-                let order_claim_index = aggregation_state
-                    .claim_digests
-                    .iter()
-                    .position(|claim| *claim == order_claim.digest())
-                    .ok_or(anyhow!(
-                        "Failed to find order claim {order_claim:x?} in aggregated claims"
-                    ))?;
-                let order_path = risc0_aggregation::merkle_path(
-                    &aggregation_state.claim_digests,
-                    order_claim_index,
-                );
-                tracing::debug!(
-                    "Merkle path for order {order_id:x} : {:x?} : {order_path:x?}",
-                    order_claim.digest()
-                );
-                let set_inclusion_receipt = SetInclusionReceipt::from_path_with_verifier_params(
-                    order_claim,
-                    order_path,
-                    inclusion_params.digest(),
-                );
-                let seal =
-                    set_inclusion_receipt.abi_encode_seal().context("Failed to encode seal")?;
+                let seal = if is_groth16_selector(order_request.requirements.selector) {
+                    let compressed_proof_id =
+                        self.db.get_order_compressed_proof_id(*order_id).await.context(
+                            "Failed to get order compressed proof ID from DB for submission",
+                        )?;
+                    self.fetch_encode_g16(&compressed_proof_id)
+                        .await
+                        .context("Failed to fetch and encode g16 proof")?
+                } else {
+                    // NOTE: We assume here that the order execution ended with exit code 0.
+                    let order_claim = ReceiptClaim::ok(
+                        order_img_id.0,
+                        MaybePruned::Pruned(order_journal.digest()),
+                    );
+                    let order_claim_index = aggregation_state
+                        .claim_digests
+                        .iter()
+                        .position(|claim| *claim == order_claim.digest())
+                        .ok_or(anyhow!(
+                            "Failed to find order claim {order_claim:x?} in aggregated claims"
+                        ))?;
+                    let order_path = risc0_aggregation::merkle_path(
+                        &aggregation_state.claim_digests,
+                        order_claim_index,
+                    );
+                    tracing::debug!(
+                        "Merkle path for order {order_id:x} : {:x?} : {order_path:x?}",
+                        order_claim.digest()
+                    );
+                    let set_inclusion_receipt = SetInclusionReceipt::from_path_with_verifier_params(
+                        order_claim,
+                        order_path,
+                        inclusion_params.digest(),
+                    );
+                    set_inclusion_receipt.abi_encode_seal().context("Failed to encode seal")?
+                };
+
+                tracing::debug!("Seal for order {order_id:x} : {}", hex::encode(seal.clone()));
 
                 let request_digest = order_request
                     .eip712_signing_hash(&self.market.eip712_domain().await?.alloy_struct());
@@ -216,13 +247,13 @@ where
         let assessor_claim_index = aggregation_state
             .claim_digests
             .iter()
-            .position(|claim| *claim == batch.assessor_claim_digest.unwrap())
+            .position(|claim| *claim == assessor_claim_digest)
             .ok_or(anyhow!("Failed to find order claim assessor claim in aggregated claims"))?;
         let assessor_path =
             risc0_aggregation::merkle_path(&aggregation_state.claim_digests, assessor_claim_index);
         tracing::debug!(
             "Merkle path for assessor : {:x?} : {assessor_path:x?}",
-            batch.assessor_claim_digest
+            assessor_claim_digest
         );
 
         let assessor_seal = SetInclusionReceipt::from_path_with_verifier_params(
@@ -241,11 +272,11 @@ where
             let config = self.config.lock_all().context("Failed to read config")?;
             config.batcher.single_txn_fulfill
         };
-        let assessor_fill = AssessorReceipt {
+        let assessor_receipt = AssessorReceipt {
             seal: assessor_seal.into(),
-            selectors: vec![],
+            selectors: assessor_journal.selectors,
             prover: self.prover_address,
-            callbacks: vec![],
+            callbacks: assessor_journal.callbacks,
         };
         if single_txn_fulfill {
             if let Err(err) = self
@@ -255,7 +286,7 @@ where
                     root,
                     batch_seal.into(),
                     fulfillments.clone(),
-                    assessor_fill,
+                    assessor_receipt,
                 )
                 .await
             {
@@ -293,7 +324,9 @@ where
                 tracing::info!("Contract already contains root, skipping to fulfillment");
             }
 
-            if let Err(err) = self.market.fulfill_batch(fulfillments.clone(), assessor_fill).await {
+            if let Err(err) =
+                self.market.fulfill_batch(fulfillments.clone(), assessor_receipt).await
+            {
                 tracing::error!("Failed to submit proofs: {err:?} for batch {batch_id}");
                 for fulfillment in fulfillments.iter() {
                     if let Err(db_err) = self
@@ -407,7 +440,7 @@ mod tests {
     use crate::{
         db::SqliteDb,
         now_timestamp,
-        provers::{encode_input, MockProver},
+        provers::{encode_input, DefaultProver},
         AggregationState, Batch, BatchStatus, Order, OrderStatus,
     };
     use alloy::{
@@ -418,16 +451,21 @@ mod tests {
         signers::local::PrivateKeySigner,
     };
     use boundless_assessor::{AssessorInput, Fulfillment};
-    use boundless_market::contracts::{
-        hit_points::default_allowance,
-        test_utils::{
-            deploy_boundless_market, deploy_hit_points, deploy_mock_verifier, deploy_set_verifier,
+    use boundless_market::{
+        contracts::{
+            hit_points::default_allowance,
+            test_utils::{
+                deploy_boundless_market, deploy_hit_points, deploy_mock_verifier,
+                deploy_set_verifier,
+            },
+            Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId,
+            Requirements,
         },
-        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        input::InputBuilder,
     };
     use chrono::Utc;
-    use guest_assessor::{ASSESSOR_GUEST_ELF, ASSESSOR_GUEST_ID};
-    use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
+    use guest_assessor::{ASSESSOR_GUEST_ELF, ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
+    use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID, SET_BUILDER_PATH};
     use guest_util::{ECHO_ELF, ECHO_ID};
     use risc0_aggregation::GuestState;
     use risc0_zkvm::sha::Digest;
@@ -447,7 +485,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -455,23 +493,28 @@ mod tests {
         let customer_provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(customer_signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
 
         let verifier = deploy_mock_verifier(provider.clone()).await.unwrap();
-        let set_verifier =
-            deploy_set_verifier(provider.clone(), verifier, Digest::from(SET_BUILDER_ID))
-                .await
-                .unwrap();
-        let hit_points = deploy_hit_points(&signer, provider.clone()).await.unwrap();
+        let set_verifier = deploy_set_verifier(
+            provider.clone(),
+            verifier,
+            Digest::from(SET_BUILDER_ID),
+            format!("file://{SET_BUILDER_PATH}"),
+        )
+        .await
+        .unwrap();
+        let hit_points = deploy_hit_points(prover_addr, provider.clone()).await.unwrap();
         let market_address = deploy_boundless_market(
-            &signer,
+            prover_addr,
             provider.clone(),
             set_verifier,
             hit_points,
             Digest::from(ASSESSOR_GUEST_ID),
+            format!("file://{ASSESSOR_GUEST_PATH}"),
             Some(prover_addr),
         )
         .await
@@ -485,7 +528,7 @@ mod tests {
         market_customer.deposit(U256::from(10000000000u64)).await.unwrap();
 
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         let echo_id = Digest::from(ECHO_ID);
         let echo_id_str = echo_id.to_string();
@@ -508,8 +551,7 @@ mod tests {
         let echo_receipt = prover.get_receipt(&echo_proof.id).await.unwrap().unwrap();
 
         let order_request = ProofRequest::new(
-            market_customer.index_from_nonce().await.unwrap(),
-            &customer_addr,
+            RequestId::new(customer_addr, market_customer.index_from_nonce().await.unwrap()),
             Requirements::new(
                 echo_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -534,22 +576,18 @@ mod tests {
             .unwrap()
             .as_bytes();
 
-        let assessor_input = prover
-            .upload_input(
-                AssessorInput {
-                    domain: boundless_market::contracts::eip712_domain(market_address, chain_id),
-                    fills: vec![Fulfillment {
-                        request: order_request.clone(),
-                        signature: client_sig.into(),
-                        journal: echo_receipt.journal.bytes.clone(),
-                        require_payment: true,
-                    }],
-                    prover_address: prover_addr,
-                }
-                .to_vec(),
-            )
-            .await
-            .unwrap();
+        let assessor_input = AssessorInput {
+            domain: boundless_market::contracts::eip712_domain(market_address, chain_id),
+            fills: vec![Fulfillment {
+                request: order_request.clone(),
+                signature: client_sig.into(),
+                journal: echo_receipt.journal.bytes.clone(),
+            }],
+            prover_address: prover_addr,
+        };
+        let assessor_stdin = InputBuilder::new().write_frame(&assessor_input.encode()).stdin;
+
+        let assessor_input = prover.upload_input(assessor_stdin).await.unwrap();
 
         let assessor_proof = prover
             .prove_and_monitor_stark(&assessor_id_str, &assessor_input, vec![echo_proof.id.clone()])
@@ -605,6 +643,7 @@ mod tests {
             image_id: Some(echo_id_str.clone()),
             input_id: Some(input_id.clone()),
             proof_id: Some(echo_proof.id.clone()),
+            compressed_proof_id: None,
             expire_timestamp: Some(now_timestamp() + 100),
             client_sig: client_sig.into(),
             lock_price: Some(U256::ZERO),
@@ -616,7 +655,7 @@ mod tests {
         let batch_id = 0;
         let batch = Batch {
             status: BatchStatus::Complete,
-            assessor_claim_digest: Some(assessor_receipt.claim().unwrap().digest()),
+            assessor_proof_id: Some(assessor_proof.id),
             orders: vec![order_id],
             fees: U256::ZERO,
             start_time: Utc::now(),

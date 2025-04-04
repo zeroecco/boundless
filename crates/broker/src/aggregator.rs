@@ -5,7 +5,7 @@
 use alloy::primitives::{utils, Address, U256};
 use anyhow::{bail, Context, Result};
 use boundless_assessor::{AssessorInput, Fulfillment};
-use boundless_market::contracts::eip712_domain;
+use boundless_market::{contracts::eip712_domain, input::InputBuilder};
 use chrono::Utc;
 use risc0_aggregation::GuestState;
 use risc0_zkvm::{
@@ -188,7 +188,6 @@ impl AggregatorService {
                 request: order.request.clone(),
                 signature: order.client_sig.clone().to_vec(),
                 journal,
-                require_payment: true,
             })
         }
 
@@ -198,13 +197,10 @@ impl AggregatorService {
             domain: eip712_domain(self.market_addr, self.chain_id),
             prover_address: self.prover_addr,
         };
-        let input_data = input.to_vec();
+        let stdin = InputBuilder::new().write_frame(&input.encode()).stdin;
 
-        let input_id = self
-            .prover
-            .upload_input(input_data)
-            .await
-            .context("Failed to upload assessor input")?;
+        let input_id =
+            self.prover.upload_input(stdin).await.context("Failed to upload assessor input")?;
 
         let proof_res = self
             .prover
@@ -270,7 +266,7 @@ impl AggregatorService {
                 None => None,
             };
             (
-                config.batcher.batch_size,
+                config.batcher.min_batch_size,
                 config.batcher.batch_max_time,
                 batch_max_fees,
                 config.batcher.batch_max_journal_bytes,
@@ -387,11 +383,17 @@ impl AggregatorService {
         batch_id: usize,
         batch: &Batch,
         new_proofs: &[AggregationOrder],
+        groth16_proofs: &[AggregationOrder],
         finalize: bool,
     ) -> Result<String> {
         let assessor_proof_id = if finalize {
-            let assessor_order_ids: Vec<U256> =
-                batch.orders.iter().copied().chain(new_proofs.iter().map(|p| p.order_id)).collect();
+            let assessor_order_ids: Vec<U256> = batch
+                .orders
+                .iter()
+                .copied()
+                .chain(new_proofs.iter().map(|p| p.order_id))
+                .chain(groth16_proofs.iter().map(|p| p.order_id))
+                .collect();
 
             tracing::debug!(
                 "Running assessor for batch {batch_id} with orders {:x?}",
@@ -423,25 +425,13 @@ impl AggregatorService {
 
         tracing::info!("Completed aggregation into batch {batch_id} of proofs {:x?}", proof_ids);
 
-        let assessor_claim_digest = if let Some(proof_id) = assessor_proof_id {
-            let receipt = self
-                .prover
-                .get_receipt(&proof_id)
-                .await
-                .with_context(|| format!("Failed to get proof receipt for proof {proof_id}"))?
-                .with_context(|| format!("Proof receipt not found for proof {proof_id}"))?;
-            let claim = receipt
-                .claim()
-                .with_context(|| format!("Receipt for proof {proof_id} missing claim"))?
-                .value()
-                .with_context(|| format!("Receipt for proof {proof_id} claims pruned"))?;
-            Some(claim.digest())
-        } else {
-            None
-        };
-
         self.db
-            .update_batch(batch_id, &aggregation_state, new_proofs, assessor_claim_digest)
+            .update_batch(
+                batch_id,
+                &aggregation_state,
+                &[new_proofs, groth16_proofs].concat(),
+                assessor_proof_id,
+            )
             .await
             .with_context(|| format!("Failed to update batch {batch_id} in the DB"))?;
 
@@ -463,10 +453,22 @@ impl AggregatorService {
                     .get_aggregation_proofs()
                     .await
                     .context("Failed to get pending agg proofs from DB")?;
+                // Fetch all groth16 proofs that are ready to be submitted from the DB.
+                let new_groth16_proofs = self
+                    .db
+                    .get_groth16_proofs()
+                    .await
+                    .context("Failed to get groth16 proofs from DB")?;
 
                 // Finalize the current batch before adding any new orders if the finalization conditions
                 // are already met.
-                let finalize = self.check_finalize(batch_id, &batch, &new_proofs).await?;
+                let finalize = self
+                    .check_finalize(
+                        batch_id,
+                        &batch,
+                        &[new_proofs.clone(), new_groth16_proofs.clone()].concat(),
+                    )
+                    .await?;
 
                 // If we don't need to finalize, and there are no new proofs, there is no work to do.
                 if !finalize && new_proofs.is_empty() {
@@ -474,8 +476,9 @@ impl AggregatorService {
                     return Ok(());
                 }
 
-                let aggregation_proof_id =
-                    self.aggregate_proofs(batch_id, &batch, &new_proofs, finalize).await?;
+                let aggregation_proof_id = self
+                    .aggregate_proofs(batch_id, &batch, &new_proofs, &new_groth16_proofs, finalize)
+                    .await?;
                 (aggregation_proof_id, finalize)
             }
             BatchStatus::PendingCompression => {
@@ -538,7 +541,7 @@ mod tests {
         chain_monitor::ChainMonitorService,
         db::SqliteDb,
         now_timestamp,
-        provers::{encode_input, MockProver, Prover},
+        provers::{encode_input, DefaultProver, Prover},
         BatchStatus, Order, OrderStatus,
     };
     use alloy::{
@@ -549,7 +552,7 @@ mod tests {
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
-        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
     };
     use guest_assessor::{ASSESSOR_GUEST_ELF, ASSESSOR_GUEST_ID};
     use guest_set_builder::{SET_BUILDER_ELF, SET_BUILDER_ID};
@@ -565,7 +568,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -573,10 +576,10 @@ mod tests {
         let config = ConfigLock::default();
         {
             let mut config = config.load_write().unwrap();
-            config.batcher.batch_size = Some(2);
+            config.batcher.min_batch_size = Some(2);
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -614,8 +617,7 @@ mod tests {
 
         // First order
         let order_request = ProofRequest::new(
-            0,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 0),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -647,6 +649,7 @@ mod tests {
             image_id: Some(image_id_str.clone()),
             input_id: Some(input_id.clone()),
             proof_id: Some(proof_res_1.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(now_timestamp() + 100),
             client_sig: client_sig.into(),
             lock_price: Some(U256::from(min_price)),
@@ -657,8 +660,7 @@ mod tests {
 
         // Second order
         let order_request = ProofRequest::new(
-            1,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 1),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -690,6 +692,7 @@ mod tests {
             image_id: Some(image_id_str),
             input_id: Some(input_id),
             proof_id: Some(proof_res_2.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(now_timestamp() + 100),
             client_sig,
             lock_price: Some(U256::from(min_price)),
@@ -717,7 +720,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -725,10 +728,10 @@ mod tests {
         let config = ConfigLock::default();
         {
             let mut config = config.load_write().unwrap();
-            config.batcher.batch_size = Some(2);
+            config.batcher.min_batch_size = Some(2);
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -766,8 +769,7 @@ mod tests {
 
         // First order
         let order_request = ProofRequest::new(
-            0,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 0),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -798,6 +800,7 @@ mod tests {
             image_id: Some(image_id_str.clone()),
             input_id: Some(input_id.clone()),
             proof_id: Some(proof_res_1.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(order_request.expires_at()),
             client_sig: client_sig.into(),
             lock_price: Some(U256::from(min_price)),
@@ -824,8 +827,7 @@ mod tests {
 
         // Second order
         let order_request = ProofRequest::new(
-            1,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 1),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -856,6 +858,7 @@ mod tests {
             image_id: Some(image_id_str),
             input_id: Some(input_id),
             proof_id: Some(proof_res_2.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(order_request.expires_at()),
             client_sig,
             lock_price: Some(U256::from(min_price)),
@@ -884,7 +887,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -892,11 +895,11 @@ mod tests {
         let config = ConfigLock::default();
         {
             let mut config = config.load_write().unwrap();
-            config.batcher.batch_size = Some(2);
+            config.batcher.min_batch_size = Some(2);
             config.batcher.batch_max_fees = Some("0.1".into());
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -929,8 +932,7 @@ mod tests {
 
         let min_price = 200000000000000000u64;
         let order_request = ProofRequest::new(
-            0,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 0),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -962,6 +964,7 @@ mod tests {
             image_id: Some(image_id_str.clone()),
             input_id: Some(input_id.clone()),
             proof_id: Some(proof_res.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(now_timestamp() + 100),
             client_sig: client_sig.into(),
             lock_price: Some(U256::from(min_price)),
@@ -988,7 +991,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -996,11 +999,11 @@ mod tests {
         let config = ConfigLock::default();
         {
             let mut config = config.load_write().unwrap();
-            config.batcher.batch_size = Some(2);
+            config.batcher.min_batch_size = Some(2);
             config.batcher.block_deadline_buffer_secs = 100;
         }
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -1037,8 +1040,7 @@ mod tests {
 
         let min_price = 200000000000000000u64;
         let order_request = ProofRequest::new(
-            0,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 0),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -1070,6 +1072,7 @@ mod tests {
             image_id: Some(image_id_str.clone()),
             input_id: Some(input_id.clone()),
             proof_id: Some(proof_res.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(now_timestamp() + 100),
             client_sig: client_sig.into(),
             lock_price: Some(U256::from(min_price)),
@@ -1099,7 +1102,7 @@ mod tests {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(signer.clone()))
-                .on_builtin(&anvil.endpoint())
+                .connect(&anvil.endpoint())
                 .await
                 .unwrap(),
         );
@@ -1107,14 +1110,14 @@ mod tests {
         let config = ConfigLock::default();
         {
             let mut config = config.load_write().unwrap();
-            config.batcher.batch_size = Some(10);
+            config.batcher.min_batch_size = Some(10);
             // set config such that the batch max journal size is exceeded
             // if two ECHO sized journals are included in a batch
             config.market.max_journal_bytes = 20;
             config.batcher.batch_max_journal_bytes = 30;
         }
 
-        let mock_prover = MockProver::default();
+        let mock_prover = DefaultProver::new();
 
         // Pre-prove the echo aka app guest:
         let image_id = Digest::from(ECHO_ID);
@@ -1153,8 +1156,7 @@ mod tests {
 
         let min_price = 200000000000000000u64;
         let order_request = ProofRequest::new(
-            0,
-            &customer_signer.address(),
+            RequestId::new(customer_signer.address(), 0),
             Requirements::new(
                 image_id,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -1186,6 +1188,7 @@ mod tests {
             image_id: Some(image_id_str.clone()),
             input_id: Some(input_id.clone()),
             proof_id: Some(proof_res.id),
+            compressed_proof_id: None,
             expire_timestamp: Some(now_timestamp() + 1000),
             client_sig: client_sig.into(),
             lock_price: Some(U256::from(min_price)),

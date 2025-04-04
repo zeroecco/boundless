@@ -8,7 +8,7 @@ use crate::{
     futures_retry::retry,
     provers::ProverObj,
     task::{RetryRes, RetryTask, SupervisorErr},
-    Order,
+    Order, OrderStatus,
 };
 use alloy::primitives::U256;
 use anyhow::{Context, Result};
@@ -25,12 +25,39 @@ impl ProvingService {
         Ok(Self { db, prover, config })
     }
 
-    pub async fn monitor_proof(&self, order_id: U256, proof_id: String) -> Result<()> {
-        let proof_res =
-            self.prover.wait_for_stark(&proof_id).await.context("Monitoring proof failed")?;
+    pub async fn monitor_proof(
+        &self,
+        order_id: U256,
+        stark_proof_id: &str,
+        is_groth16: bool,
+        snark_proof_id: Option<String>,
+    ) -> Result<()> {
+        let proof_res = self
+            .prover
+            .wait_for_stark(stark_proof_id)
+            .await
+            .context("Monitoring proof (stark) failed")?;
+
+        if is_groth16 && snark_proof_id.is_none() {
+            let compressed_proof_id =
+                self.prover.compress(stark_proof_id).await.context("Failed to compress proof")?;
+            self.db
+                .set_order_compressed_proof_id(order_id, &compressed_proof_id)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to set order {order_id:x} compressed proof id: {compressed_proof_id}"
+                    )
+                })?;
+        };
+
+        let status = match is_groth16 {
+            false => OrderStatus::PendingAgg,
+            true => OrderStatus::SkipAggregation,
+        };
 
         self.db
-            .set_aggregation_status(order_id)
+            .set_aggregation_status(order_id, status)
             .await
             .with_context(|| format!("Failed to set the DB record to aggregation {order_id:x}"))?;
 
@@ -72,12 +99,14 @@ impl ProvingService {
             .await
             .context("Failed to prove customer proof STARK order")?;
 
+        tracing::debug!("Order {order_id:x} proof id: {proof_id}");
+
         self.db
             .set_order_proof_id(order_id, &proof_id)
             .await
             .with_context(|| format!("Failed to set order {order_id:x} proof id: {}", proof_id))?;
 
-        self.monitor_proof(order_id, proof_id).await?;
+        self.monitor_proof(order_id, &proof_id, order.is_groth16(), None).await?;
 
         Ok(())
     }
@@ -93,7 +122,7 @@ impl ProvingService {
         tracing::info!("Found {} proofs currently proving", current_proofs.len());
         for (order_id, order) in current_proofs {
             let prove_serv = self.clone();
-            let Some(proof_id) = order.proof_id else {
+            let Some(proof_id) = order.proof_id.clone() else {
                 tracing::error!("Order in status Proving missing proof_id: {order_id:x}");
                 if let Err(inner_err) = prove_serv
                     .db
@@ -104,11 +133,16 @@ impl ProvingService {
                 }
                 continue;
             };
+            let is_groth16 = order.is_groth16();
+            let compressed_proof_id = order.compressed_proof_id;
             // TODO: Manage these tasks in a joinset?
             // They should all be fail-able without triggering a larger failure so it should be
             // fine.
             tokio::spawn(async move {
-                match prove_serv.monitor_proof(order_id, proof_id).await {
+                match prove_serv
+                    .monitor_proof(order_id, &proof_id, is_groth16, compressed_proof_id)
+                    .await
+                {
                     Ok(_) => tracing::info!("Successfully complete order proof {order_id:x}"),
                     Err(err) => {
                         tracing::error!("FATAL: Order failed to prove: {err:?}");
@@ -205,7 +239,7 @@ mod tests {
     use crate::{
         db::SqliteDb,
         now_timestamp,
-        provers::{encode_input, MockProver},
+        provers::{encode_input, DefaultProver},
         OrderStatus,
     };
     use alloy::primitives::{Bytes, U256};
@@ -223,7 +257,7 @@ mod tests {
     async fn prove_order() {
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
         let config = ConfigLock::default();
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         let image_id = Digest::from(ECHO_ID).to_string();
         prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
@@ -267,6 +301,7 @@ mod tests {
             image_id: Some(image_id),
             input_id: Some(input_id),
             proof_id: None,
+            compressed_proof_id: None,
             expire_timestamp: None,
             client_sig: Bytes::new(),
             lock_price: None,
@@ -287,7 +322,7 @@ mod tests {
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
         let config = ConfigLock::default();
 
-        let prover: ProverObj = Arc::new(MockProver::default());
+        let prover: ProverObj = Arc::new(DefaultProver::new());
 
         let image_id = Digest::from(ECHO_ID).to_string();
         prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
@@ -334,6 +369,7 @@ mod tests {
             image_id: Some(image_id),
             input_id: Some(input_id),
             proof_id: Some(proof_id.clone()),
+            compressed_proof_id: None,
             expire_timestamp: None,
             client_sig: Bytes::new(),
             lock_price: None,
@@ -345,12 +381,12 @@ mod tests {
         proving_service.find_and_monitor_proofs().await.unwrap();
 
         // Sleep long enough for the tokio tasks to pickup and complete the order in the DB
-        for _ in 0..4 {
+        loop {
             let db_order = db.get_order(order_id).await.unwrap().unwrap();
             if db_order.status != OrderStatus::Proving {
                 break;
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
         }
 
         let order = db.get_order(order_id).await.unwrap().unwrap();

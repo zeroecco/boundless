@@ -15,9 +15,10 @@ use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, InputType, ProofRequest},
     input::GuestEnv,
     order_stream_client::Client as OrderStreamClient,
+    selector::is_groth16_selector,
 };
 use chrono::{serde::ts_seconds, DateTime, Utc};
-use clap::Parser;
+use clap::{ArgAction, Parser};
 pub use config::Config;
 use config::ConfigWatcher;
 use db::{DbObj, SqliteDb};
@@ -119,6 +120,16 @@ pub struct Args {
     /// From the `RetryBackoffLayer` of Alloy
     #[clap(long, default_value_t = 100)]
     pub rpc_retry_cu: u64,
+
+    /// Set to skip caching of images
+    ///
+    /// By default images are cached locally in cache_dir. Set this flag to redownload them every time
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub nocache: bool,
+
+    /// Cache directory for storing downloaded images and inputs
+    #[clap(long, default_value = "/tmp/broker_cache", conflicts_with = "nocache")]
+    pub cache_dir: Option<PathBuf>,
 }
 
 /// Status of a order as it moves through the lifecycle
@@ -138,6 +149,8 @@ enum OrderStatus {
     PendingAgg,
     /// Order is in the process of Aggregation
     Aggregating,
+    /// Unaggregated order is ready for submission
+    SkipAggregation,
     /// Pending on chain finalization
     PendingSubmission,
     /// Order has been completed
@@ -171,6 +184,10 @@ struct Order {
     ///
     /// Populated after proof completion
     proof_id: Option<String>,
+    /// Compressed proof Id
+    ///
+    /// Populated after proof completion. if the proof is compressed
+    compressed_proof_id: Option<String>,
     /// UNIX timestamp the order expires at
     ///
     /// Populated during order picking
@@ -193,11 +210,15 @@ impl Order {
             image_id: None,
             input_id: None,
             proof_id: None,
+            compressed_proof_id: None,
             expire_timestamp: None,
             client_sig,
             lock_price: None,
             error_msg: None,
         }
+    }
+    pub fn is_groth16(&self) -> bool {
+        is_groth16_selector(self.request.requirements.selector)
     }
 }
 
@@ -231,7 +252,7 @@ struct Batch {
     /// Orders from the market that are included in this batch.
     pub orders: Vec<U256>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub assessor_claim_digest: Option<Digest>,
+    pub assessor_proof_id: Option<String>,
     /// Tuple of the current aggregation state, as committed by the set builder guest, and the
     /// proof ID for the receipt that attests to the correctness of this state.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -290,11 +311,13 @@ where
             let (image_id, image_url_str) =
                 boundless_market.image_info().await.context("Failed to get contract image_info")?;
             let image_uri = UriHandlerBuilder::new(&image_url_str)
+                .set_cache_dir(&self.args.cache_dir)
                 .set_max_size(max_file_size)
                 .build()
                 .context("Failed to parse image URI")?;
             tracing::debug!("Downloading assessor image from: {image_uri}");
-            let image_data = image_uri.fetch().await.context("Failed to download sot image")?;
+            let image_data =
+                image_uri.fetch().await.context("Failed to download assessor image")?;
 
             Ok((Digest::from_bytes(image_id.0), image_data))
         }
@@ -324,11 +347,13 @@ where
                 .await
                 .context("Failed to get contract image_info")?;
             let image_uri = UriHandlerBuilder::new(&image_url_str)
+                .set_cache_dir(&self.args.cache_dir)
                 .set_max_size(max_file_size)
                 .build()
                 .context("Failed to parse image URI")?;
             tracing::debug!("Downloading aggregation-set image from: {image_uri}");
-            let image_data = image_uri.fetch().await.context("Failed to download sot image")?;
+            let image_data =
+                image_uri.fetch().await.context("Failed to download aggregation-set image")?;
 
             Ok((Digest::from_bytes(image_id.0), image_data))
         }
@@ -400,11 +425,7 @@ where
         }
 
         // Construct the prover object interface
-        let prover: provers::ProverObj = if risc0_zkvm::is_dev_mode() {
-            tracing::warn!("WARNING: Running the Broker in dev mode does not generate valid receipts. \
-            Receipts generated from this process are invalid and should never be used in production.");
-            Arc::new(provers::MockProver::default())
-        } else if let (Some(bonsai_api_key), Some(bonsai_api_url)) =
+        let prover: provers::ProverObj = if let (Some(bonsai_api_key), Some(bonsai_api_url)) =
             (self.args.bonsai_api_key.as_ref(), self.args.bonsai_api_url.as_ref())
         {
             tracing::info!("Configured to run with Bonsai backend");
@@ -427,10 +448,8 @@ where
                 )
                 .context("Failed to initialize Bento client")?,
             )
-        } else if cfg!(test) {
-            Arc::new(provers::MockProver::default())
         } else {
-            anyhow::bail!("Failed to select a proving backend");
+            Arc::new(provers::DefaultProver::new())
         };
 
         // Spin up the order picker to pre-flight and find orders to lock
@@ -637,7 +656,7 @@ async fn upload_input_uri(
     })
 }
 
-/// A very small utility function to get the current unix timestamp.
+/// A very small utility function to get the current unix timestamp in seconds.
 // TODO(#379): Avoid drift relative to the chain's timestamps.
 pub(crate) fn now_timestamp() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
@@ -672,7 +691,7 @@ pub mod test_utils {
             config.prover.set_builder_guest_path = Some(SET_BUILDER_PATH.into());
             config.prover.assessor_set_guest_path = Some(ASSESSOR_GUEST_PATH.into());
             config.market.mcycle_price = "0.00001".into();
-            config.batcher.batch_size = Some(1);
+            config.batcher.min_batch_size = Some(1);
             config.write(config_file.path()).await.unwrap();
 
             let args = Args {
@@ -690,6 +709,8 @@ pub mod test_utils {
                 rpc_retry_max: 0,
                 rpc_retry_backoff: 200,
                 rpc_retry_cu: 1000,
+                nocache: true,
+                cache_dir: None,
             };
             Self { args, provider: ctx.prover_provider.clone(), config_file }
         }

@@ -25,8 +25,16 @@ const EXCLUDE_CONTRACTS: [&str; 2] = [
 ];
 
 // Contracts to copy bytecode for. Used for deploying contracts in tests.
-const ARTIFACT_TARGET_CONTRACTS: [&str; 5] =
-    ["BoundlessMarket", "HitPoints", "RiscZeroMockVerifier", "RiscZeroSetVerifier", "ERC1967Proxy"];
+const ARTIFACT_TARGET_CONTRACTS: [&str; 8] = [
+    "BoundlessMarket",
+    "HitPoints",
+    "RiscZeroMockVerifier",
+    "RiscZeroSetVerifier",
+    "ERC1967Proxy",
+    "RiscZeroVerifierRouter",
+    "RiscZeroGroth16Verifier",
+    "MockCallback",
+];
 
 // Output filename for the generated types. The file is placed in the build directory.
 const BOUNDLESS_MARKET_RS: &str = "boundless_market_generated.rs";
@@ -266,6 +274,17 @@ fn get_interfaces(contract: &str) -> &str {
         }
         "ERC1967Proxy" => "constructor(address implementation, bytes memory data) payable {}",
         "HitPoints" => "constructor(address initialOwner) payable {}",
+        "RiscZeroVerifierRouter" => {
+            r#"constructor(address owner) {}
+            function addVerifier(bytes4 selector, address verifier) {}"#
+        }
+        "RiscZeroGroth16Verifier" => {
+            r#"constructor(bytes32 control_root, bytes32 bn254_control_id) {}"#
+        }
+        "MockCallback" => {
+            r#"constructor(address verifier, address boundlessMarket, bytes32 imageId, uint256 _targetGas) {}
+            function getCallCount() external view returns (uint256) {}"#
+        }
         _ => "",
     }
 }

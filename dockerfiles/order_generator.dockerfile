@@ -1,16 +1,21 @@
 # Build stage
-FROM rust:1.81.0-bookworm AS init
+FROM rust:1.85.0-bookworm AS init
 
 RUN apt-get -qq update && \
     apt-get install -y -q clang
 
 SHELL ["/bin/bash", "-c"]
 
-# TODO: Update once rzup 0.3 is released. Current live version does not install due to symlink issue.
-# Full install of rzup to get r0vm
-RUN curl -L https://risc0-artifacts.s3.us-west-2.amazonaws.com/rzup/test/install | ENV_PATH=test bash && \ 
-    PATH="$PATH:/root/.risc0/bin" rzup install
-ENV RISC0_SERVER_PATH=/usr/local/cargo/bin/r0vm
+# Github token can be provided as a secret with the name githubTokenSecret. Useful
+# for shared build environments where Github rate limiting is an issue.
+RUN --mount=type=secret,id=githubTokenSecret,target=/run/secrets/githubTokenSecret \
+    if [ -f /run/secrets/githubTokenSecret ]; then \
+        GITHUB_TOKEN=$(cat /run/secrets/githubTokenSecret) curl -L https://risczero.com/install | bash && \
+        GITHUB_TOKEN=$(cat /run/secrets/githubTokenSecret) PATH="$PATH:/root/.risc0/bin" rzup install; \
+    else \
+        curl -L https://risczero.com/install | bash && \
+        PATH="$PATH:/root/.risc0/bin" rzup install; \
+    fi
 
 FROM init AS builder
 

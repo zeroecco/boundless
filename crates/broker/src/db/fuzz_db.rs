@@ -22,7 +22,7 @@ use crate::{db::AggregationOrder, AggregationState, Order, OrderStatus};
 use super::{BrokerDb, SqliteDb};
 
 use boundless_market::contracts::{
-    Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+    Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
 };
 
 // Add new state tracking structure
@@ -87,8 +87,7 @@ fn generate_test_order(id: u32) -> Order {
         updated_at: Utc::now(),
         target_timestamp: None,
         request: ProofRequest::new(
-            id,
-            &Address::ZERO,
+            RequestId::new(Address::ZERO, id),
             Requirements::new(
                 Digest::ZERO,
                 Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
@@ -108,6 +107,7 @@ fn generate_test_order(id: u32) -> Order {
         image_id: None,
         input_id: None,
         proof_id: Some(format!("proof_{}", id)),
+        compressed_proof_id: Some(format!("compressed_proof_{}", id)),
         expire_timestamp: Some(1000),
         client_sig: vec![].into(),
         lock_price: Some(U256::from(10)),
@@ -211,7 +211,7 @@ proptest! {
                                         db.set_image_input_ids(U256::from(id), &image_id, &input_id).await.unwrap();
                                     },
                                     ExistingOrderOperation::SetAggregationStatus => {
-                                        db.set_aggregation_status(U256::from(id)).await.unwrap();
+                                        db.set_aggregation_status(U256::from(id), OrderStatus::PendingAgg).await.unwrap();
                                     },
                                     ExistingOrderOperation::GetSubmissionOrder => {
                                         let order = db.get_order(U256::from(id)).await.unwrap();
@@ -285,7 +285,7 @@ proptest! {
                                                 batch_id,
                                                 &agg_state,
                                                 &orders,
-                                                Some(Digest::from([2u32; 8])),
+                                                Some("proof_id".to_string()),
                                             ).await.unwrap();
                                         }
                                     },
