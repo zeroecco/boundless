@@ -2,7 +2,7 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import { BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN, BOUNDLESS_STAGING_DEPLOYMENT_ROLE_ARN } from "../accountConstants";
 
-interface ProverPipelineArgs {
+interface OrderGeneratorPipelineArgs {
   connection: aws.codestarconnections.Connection;
   artifactBucket: aws.s3.Bucket;
   role: aws.iam.Role;
@@ -12,7 +12,7 @@ interface ProverPipelineArgs {
 }
 
 // The name of the app that we are deploying. Must match the name of the directory in the infra directory.
-const APP_NAME = "prover";
+const APP_NAME = "order-generator";
 // The branch that we should deploy from on push.
 const BRANCH_NAME = "main";
 // The buildspec for the CodeBuild project that deploys our Pulumi stacks to the staging and prod accounts.
@@ -49,8 +49,10 @@ const BUILD_SPEC = `
           - pulumi up --yes
     `;
 
-export class ProverPipeline extends pulumi.ComponentResource {
-  constructor(name: string, args: ProverPipelineArgs, opts?: pulumi.ComponentResourceOptions) {
+// A sample deployment pipeline that deploys to the staging account, then requires a manual approval before
+// deploying to prod.
+export class OrderGeneratorPipeline extends pulumi.ComponentResource {
+  constructor(name: string, args: OrderGeneratorPipelineArgs, opts?: pulumi.ComponentResourceOptions) {
     super(`boundless:pipelines:${APP_NAME}Pipeline`, name, args, opts);
 
     const { connection, artifactBucket, role, githubToken, dockerUsername, dockerToken } = args;
