@@ -27,9 +27,6 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let prover = agent.prover.as_ref().context("Missing prover from join task")?;
     let prover_clone = Rc::clone(prover);
 
-    // Get Redis pool for connections
-    let pool = agent.redis_pool.clone();
-
     tracing::info!(
         "Processing join {job_id} - {} + {} -> {}",
         request.left,
@@ -41,7 +38,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let (left_receipt, right_receipt) = tokio::try_join!(
         async {
             // Get left receipt and process it
-            let mut conn = redis::get_connection(&pool).await?;
+            let mut conn = agent.get_redis_connection().await?;
             let bytes = conn.get::<_, Vec<u8>>(&left_path_key).await?;
 
             // Process left receipt - lift if needed
@@ -60,7 +57,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         },
         async {
             // Get right receipt and process it
-            let mut conn = redis::get_connection(&pool).await?;
+            let mut conn = agent.get_redis_connection().await?;
             let bytes = conn.get::<_, Vec<u8>>(&right_path_key).await?;
 
             // Process right receipt - lift if needed
@@ -96,6 +93,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let job_id_clone = *job_id;
     let left_idx = request.left;
     let ttl = agent.args.redis_ttl;
+    let redis_pool = agent.redis_pool.clone();
 
     // Use spawn_local if available to reduce thread creation overhead
     tokio::task::spawn(async move {
@@ -109,7 +107,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         };
 
         // Store result
-        let mut conn = match redis::get_connection(&pool).await {
+        let mut conn = match redis::get_connection(&redis_pool).await {
             Ok(conn) => conn,
             Err(e) => {
                 tracing::error!("Failed to get Redis connection for storage: {}", e);

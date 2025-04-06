@@ -21,7 +21,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
     let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}");
     let root_receipt_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{max_idx}");
 
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.get_redis_connection().await?;
     let receipt: Vec<u8> = conn.get::<_, Vec<u8>>(&root_receipt_key).await.with_context(|| {
         format!("segment data not found for root receipt key: {root_receipt_key}")
     })?;
@@ -61,10 +61,6 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
 
                     tracing::info!("Resolving {} assumption(s)", assumptions.len());
                     assumptions_len = Some(assumptions.len().try_into()?);
-
-                    // Create a pool for Redis connections
-                    let pool = agent.redis_pool.clone();
-
                     // Handle union receipt if present
                     if let Some(idx) = request.union_max_idx {
                         let union_receipt_key = format!("{job_prefix}:{RECEIPT_PATH}:{idx}");
@@ -110,7 +106,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                             let assumption_key = format!("{receipts_key}:{assumption_claim}");
 
                             // Fetch assumption receipt
-                            let mut task_conn = redis::get_connection(&pool).await?;
+                            let mut task_conn = agent.get_redis_connection().await?;
                             let bytes =
                                 task_conn.get::<_, Vec<u8>>(&assumption_key).await.with_context(
                                     || format!("Receipt not found for key: {assumption_key}"),
@@ -140,7 +136,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                             let assumption_key = format!("{receipts_key}:{assumption_claim}");
 
                             // Fetch assumption receipt
-                            let mut task_conn = redis::get_connection(&pool).await?;
+                            let mut task_conn = agent.get_redis_connection().await?;
                             let bytes =
                                 task_conn.get::<_, Vec<u8>>(&assumption_key).await.with_context(
                                     || format!("Receipt not found for key: {assumption_key}"),

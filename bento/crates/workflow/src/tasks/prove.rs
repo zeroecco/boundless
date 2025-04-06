@@ -14,7 +14,7 @@ use workflow_common::ProveReq;
 /// Run a prove request
 pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
     let index = request.index;
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.get_redis_connection().await?;
     let job_prefix = format!("job:{job_id}");
     let segment_key = format!("{job_prefix}:{SEGMENTS_PATH}:{index}");
 

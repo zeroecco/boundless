@@ -22,14 +22,11 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let right_receipt_key = format!("{receipts_prefix}:{}", request.right);
     let output_key = format!("{receipts_prefix}:{}", request.idx);
 
-    // Get Redis pool for connections
-    let pool = agent.redis_pool.clone();
-
     // Process both receipts concurrently with try_join
     let (left_receipt, right_receipt) = tokio::try_join!(
         async {
             // Process left receipt
-            let mut conn = redis::get_connection(&pool).await?;
+            let mut conn = agent.get_redis_connection().await?;
             let bytes = conn
                 .get::<_, Vec<u8>>(&left_receipt_key)
                 .await
@@ -39,7 +36,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         },
         async {
             // Process right receipt
-            let mut conn = redis::get_connection(&pool).await?;
+            let mut conn = agent.get_redis_connection().await?;
             let bytes = conn
                 .get::<_, Vec<u8>>(&right_receipt_key)
                 .await
@@ -60,7 +57,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         .into_unknown();
 
     // Serialize the result and store in Redis in a background task
-    let pool_storage = pool.clone();
+    let pool_storage = agent.redis_pool.clone();
     let ttl = agent.args.redis_ttl;
     let job_id_clone = *job_id;
     let left_idx = request.left;

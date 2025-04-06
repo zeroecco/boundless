@@ -20,7 +20,7 @@ use workflow_common::s3::{RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR};
 /// job path
 pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Result<()> {
     let max_id = request.max_idx;
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.get_redis_connection().await?;
 
     let job_prefix = format!("job:{job_id}");
     let root_receipt_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{max_id}");

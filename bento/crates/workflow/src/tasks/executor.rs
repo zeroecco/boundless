@@ -281,7 +281,7 @@ enum SenderType {
 /// Writes out all segments async using tokio tasks then waits for all
 /// tasks to complete before exiting.
 pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Result<ExecutorResp> {
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.get_redis_connection().await?;
     let job_prefix = format!("job:{job_id}");
 
     // Fetch ELF binary data
@@ -374,7 +374,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let (task_tx, mut task_rx) = tokio::sync::mpsc::channel::<SenderType>(TASK_QUEUE_SIZE);
     let task_tx_clone = task_tx.clone();
 
-    let mut writer_conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut writer_conn = agent.get_redis_connection().await?;
     let segments_prefix_clone = segments_prefix.clone();
     let redis_ttl = agent.args.redis_ttl;
 
@@ -457,7 +457,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
 
     // Write keccak data to redis + schedule proving
     let coproc = Coprocessor::new(task_tx_clone.clone());
-    let mut coproc_redis = redis::get_connection(&agent.redis_pool).await?;
+    let mut coproc_redis = agent.get_redis_connection().await?;
     let coproc_prefix = format!("{job_prefix}:{COPROC_CB_PATH}");
     let mut guest_fault = false;
 

@@ -30,7 +30,7 @@ pub async fn keccak(
     task_id: &str,
     request: &KeccakReq,
 ) -> Result<()> {
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.get_redis_connection().await?;
 
     let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
     let keccak_input: Vec<u8> = conn

@@ -158,6 +158,14 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Get a Redis connection from the pool
+    ///
+    /// Wrapper around the Redis connection pool to maintain compatibility
+    /// with existing code while making it easy to optimize in the future
+    pub async fn get_redis_connection(&self) -> Result<deadpool_redis::Connection> {
+        redis::get_connection(&self.redis_pool).await
+    }
+
     /// Initialize the [Agent] from the [Args] config params
     ///
     /// Starts any connection pools and establishes the agents configs
