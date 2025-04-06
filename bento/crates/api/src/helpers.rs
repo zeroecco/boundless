@@ -50,7 +50,7 @@ pub async fn get_or_create_streams(
             .context("Failed to create taskdb gpu prove stream")?
     };
 
-    let gpu_coproc_stream = if let Some(res) =
+    let gpu_keecak_stream = if let Some(res) =
         taskdb::get_stream(pool, user_id, KECCAK_RECEIPT_PATH)
             .await
             .context("Failed to get gpu prove stream")?
@@ -60,7 +60,7 @@ pub async fn get_or_create_streams(
         tracing::info!("Creating a new gpu stream for key: {user_id}");
         taskdb::create_stream(pool, KECCAK_RECEIPT_PATH, 0, 1.0, user_id)
             .await
-            .context("Failed to create taskdb gpu coproc stream")?
+            .context("Failed to create taskdb gpu keccak stream")?
     };
 
     let gpu_join_stream = if let Some(res) = taskdb::get_stream(pool, user_id, JOIN_WORK_TYPE)
@@ -103,7 +103,7 @@ pub async fn get_or_create_streams(
         aux_stream,
         exec_stream,
         gpu_prove_stream,
-        gpu_coproc_stream,
+        gpu_keecak_stream,
         gpu_join_stream,
         snark_stream,
         union_stream,
