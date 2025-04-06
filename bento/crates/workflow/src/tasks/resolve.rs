@@ -76,7 +76,10 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                         )
                         .context("Failed to deserialize to SuccinctReceipt<Unknown> type")?;
 
-                        let union_claim = format!("{:?}", union_receipt.claim);
+                        // Extract the actual digest value from the debug format
+                        let claim_debug = format!("{:?}", union_receipt.claim);
+                        // Remove the "Digest(" prefix and ")" suffix to get just the hex value
+                        let union_claim = claim_debug.trim_start_matches("Digest(").trim_end_matches(")");
                         tracing::info!("Resolving union claim: {union_claim}");
 
                         // Resolve union receipt first
@@ -92,7 +95,10 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
 
                         // Process remaining assumptions
                         for assumption in assumptions {
-                            let assumption_claim = format!("{:?}", assumption.as_value()?.claim);
+                            // Extract the actual digest value from the debug format
+                            let claim_debug = format!("{:?}", assumption.as_value()?.claim);
+                            // Remove the "Digest(" prefix and ")" suffix to get just the hex value
+                            let assumption_claim = claim_debug.trim_start_matches("Digest(").trim_end_matches(")");
 
                             // Skip if already processed as union
                             if assumption_claim == skip_claim {
@@ -131,7 +137,11 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                     } else {
                         // Process all assumptions without union optimization
                         for assumption in assumptions {
-                            let assumption_claim = format!("{:?}", assumption.as_value()?.claim);
+                            // Extract the actual digest value from the debug format
+                            let claim_debug = format!("{:?}", assumption.as_value()?.claim);
+                            // Remove the "Digest(" prefix and ")" suffix to get just the hex value
+                            let assumption_claim = claim_debug.trim_start_matches("Digest(").trim_end_matches(")");
+
                             tracing::info!("Processing assumption: {assumption_claim}");
                             let assumption_key = format!("{receipts_key}:{assumption_claim}");
 
