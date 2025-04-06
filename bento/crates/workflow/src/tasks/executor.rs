@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::{
     redis::{self},
-    tasks::{read_image_id, serialize_obj, COPROC_CB_PATH, RECEIPT_PATH, SEGMENTS_PATH},
+    tasks::{read_image_id, serialize_obj, RECEIPT_PATH, SEGMENTS_PATH, KECCAK_PATH},
     Agent, Args, TaskType,
 };
 use anyhow::{bail, Context, Result};
@@ -489,7 +489,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let coproc = Coprocessor::new(task_tx_clone.clone());
     // Reuse the existing Redis connection
     let mut coproc_redis = agent.get_redis_connection().await?;
-    let coproc_prefix = format!("{job_prefix}:{COPROC_CB_PATH}");
+    let keccak_prefix = format!("{job_prefix}:{KECCAK_PATH}");
     let mut guest_fault = false;
 
     // Generate tasks
@@ -524,7 +524,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                     }
                 }
                 SenderType::Keccak(mut keccak_req) => {
-                    let redis_key = format!("{coproc_prefix}:{}", keccak_req.claim_digest);
+                    let redis_key = format!("{keccak_prefix}:{}", keccak_req.claim_digest);
                     redis::set_key_with_expiry(
                         &mut coproc_redis,
                         &redis_key,

@@ -4,13 +4,13 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{serialize_obj, COPROC_CB_PATH, RECEIPT_PATH},
+    tasks::{serialize_obj, KECCAK_PATH},
     Agent,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use risc0_zkvm::ProveKeccakRequest;
 use uuid::Uuid;
-use workflow_common::KeccakReq;
+use workflow_common::{KeccakReq, KECCAK_RECEIPT_PATH};
 
 fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
     let chunks = input.chunks_exact(std::mem::size_of::<[u64; 25]>());
@@ -35,8 +35,8 @@ pub async fn keccak(
 
     // Build keys
     let job_prefix = format!("job:{job_id}");
-    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}:{task_id}");
-    let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
+    let receipts_key = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{task_id}");
+    let keccak_input_path = format!("job:{job_id}:{}:{}", KECCAK_PATH, request.claim_digest);
 
     // Fetch keccak input
     let keccak_input: Vec<u8> = conn
