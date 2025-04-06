@@ -38,8 +38,8 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     );
 
     // Fetch both receipts in parallel with a single connection using mget
-    let receipts: Vec<Vec<u8>> = conn.mget(&[&left_path_key, &right_path_key]).await
-        .context("Failed to fetch receipts")?;
+    let receipts: Vec<Vec<u8>> =
+        conn.mget(&[&left_path_key, &right_path_key]).await.context("Failed to fetch receipts")?;
 
     let left_bytes = &receipts[0];
     let right_bytes = &receipts[1];

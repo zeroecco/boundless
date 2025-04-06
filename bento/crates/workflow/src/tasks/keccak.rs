@@ -97,7 +97,9 @@ pub async fn keccak(
             &receipts_key_clone,
             keccak_receipt_bytes,
             Some(ttl),
-        ).await {
+        )
+        .await
+        {
             tracing::error!("Failed to write keccak receipt to Redis: {}", e);
             return;
         }

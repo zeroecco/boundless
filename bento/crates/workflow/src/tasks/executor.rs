@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::{
     redis::{self},
-    tasks::{read_image_id, serialize_obj, RECEIPT_PATH, SEGMENTS_PATH, KECCAK_PATH},
+    tasks::{read_image_id, serialize_obj, KECCAK_PATH, RECEIPT_PATH, SEGMENTS_PATH},
     Agent, Args, TaskType,
 };
 use anyhow::{bail, Context, Result};
@@ -320,7 +320,10 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let mut receipt_bytes_results = Vec::with_capacity(request.assumptions.len());
     for receipt_id in &request.assumptions {
         let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{receipt_id}.bincode");
-        let bytes = agent.s3_client.read_buf_from_s3(&receipt_key).await
+        let bytes = agent
+            .s3_client
+            .read_buf_from_s3(&receipt_key)
+            .await
             .context("Failed to download receipt from obj store")?;
         receipt_bytes_results.push(bytes);
     }
@@ -361,14 +364,9 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     // Store all receipts in Redis with a single connection
     for (i, key) in receipt_keys.iter().enumerate() {
         let (value, ttl) = &receipt_values[i];
-        redis::set_key_with_expiry(
-            &mut conn,
-            key,
-            value.clone(),
-            Some(*ttl),
-        )
-        .await
-        .context("Failed to put assumption claim in redis")?;
+        redis::set_key_with_expiry(&mut conn, key, value.clone(), Some(*ttl))
+            .await
+            .context("Failed to put assumption claim in redis")?;
     }
 
     // Set the exec limit in 1 million cycle increments
@@ -414,14 +412,9 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                 }
             };
 
-            redis::set_key_with_expiry(
-                &mut conn,
-                &segment_key,
-                segment_vec,
-                Some(redis_ttl),
-            )
-            .await
-            .expect("Failed to set key with expiry");
+            redis::set_key_with_expiry(&mut conn, &segment_key, segment_vec, Some(redis_ttl))
+                .await
+                .expect("Failed to set key with expiry");
 
             tracing::debug!("Completed write of segment {index}");
 
