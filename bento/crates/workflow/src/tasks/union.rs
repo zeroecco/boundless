@@ -4,12 +4,12 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj, RECEIPT_PATH},
+    tasks::{deserialize_obj, serialize_obj},
     Agent,
 };
 use anyhow::{Context, Result};
 use uuid::Uuid;
-use workflow_common::UnionReq;
+use workflow_common::{UnionReq, KECCAK_RECEIPT_PATH};
 
 /// Run the union operation
 pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<()> {
@@ -17,7 +17,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
 
     // Setup redis keys - read from the RECEIPT_PATH where keccak stores its output
     let job_prefix = format!("job:{job_id}");
-    let receipts_prefix = format!("{job_prefix}:{RECEIPT_PATH}");
+    let receipts_prefix = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}");
     let left_receipt_key = format!("{receipts_prefix}:{}", request.left);
     let right_receipt_key = format!("{receipts_prefix}:{}", request.right);
     let output_key = format!("{receipts_prefix}:{}", request.idx);
