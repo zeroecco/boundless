@@ -22,29 +22,24 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let right_receipt_key = format!("{receipts_prefix}:{}", request.right);
     let output_key = format!("{receipts_prefix}:{}", request.idx);
 
-    // Process both receipts concurrently with try_join
-    let (left_receipt, right_receipt) = tokio::try_join!(
-        async {
-            // Process left receipt
-            let mut conn = agent.get_redis_connection().await?;
-            let bytes = conn
-                .get::<_, Vec<u8>>(&left_receipt_key)
-                .await
-                .with_context(|| format!("Left receipt not found for key: {left_receipt_key}"))?;
+    // Get a single Redis connection for reuse
+    let mut conn = agent.get_redis_connection().await?;
 
-            deserialize_obj(&bytes).context("Failed to deserialize left receipt")
-        },
-        async {
-            // Process right receipt
-            let mut conn = agent.get_redis_connection().await?;
-            let bytes = conn
-                .get::<_, Vec<u8>>(&right_receipt_key)
-                .await
-                .with_context(|| format!("Right receipt not found for key: {right_receipt_key}"))?;
+    // Fetch both receipts in a single batch operation
+    tracing::info!("Batch fetching receipts");
+    let receipts: Vec<Vec<u8>> = conn.mget(&[&left_receipt_key, &right_receipt_key]).await
+        .with_context(|| "Failed to fetch receipts")?;
 
-            deserialize_obj(&bytes).context("Failed to deserialize right receipt")
-        }
-    )?;
+    let left_bytes = &receipts[0];
+    let right_bytes = &receipts[1];
+
+    // Deserialize both receipts
+    tracing::info!("Deserializing receipts");
+    let left_receipt = deserialize_obj(left_bytes)
+        .context("Failed to deserialize left receipt")?;
+
+    let right_receipt = deserialize_obj(right_bytes)
+        .context("Failed to deserialize right receipt")?;
 
     // Run union
     tracing::info!("Union {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
@@ -61,11 +56,11 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let ttl = agent.args.redis_ttl;
     let job_id_clone = *job_id;
     let left_idx = request.left;
+    let output_key_clone = output_key.clone();
 
     tokio::task::spawn(async move {
         // Serialize in a blocking task
-        let union_result = match tokio::task::spawn_blocking(move || serialize_obj(&unioned)).await
-        {
+        let union_result = match tokio::task::spawn_blocking(move || serialize_obj(&unioned)).await {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
                 tracing::error!("Failed to serialize union receipt: {}", e);
@@ -81,7 +76,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         match redis::get_connection(&pool_storage).await {
             Ok(mut conn) => {
                 if let Err(e) =
-                    redis::set_key_with_expiry(&mut conn, &output_key, union_result, Some(ttl))
+                    redis::set_key_with_expiry(&mut conn, &output_key_clone, union_result, Some(ttl))
                         .await
                 {
                     tracing::error!("Failed to store union receipt: {}", e);

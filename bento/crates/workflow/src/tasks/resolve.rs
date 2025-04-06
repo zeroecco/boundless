@@ -76,11 +76,8 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                         )
                         .context("Failed to deserialize to SuccinctReceipt<Unknown> type")?;
 
-                        // Extract the actual digest value from the debug format
-                        let claim_debug = format!("{:?}", union_receipt.claim);
-                        // Remove the "Digest(" prefix and ")" suffix to get just the hex value
-                        let union_claim = claim_debug.trim_start_matches("Digest(").trim_end_matches(")");
-                        tracing::info!("Resolving union claim: {union_claim}");
+                        // Log the union claim for debugging
+                        tracing::info!("Resolving union claim: {:?}", union_receipt.claim);
 
                         // Resolve union receipt first
                         conditional_receipt = agent
@@ -90,26 +87,30 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                             .resolve(&conditional_receipt, &union_receipt)
                             .context("Failed to resolve the union receipt")?;
 
-                        // Skip this assumption if we process it later in the loop
-                        let skip_claim = union_claim;
+                        // Create a formatted string for comparison
+                        let union_claim_str = format!("{:?}", union_receipt.claim);
 
                         // Process remaining assumptions
                         for assumption in assumptions {
-                            // Extract the actual digest value from the debug format
-                            let claim_debug = format!("{:?}", assumption.as_value()?.claim);
-                            // Remove the "Digest(" prefix and ")" suffix to get just the hex value
-                            let assumption_claim = claim_debug.trim_start_matches("Digest(").trim_end_matches(")");
+                            let assumption_value = assumption.as_value()?;
+                            // Log the full claim for debugging
+                            tracing::info!("Processing assumption: {:?}", assumption_value.claim);
 
-                            // Skip if already processed as union
-                            if assumption_claim == skip_claim {
+                            // Create the assumption key in the same format used in executor.rs
+                            // In executor.rs: let assumption_claim = receipt.inner.claim()?.digest().to_string();
+                            let assumption_claim = assumption_value.claim.to_string();
+                            let assumption_key = format!("{receipts_key}:{assumption_claim}");
+
+                            // Skip if this claim matches the union we already processed
+                            // This is just a heuristic check
+                            if format!("{:?}", assumption_value.claim) == union_claim_str {
                                 tracing::info!(
                                     "Skipping already processed union claim: {assumption_claim}"
                                 );
                                 continue;
                             }
 
-                            tracing::info!("Processing assumption: {assumption_claim}");
-                            let assumption_key = format!("{receipts_key}:{assumption_claim}");
+                            tracing::info!("Processing assumption key: {assumption_key}");
 
                             // Fetch assumption receipt
                             let mut task_conn = agent.get_redis_connection().await?;
@@ -137,13 +138,16 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                     } else {
                         // Process all assumptions without union optimization
                         for assumption in assumptions {
-                            // Extract the actual digest value from the debug format
-                            let claim_debug = format!("{:?}", assumption.as_value()?.claim);
-                            // Remove the "Digest(" prefix and ")" suffix to get just the hex value
-                            let assumption_claim = claim_debug.trim_start_matches("Digest(").trim_end_matches(")");
+                            let assumption_value = assumption.as_value()?;
+                            // Log the full claim for debugging
+                            tracing::info!("Processing assumption: {:?}", assumption_value.claim);
 
-                            tracing::info!("Processing assumption: {assumption_claim}");
+                            // Create the assumption key in the same format used in executor.rs
+                            // In executor.rs: let assumption_claim = receipt.inner.claim()?.digest().to_string();
+                            let assumption_claim = assumption_value.claim.to_string();
                             let assumption_key = format!("{receipts_key}:{assumption_claim}");
+
+                            tracing::info!("Processing assumption key: {assumption_key}");
 
                             // Fetch assumption receipt
                             let mut task_conn = agent.get_redis_connection().await?;

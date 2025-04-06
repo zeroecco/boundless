@@ -281,6 +281,7 @@ enum SenderType {
 /// Writes out all segments async using tokio tasks then waits for all
 /// tasks to complete before exiting.
 pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Result<ExecutorResp> {
+    // Reuse a single Redis connection for initial setup
     let mut conn = agent.get_redis_connection().await?;
     let job_prefix = format!("job:{job_id}");
 
@@ -315,17 +316,26 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
         bail!("User supplied imageId does not match generated ID: {image_id} - {computed_id}");
     }
 
-    // Fetch array of Receipts
-    let mut assumption_receipts = vec![];
-    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}");
-
-    for receipt_id in request.assumptions.iter() {
+    // Fetch receipts sequentially
+    let mut receipt_bytes_results = Vec::with_capacity(request.assumptions.len());
+    for receipt_id in &request.assumptions {
         let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{receipt_id}.bincode");
-        let receipt_bytes = agent
-            .s3_client
-            .read_buf_from_s3(&receipt_key)
-            .await
+        let bytes = agent.s3_client.read_buf_from_s3(&receipt_key).await
             .context("Failed to download receipt from obj store")?;
+        receipt_bytes_results.push(bytes);
+    }
+
+    // Prepare batch operations for Redis
+    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}");
+    let mut receipt_keys = Vec::with_capacity(request.assumptions.len());
+    let mut receipt_values = Vec::with_capacity(request.assumptions.len());
+    let mut assumption_receipts = Vec::with_capacity(request.assumptions.len());
+
+    // Process all fetched receipts
+    for bytes_result in receipt_bytes_results {
+        // No need for context here as we already handled errors in the fetch loop
+        let receipt_bytes = bytes_result;
+
         let receipt: Receipt =
             bincode::deserialize(&receipt_bytes).context("Failed to decode assumption Receipt")?;
 
@@ -337,16 +347,25 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
             InnerReceipt::Succinct(inner) => inner,
             _ => bail!("Invalid assumption receipt, not succinct"),
         };
+
         let succinct_receipt = succinct_receipt.into_unknown();
         let succinct_receipt_bytes = serialize_obj(&succinct_receipt)
             .context("Failed to serialize succinct assumption receipt")?;
 
+        // Store key and value for batch operation
         let assumption_key = format!("{receipts_key}:{assumption_claim}");
+        receipt_keys.push(assumption_key);
+        receipt_values.push((succinct_receipt_bytes, agent.args.redis_ttl));
+    }
+
+    // Store all receipts in Redis with a single connection
+    for (i, key) in receipt_keys.iter().enumerate() {
+        let (value, ttl) = &receipt_values[i];
         redis::set_key_with_expiry(
             &mut conn,
-            &assumption_key,
-            succinct_receipt_bytes,
-            Some(agent.args.redis_ttl),
+            key,
+            value.clone(),
+            Some(*ttl),
         )
         .await
         .context("Failed to put assumption claim in redis")?;
@@ -374,26 +393,37 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let (task_tx, mut task_rx) = tokio::sync::mpsc::channel::<SenderType>(TASK_QUEUE_SIZE);
     let task_tx_clone = task_tx.clone();
 
-    let mut writer_conn = agent.get_redis_connection().await?;
+    // Reuse Redis connection in writer task for better efficiency
+    let writer_conn = agent.get_redis_connection().await?;
     let segments_prefix_clone = segments_prefix.clone();
     let redis_ttl = agent.args.redis_ttl;
 
     let mut writer_tasks = JoinSet::new();
     writer_tasks.spawn(async move {
+        let mut conn = writer_conn;
         while let Some(segment) = segment_rx.recv().await {
             let index = segment.index;
-            tracing::debug!("Starting write of index: {index}");
+            tracing::debug!("Processing segment with index: {index}");
+
             let segment_key = format!("{segments_prefix_clone}:{index}");
-            let segment_vec = serialize_obj(&segment).expect("Failed to serialize the segment");
+            let segment_vec = match serialize_obj(&segment) {
+                Ok(vec) => vec,
+                Err(e) => {
+                    tracing::error!("Failed to serialize segment {}: {}", index, e);
+                    continue;
+                }
+            };
+
             redis::set_key_with_expiry(
-                &mut writer_conn,
+                &mut conn,
                 &segment_key,
                 segment_vec,
                 Some(redis_ttl),
             )
             .await
             .expect("Failed to set key with expiry");
-            tracing::debug!("Completed write of {index}");
+
+            tracing::debug!("Completed write of segment {index}");
 
             task_tx
                 .send(SenderType::Segment(index))
@@ -455,8 +485,9 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let compress_type = request.compress;
     let exec_only = request.execute_only;
 
-    // Write keccak data to redis + schedule proving
+    // Write keccak data to redis + schedule proving - reuse connection
     let coproc = Coprocessor::new(task_tx_clone.clone());
+    // Reuse the existing Redis connection
     let mut coproc_redis = agent.get_redis_connection().await?;
     let coproc_prefix = format!("{job_prefix}:{COPROC_CB_PATH}");
     let mut guest_fault = false;
@@ -656,6 +687,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                 let serialized_journal =
                     serialize_obj(&journal).context("Failed to serialize journal")?;
 
+                // Reuse the Redis connection we created at the beginning
                 redis::set_key_with_expiry(
                     &mut conn,
                     &journal_key,

@@ -27,6 +27,9 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let prover = agent.prover.as_ref().context("Missing prover from join task")?;
     let prover_clone = Rc::clone(prover);
 
+    // Get a single Redis connection for reuse
+    let mut conn = agent.get_redis_connection().await?;
+
     tracing::info!(
         "Processing join {job_id} - {} + {} -> {}",
         request.left,
@@ -34,47 +37,40 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         request.idx
     );
 
-    // Process both receipts in parallel, using try_join! to stop on first error
-    let (left_receipt, right_receipt) = tokio::try_join!(
-        async {
-            // Get left receipt and process it
-            let mut conn = agent.get_redis_connection().await?;
-            let bytes = conn.get::<_, Vec<u8>>(&left_path_key).await?;
+    // Fetch both receipts in parallel with a single connection using mget
+    let receipts: Vec<Vec<u8>> = conn.mget(&[&left_path_key, &right_path_key]).await
+        .context("Failed to fetch receipts")?;
 
-            // Process left receipt - lift if needed
-            if let Ok(segment) = deserialize_obj::<SegmentReceipt>(&bytes) {
-                tracing::info!("Lifting left receipt {job_id} - {}", request.left);
-                let lifted = prover
-                    .lift(&segment)
-                    .with_context(|| format!("Failed to lift left segment {}", request.left))?;
-                tracing::info!("Left receipt lifted {job_id} - {}", request.left);
-                Ok(lifted)
-            } else {
-                // Try to deserialize as already-lifted SuccinctReceipt
-                deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(&bytes)
-                    .context("Failed to deserialize left receipt")
-            }
-        },
-        async {
-            // Get right receipt and process it
-            let mut conn = agent.get_redis_connection().await?;
-            let bytes = conn.get::<_, Vec<u8>>(&right_path_key).await?;
+    let left_bytes = &receipts[0];
+    let right_bytes = &receipts[1];
 
-            // Process right receipt - lift if needed
-            if let Ok(segment) = deserialize_obj::<SegmentReceipt>(&bytes) {
-                tracing::info!("Lifting right receipt {job_id} - {}", request.right);
-                let lifted = prover_clone
-                    .lift(&segment)
-                    .with_context(|| format!("Failed to lift right segment {}", request.right))?;
-                tracing::info!("Right receipt lifted {job_id} - {}", request.right);
-                Ok(lifted)
-            } else {
-                // Try to deserialize as already-lifted SuccinctReceipt
-                deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(&bytes)
-                    .context("Failed to deserialize right receipt")
-            }
-        },
-    )?;
+    // Process left receipt
+    let left_receipt = if let Ok(segment) = deserialize_obj::<SegmentReceipt>(left_bytes) {
+        tracing::info!("Lifting left receipt {job_id} - {}", request.left);
+        let lifted = prover
+            .lift(&segment)
+            .with_context(|| format!("Failed to lift left segment {}", request.left))?;
+        tracing::info!("Left receipt lifted {job_id} - {}", request.left);
+        lifted
+    } else {
+        // Try to deserialize as already-lifted SuccinctReceipt
+        deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(left_bytes)
+            .context("Failed to deserialize left receipt")?
+    };
+
+    // Process right receipt
+    let right_receipt = if let Ok(segment) = deserialize_obj::<SegmentReceipt>(right_bytes) {
+        tracing::info!("Lifting right receipt {job_id} - {}", request.right);
+        let lifted = prover_clone
+            .lift(&segment)
+            .with_context(|| format!("Failed to lift right segment {}", request.right))?;
+        tracing::info!("Right receipt lifted {job_id} - {}", request.right);
+        lifted
+    } else {
+        // Try to deserialize as already-lifted SuccinctReceipt
+        deserialize_obj::<SuccinctReceipt<ReceiptClaim>>(right_bytes)
+            .context("Failed to deserialize right receipt")?
+    };
 
     // Join the receipts
     tracing::info!(
@@ -94,6 +90,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let left_idx = request.left;
     let ttl = agent.args.redis_ttl;
     let redis_pool = agent.redis_pool.clone();
+    let output_key_clone = output_key.clone();
 
     // Use spawn_local if available to reduce thread creation overhead
     tokio::task::spawn(async move {
@@ -106,7 +103,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             }
         };
 
-        // Store result
+        // Store result - reuse the existing connection if possible
         let mut conn = match redis::get_connection(&redis_pool).await {
             Ok(conn) => conn,
             Err(e) => {
@@ -116,7 +113,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         };
 
         if let Err(e) =
-            redis::set_key_with_expiry(&mut conn, &output_key, join_result, Some(ttl)).await
+            redis::set_key_with_expiry(&mut conn, &output_key_clone, join_result, Some(ttl)).await
         {
             tracing::error!("Failed to store joined receipt: {}", e);
             return;

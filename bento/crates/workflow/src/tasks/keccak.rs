@@ -30,14 +30,21 @@ pub async fn keccak(
     task_id: &str,
     request: &KeccakReq,
 ) -> Result<()> {
+    // Get single Redis connection for reuse
     let mut conn = agent.get_redis_connection().await?;
 
+    // Build keys
+    let job_prefix = format!("job:{job_id}");
+    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}:{task_id}");
     let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
+
+    // Fetch keccak input
     let keccak_input: Vec<u8> = conn
         .get::<_, Vec<u8>>(&keccak_input_path)
         .await
         .with_context(|| format!("segment data not found for segment key: {keccak_input_path}"))?;
 
+    // Build keccak request
     let keccak_req = ProveKeccakRequest {
         claim_digest: request.claim_digest,
         po2: request.po2,
@@ -51,7 +58,7 @@ pub async fn keccak(
 
     tracing::info!("Keccak proving {}", request.claim_digest);
 
-    // Main computational work
+    // Perform the proving operation
     let keccak_receipt = agent
         .prover
         .as_ref()
@@ -59,16 +66,15 @@ pub async fn keccak(
         .prove_keccak(&keccak_req)
         .context("Failed to prove_keccak")?;
 
-    // Clone data needed for background task
+    // Clone necessary data for background task
     let pool = agent.redis_pool.clone();
-    let job_prefix = format!("job:{job_id}");
-    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}:{task_id}");
     let ttl = agent.args.redis_ttl;
+    let receipts_key_clone = receipts_key.clone();
     let claim_digest = request.claim_digest;
 
-    // Spawn background task for serialization and storage
+    // Serialize and store in a background task
     tokio::spawn(async move {
-        // Serialize the receipt (CPU-bound)
+        // Serialize result
         let keccak_receipt_bytes = match serialize_obj(&keccak_receipt) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -77,8 +83,8 @@ pub async fn keccak(
             }
         };
 
-        // Store in Redis (I/O bound)
-        let mut task_conn = match redis::get_connection(&pool).await {
+        // Store in Redis
+        let mut bg_conn = match redis::get_connection(&pool).await {
             Ok(conn) => conn,
             Err(e) => {
                 tracing::error!("Failed to get Redis connection for keccak storage: {}", e);
@@ -87,14 +93,12 @@ pub async fn keccak(
         };
 
         if let Err(e) = redis::set_key_with_expiry(
-            &mut task_conn,
-            &receipts_key,
+            &mut bg_conn,
+            &receipts_key_clone,
             keccak_receipt_bytes,
             Some(ttl),
-        )
-        .await
-        {
-            tracing::error!("Failed to write keccak receipt to redis: {}", e);
+        ).await {
+            tracing::error!("Failed to write keccak receipt to Redis: {}", e);
             return;
         }
 
@@ -102,7 +106,5 @@ pub async fn keccak(
     });
 
     tracing::info!("Completed keccak computation for {}", request.claim_digest);
-
-    // Return immediately after computation
     Ok(())
 }

@@ -14,18 +14,24 @@ use workflow_common::ProveReq;
 /// Run a prove request
 pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
     let index = request.index;
+    // Get a single Redis connection
     let mut conn = agent.get_redis_connection().await?;
     let job_prefix = format!("job:{job_id}");
     let segment_key = format!("{job_prefix}:{SEGMENTS_PATH}:{index}");
+    let output_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{task_id}");
 
     tracing::info!("Starting proof of idx: {job_id} - {index}");
+    // Fetch segment data
     let segment_vec: Vec<u8> = conn
         .get::<_, Vec<u8>>(&segment_key)
         .await
         .with_context(|| format!("segment data not found for segment key: {segment_key}"))?;
+
+    // Deserialize the segment
     let segment =
         deserialize_obj(&segment_vec).context("Failed to deserialize segment data from redis")?;
 
+    // Perform the proof operation
     let segment_receipt = agent
         .prover
         .as_ref()
@@ -37,15 +43,20 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
 
     // Clone necessary data for the cleanup task
     let pool = agent.redis_pool.clone();
-    let output_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{task_id}");
     let ttl = agent.args.redis_ttl;
+    let output_key_clone = output_key.clone();
 
     // Spawn a separate task to handle serialization and storage
     // This allows the main function to return immediately and pick up the next GPU task
     tokio::spawn(async move {
         // Serialize the result (CPU-bound)
-        let receipt_asset =
-            serialize_obj(&segment_receipt).expect("Failed to serialize the segment receipt");
+        let receipt_asset = match serialize_obj(&segment_receipt) {
+            Ok(asset) => asset,
+            Err(e) => {
+                tracing::error!("Failed to serialize the segment receipt: {}", e);
+                return;
+            }
+        };
 
         // Store in Redis (I/O bound)
         let mut conn = match redis::get_connection(&pool).await {
@@ -57,12 +68,12 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
         };
 
         if let Err(e) =
-            redis::set_key_with_expiry(&mut conn, &output_key, receipt_asset, Some(ttl)).await
+            redis::set_key_with_expiry(&mut conn, &output_key_clone, receipt_asset, Some(ttl)).await
         {
             tracing::error!("Failed to store receipt in Redis: {}", e);
+        } else {
+            tracing::info!("Proof result stored: {output_key_clone}");
         }
-
-        tracing::info!("Proof result stored: {output_key}");
     });
 
     // Return immediately after proof is complete, allowing next GPU task to start
