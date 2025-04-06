@@ -8,6 +8,7 @@ use crate::{
     Agent,
 };
 use anyhow::{Context, Result};
+use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt, Unknown};
 use uuid::Uuid;
 use workflow_common::{ResolveReq, KECCAK_RECEIPT_PATH};
@@ -56,10 +57,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                     let union_receipt: SuccinctReceipt<Unknown> =
                         deserialize_obj(&union_receipt)
                             .context("Failed to deserialize to SuccinctReceipt<Unknown> type")?;
-
-                    // Get the digest as a string - convert the debug representation
-                    let debug_str = format!("{:?}", union_receipt.claim);
-                    union_claim = debug_str.trim_start_matches("Digest(").trim_end_matches(")").to_string();
+                    union_claim = union_receipt.claim.digest().to_string();
 
                     // Resolve union receipt
                     tracing::info!("Resolving union claim digest: {union_claim}");
@@ -72,10 +70,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                 }
 
                 for assumption in assumptions {
-                    // Get the digest as a string - convert the debug representation
-                    let debug_str = format!("{:?}", assumption.as_value()?.claim);
-                    let assumption_claim = debug_str.trim_start_matches("Digest(").trim_end_matches(")").to_string();
-
+                    let assumption_claim = assumption.as_value()?.claim.to_string();
                     if assumption_claim.eq(&union_claim) {
                         tracing::info!("Skipping already resolved union claim: {union_claim}");
                         continue;
@@ -85,15 +80,14 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                     let assumption_bytes: Vec<u8> = conn
                         .get(&assumption_key)
                         .await
-                        .context(format!("Corroborating receipt not found with key: {assumption_key}"))?;
+                        .context("corroborating receipt not found: key {assumption_key}")?;
 
                     let assumption_receipt: SuccinctReceipt<Unknown> =
                         deserialize_obj(&assumption_bytes).with_context(|| {
-                            format!("Could not deserialize assumption receipt for: {assumption_key}")
+                            format!("could not deserialize assumption receipt: {assumption_key}")
                         })?;
 
                     // Resolve
-                    tracing::info!("Resolving assumption with claim: {assumption_claim}");
                     conditional_receipt = agent
                         .prover
                         .as_ref()
