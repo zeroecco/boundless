@@ -155,31 +155,54 @@ localnet action="up": check-deps
             cp .env.localnet-template .env.localnet || { echo "Error: .env.localnet-template not found"; exit 1; }
         fi
         
-        echo "Building contracts..."
-        forge build || { echo "Failed to build contracts"; just localnet down; exit 1; }
-        echo "Building Rust project..."
-        cargo build --bin broker || { echo "Failed to build broker binary"; just localnet down; exit 1; }
-        cargo build --bin order_stream || { echo "Failed to build order-stream binary"; just localnet down; exit 1; }
-        # Check if Anvil is already running
-        if nc -z localhost $ANVIL_PORT; then
-            echo "Anvil is already running on port $ANVIL_PORT. Reusing existing instance."
-        else
-            echo "Starting Anvil..."
-            anvil -b $ANVIL_BLOCK_TIME > {{LOGS_DIR}}/anvil.txt 2>&1 & echo $! >> {{PID_FILE}}
-            sleep 5
-        fi
+        echo "Building contracts and Rust binaries..."
+        forge build || { echo "Failed to build contracts"; exit 1; }
+        # cargo build --bin broker || { echo "Failed to build broker binary"; exit 1; }
+        # cargo build --bin order_stream || { echo "Failed to build order-stream binary"; exit 1; }
+        
+        # Export environment variables for docker compose
+        export ANVIL_PORT=$ANVIL_PORT
+        export ANVIL_BLOCK_TIME=$ANVIL_BLOCK_TIME
+        export RISC0_DEV_MODE=$RISC0_DEV_MODE
+        export CHAIN_KEY=$CHAIN_KEY
+        export RUST_LOG=$RUST_LOG
+        export DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY
+        export PRIVATE_KEY=$PRIVATE_KEY
+        export ADMIN_ADDRESS=$ADMIN_ADDRESS
+        export DEPOSIT_AMOUNT=$DEPOSIT_AMOUNT
+        export DATABASE_URL={{DATABASE_URL}}
+        export LOGS_DIR={{LOGS_DIR}}
+        
+        # Start the services with docker compose
+        docker compose -f ./dockerfiles/compose.localnet.yml up -d --build
+        
+        # Wait for Anvil to be ready
+        echo "Waiting for Anvil to be ready..."
+        SECONDS=0
+        while ! nc -z localhost $ANVIL_PORT; do
+            sleep 1
+            if [ $SECONDS -ge 30 ]; then
+                echo "Anvil failed to start"
+                docker compose -f ./dockerfiles/compose.localnet.yml down
+                exit 1
+            fi
+        done
+        
         echo "Deploying contracts..."
-        DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY CHAIN_KEY=$CHAIN_KEY RISC0_DEV_MODE=$RISC0_DEV_MODE BOUNDLESS_MARKET_OWNER=$ADMIN_ADDRESS forge script contracts/scripts/Deploy.s.sol --rpc-url http://localhost:$ANVIL_PORT --broadcast -vv || { echo "Failed to deploy contracts"; just localnet down; exit 1; }
+        DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY CHAIN_KEY=$CHAIN_KEY RISC0_DEV_MODE=$RISC0_DEV_MODE BOUNDLESS_MARKET_OWNER=$ADMIN_ADDRESS forge script contracts/scripts/Deploy.s.sol --rpc-url http://localhost:$ANVIL_PORT --broadcast -vv || { echo "Failed to deploy contracts"; docker compose -f ./dockerfiles/compose.localnet.yml down; exit 1; }
+        
         echo "Fetching contract addresses..."
         VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroVerifierRouter") | select(.transactionType == "CREATE") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
         SET_VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroSetVerifier") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
         BOUNDLESS_MARKET_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "ERC1967Proxy") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
         HIT_POINTS_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "HitPoints") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
+ 
         echo "Contract deployed at addresses:"
         echo "VERIFIER_ADDRESS=$VERIFIER_ADDRESS"
         echo "SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS"
         echo "BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS"
         echo "HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS"
+        
         echo "Updating .env.localnet file..."
         # Update the environment variables in .env.localnet
         sed -i.bak "s/^VERIFIER_ADDRESS=.*/VERIFIER_ADDRESS=$VERIFIER_ADDRESS/" .env.localnet
@@ -190,37 +213,25 @@ localnet action="up": check-deps
             sed -i.bak "s/^HIT_POINTS_ADDRESS=.*/HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS/" .env.localnet || \
             echo "HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS" >> .env.localnet
         rm .env.localnet.bak
-        echo ".env.localnet file updated successfully."
+
         echo "Minting HP for prover address."
         cast send --private-key $DEPLOYER_PRIVATE_KEY \
             --rpc-url http://localhost:$ANVIL_PORT \
             $HIT_POINTS_ADDRESS "mint(address, uint256)" $ADMIN_ADDRESS $DEPOSIT_AMOUNT
-
-        # Start order stream server
-        just test-db up
-        DATABASE_URL={{DATABASE_URL}} RUST_LOG=$RUST_LOG ./target/debug/order_stream \
-            --min-balance 0 \
-            --bypass-addrs="0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f" \
-            --boundless-market-address $BOUNDLESS_MARKET_ADDRESS > {{LOGS_DIR}}/order_stream.txt 2>&1 & echo $! >> {{PID_FILE}}
-        # Start a broker
-        RISC0_DEV_MODE=$RISC0_DEV_MODE RUST_LOG=$RUST_LOG ./target/debug/broker \
-            --private-key $PRIVATE_KEY \
-            --boundless-market-address $BOUNDLESS_MARKET_ADDRESS \
-            --set-verifier-address $SET_VERIFIER_ADDRESS \
-            --rpc-url http://localhost:$ANVIL_PORT \
-            --order-stream-url http://localhost:8585 \
-            --deposit-amount $DEPOSIT_AMOUNT > {{LOGS_DIR}}/broker.txt 2>&1 & echo $! >> {{PID_FILE}}
+        
+        # Update environment variables for the services
+        docker compose -f ./dockerfiles/compose.localnet.yml stop order-stream broker
+        export VERIFIER_ADDRESS=$VERIFIER_ADDRESS
+        export SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS
+        export BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS
+        export HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS
+        docker compose -f ./dockerfiles/compose.localnet.yml up -d order-stream broker
+        
         echo "Localnet is running!"
         echo "Make sure to run 'source <(just env localnet)' to load the environment variables before interacting with the network."
         echo "Alternatively, you can copy the content of `.env.localnet` into the `.env` file."
     elif [ "{{action}}" = "down" ]; then
-        if [ -f {{PID_FILE}} ]; then
-            while read pid; do
-                kill $pid 2>/dev/null || true
-            done < {{PID_FILE}}
-            rm {{PID_FILE}}
-        fi
-        just test-db down
+        docker compose -f ./dockerfiles/compose.localnet.yml down
     else
         echo "Unknown action: {{action}}"
         echo "Available actions: up, down"

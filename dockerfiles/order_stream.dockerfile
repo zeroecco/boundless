@@ -9,6 +9,8 @@ RUN apt-get -qq update && \
 FROM builder AS rust-builder
 
 ARG S3_CACHE_PREFIX
+ARG BUILD_MODE=release
+ENV BUILD_MODE=$BUILD_MODE
 
 WORKDIR /src/
 COPY Cargo.toml .
@@ -39,13 +41,17 @@ RUN curl -L https://risczero.com/install | bash && \
 # Prevent sccache collision in compose-builds
 ENV SCCACHE_SERVER_PORT=4229
 
-RUN \
-    --mount=type=secret,id=ci_cache_creds,target=/root/.aws/credentials \
-    --mount=type=cache,target=/root/.cache/sccache/,id=bndlss_orderstream_sccache \
-    source ./sccache-config.sh ${S3_CACHE_PREFIX} && \
-    cargo build --release -p order-stream --bin order_stream && \
-    cp /src/target/release/order_stream /src/order_stream && \
-    sccache --show-stats
+RUN if [ "$BUILD_MODE" = "release" ]; then \
+        --mount=type=secret,id=ci_cache_creds,target=/root/.aws/credentials \
+        --mount=type=cache,target=/root/.cache/sccache/,id=bndlss_orderstream_sccache \
+        source ./sccache-config.sh ${S3_CACHE_PREFIX} && \
+        cargo build --release -p order-stream --bin order_stream && \
+        cp /src/target/release/order_stream /src/order_stream && \
+        sccache --show-stats; \
+    else \
+        cargo build --bin order_stream && \
+        cp /src/target/debug/order_stream /src/order_stream; \
+    fi
 
 FROM rust:1.85.0-bookworm AS runtime
 

@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres-test
+    environment:
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  anvil:
+    build:
+      context: ..
+      dockerfile: dockerfiles/anvil.dockerfile
+    # image: ghcr.io/foundry-rs/foundry:latest
+    container_name: anvil
+    environment:
+      ANVIL_IP_ADDR: "0.0.0.0"
+    working_dir: /anvil
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  order-stream:
+    build:
+      context: ..
+      dockerfile: dockerfiles/order_stream.dockerfile
+      args:
+        BUILD_MODE: debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint:
+        /app/order_stream
+        --min-balance 0 
+        --bypass-addrs=\"0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f\" 
+        --boundless-market-address $BOUNDLESS_MARKET_ADDRESS}
+    ports:
+      - "8585:8585"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - RUST_LOG=${RUST_LOG}
+      - BOUNDLESS_MARKET_ADDRESS=${BOUNDLESS_MARKET_ADDRESS}
+      - RUST_BACKTRACE=1
+    platform: linux/amd64
+    restart: always
+
+  dev-broker:
+    restart: always
+
+    profiles: [broker]
+
+    build:
+      context: ..
+      dockerfile: dockerfiles/broker.dockerfile
+    volumes:
+      - type: bind
+        source: ./broker.toml
+        target: /app/broker.toml
+    depends_on:
+      - anvil
+      - order-stream
+    environment:
+      RUST_LOG: ${RUST_LOG}
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      BOUNDLESS_MARKET_ADDRESS: ${BOUNDLESS_MARKET_ADDRESS}
+      SET_VERIFIER_ADDRESS: ${SET_VERIFIER_ADDRESS}
+      DEPOSIT_AMOUNT: ${DEPOSIT_AMOUNT}
+
+    entrypoint: RISC0_DEV_MODE=true /app/broker --set-verifier-address ${SET_VERIFIER_ADDRESS} --boundless-market-address ${BOUNDLESS_MARKET_ADDRESS} --config-file /app/broker.toml
+
+volumes:
+  postgres-data:
