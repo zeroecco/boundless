@@ -65,8 +65,7 @@ impl core::fmt::Debug for Planner {
                 }
                 Command::Join => {
                     write!(f, "{:?} Join", task.task_number)?;
-                    stack.push((indent + 2, task.depends_on[0]));
-                    stack.push((indent + 2, task.depends_on[1]));
+                    stack.push((indent + 1, task.depends_on[1]));
                 }
                 Command::Segment => {
                     write!(f, "{:?} Segment", task.task_number)?;
