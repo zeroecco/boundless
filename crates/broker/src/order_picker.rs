@@ -28,6 +28,8 @@ use boundless_market::{
 use thiserror::Error;
 use tokio::task::JoinSet;
 
+use OrderPricingOutcome::{Lock, ProveImmediate, Skip};
+
 const MAX_PRICING_BATCH_SIZE: u32 = 10;
 
 #[derive(Error, Debug)]
@@ -62,10 +64,18 @@ pub struct OrderPicker<P> {
 }
 
 #[derive(Debug)]
-struct OrderLockTiming {
-    target_timestamp_secs: u64,
-    // TODO handle checking what time the lock should occur before, when estimating proving time.
-    expiry_secs: u64,
+#[non_exhaustive]
+enum OrderPricingOutcome {
+    // Order should be locked and proving commence after lock is secured
+    Lock {
+        target_timestamp_secs: u64,
+        // TODO handle checking what time the lock should occur before, when estimating proving time.
+        expiry_secs: u64,
+    },
+    // Do not lock the order but attempt to prove and fulfill it
+    ProveImmediate,
+    // Do not accept engage order
+    Skip,
 }
 
 impl<P> OrderPicker<P>
@@ -98,15 +108,20 @@ where
     async fn price_order_and_update_db(&self, order_id: U256, order: &Order) -> bool {
         let f = || async {
             match self.price_order(order_id, order).await {
-                Ok(Some(timing)) => {
-                    tracing::debug!("Successfully priced order {order_id:x}");
+                Ok(Lock { target_timestamp_secs, expiry_secs }) => {
+                    tracing::debug!("Locking order {order_id:x}");
                     self.db
-                        .set_order_lock(order_id, timing.target_timestamp_secs, timing.expiry_secs)
+                        .set_order_lock(order_id, target_timestamp_secs, expiry_secs)
                         .await
                         .context("Failed to set_order_lock")?;
                     Ok::<_, PriceOrderErr>(true)
                 }
-                Ok(None) => {
+                Ok(ProveImmediate) => {
+                    tracing::debug!("Proving order {order_id:x} immediately");
+                    todo!();
+                    Ok(true)
+                }
+                Ok(Skip) => {
                     tracing::debug!("Skipping order {order_id:x}");
                     self.db.skip_order(order_id).await.context("Failed to delete order")?;
                     Ok(false)
@@ -136,7 +151,7 @@ where
         &self,
         order_id: U256,
         order: &Order,
-    ) -> Result<Option<OrderLockTiming>, PriceOrderErr> {
+    ) -> Result<OrderPricingOutcome, PriceOrderErr> {
         tracing::debug!("Processing order {order_id:x}: {order:?}");
 
         let (min_deadline, allowed_addresses_opt) = {
@@ -149,7 +164,7 @@ where
             let client_addr = order.request.client_address()?;
             if !allow_addresses.contains(&client_addr) {
                 tracing::info!("Removing order {order_id:x} from {client_addr} because it is not in allowed addrs");
-                return Ok(None);
+                return Ok(Skip);
             }
         }
 
@@ -159,7 +174,7 @@ where
                 "Removing order {order_id:x} because it has an unsupported selector requirement"
             );
 
-            return Ok(None);
+            return Ok(Skip);
         };
 
         // is the order expired already?
@@ -170,14 +185,14 @@ where
         let now = now_timestamp();
         if expiration <= now {
             tracing::info!("Removing order {order_id:x} because it has expired");
-            return Ok(None);
+            return Ok(Skip);
         };
 
         // Does the order expire within the min deadline
         let seconds_left = expiration - now;
         if seconds_left <= min_deadline {
             tracing::info!("Removing order {order_id:x} because it expires within the deadline left: {seconds_left} deadline: {min_deadline}");
-            return Ok(None);
+            return Ok(Skip);
         }
 
         // Check if the stake is sane and if we can afford it
@@ -189,7 +204,7 @@ where
         let lockin_stake = U256::from(order.request.offer.lockStake);
         if lockin_stake > max_stake {
             tracing::info!("Removing high stake order {order_id:x}");
-            return Ok(None);
+            return Ok(Skip);
         }
 
         // Check that we have both enough staking tokens to stake, and enough gas tokens to lock and fulfil
@@ -201,13 +216,13 @@ where
 
         if gas_to_lock_order > available_gas {
             tracing::warn!("Estimated there will be insufficient gas to lock this order after locking and fulfilling pending orders");
-            return Ok(None);
+            return Ok(Skip);
         }
         if lockin_stake > available_stake {
             tracing::warn!(
                 "Insufficient available stake to lock order {order_id:x}. Requires {lockin_stake}, has {available_stake}"
             );
-            return Ok(None);
+            return Ok(Skip);
         }
 
         let (skip_preflight, max_size, peak_prove_khz, fetch_retries, max_mcycle_limit) = {
@@ -230,7 +245,7 @@ where
 
         if skip_preflight {
             // If we skip preflight we lockin the order asap
-            return Ok(Some(OrderLockTiming { target_timestamp_secs: 0, expiry_secs: expiration }));
+            return Ok(Lock { target_timestamp_secs: 0, expiry_secs: expiration });
         }
 
         // TODO: Move URI handling like this into the prover impls
@@ -263,7 +278,7 @@ where
                 "Removing order {order_id:x} because it's mcycle price limit is below 0 mcycles"
             );
 
-            return Ok(None);
+            return Ok(Skip);
         }
 
         tracing::debug!(
@@ -297,7 +312,7 @@ where
             let mcycles = proof_res.stats.total_cycles / 1_000_000;
             if mcycles >= mcycle_limit {
                 tracing::info!("Order {order_id:x} max_mcycle_limit check failed req: {mcycle_limit} | config: {mcycles}");
-                return Ok(None);
+                return Ok(Skip);
             }
         }
 
@@ -327,7 +342,7 @@ where
                     "Order {order_id:x} cannot be completed in time. Proof estimated to take {proof_time_seconds}s to complete, would be {}s past deadline",
                     completion_time.saturating_sub(expiration)
                 );
-                return Ok(None);
+                return Ok(Skip);
             }
 
             *prover_available = completion_time;
@@ -354,7 +369,7 @@ where
         order: &Order,
         proof_res: &ProofResult,
         config_min_mcycle_price: U256,
-    ) -> Result<Option<OrderLockTiming>, PriceOrderErr> {
+    ) -> Result<OrderPricingOutcome, PriceOrderErr> {
         let journal = self
             .prover
             .get_preflight_journal(&proof_res.id)
@@ -371,13 +386,13 @@ where
                 journal.len(),
                 max_journal_bytes
             );
-            return Ok(None);
+            return Ok(Skip);
         }
 
         // Validate the predicates:
         if !order.request.requirements.predicate.eval(journal.clone()) {
             tracing::info!("Order {order_id:x} predicate check failed, skipping");
-            return Ok(None);
+            return Ok(Skip);
         }
 
         let one_mill = U256::from(1_000_000);
@@ -402,7 +417,7 @@ where
         // Skip the order if it will never be worth it
         if mcycle_price_max < config_min_mcycle_price {
             tracing::info!("Removing under priced order {order_id:x}");
-            return Ok(None);
+            return Ok(Skip);
         }
 
         let target_timestamp_secs = if mcycle_price_min >= config_min_mcycle_price {
@@ -425,7 +440,7 @@ where
 
         let expiry_secs = order.request.offer.biddingStart + order.request.offer.lockTimeout as u64;
 
-        Ok(Some(OrderLockTiming { target_timestamp_secs, expiry_secs }))
+        Ok(Lock { target_timestamp_secs, expiry_secs })
     }
     async fn find_existing_orders(&self) -> Result<()> {
         let pricing_orders = self
