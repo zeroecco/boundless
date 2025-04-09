@@ -373,7 +373,7 @@ impl BrokerDb for SqliteDb {
             WHERE
                 id = $4"#,
         )
-        .bind(OrderStatus::Locked)
+        .bind(OrderStatus::PendingProving)
         .bind(Utc::now().timestamp())
         .bind(lock_price.to_string())
         .bind(format!("{id:x}"))
@@ -525,7 +525,7 @@ impl BrokerDb for SqliteDb {
             "SELECT COUNT(*) FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(OrderStatus::Locking)
-        .bind(OrderStatus::Locked)
+        .bind(OrderStatus::PendingProving)
         .bind(OrderStatus::Proving)
         .bind(OrderStatus::PendingAgg)
         .bind(OrderStatus::Aggregating)
@@ -553,7 +553,7 @@ impl BrokerDb for SqliteDb {
         )
         .bind(OrderStatus::Proving)
         .bind(Utc::now().timestamp())
-        .bind(OrderStatus::Locked)
+        .bind(OrderStatus::PendingProving)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -1258,7 +1258,7 @@ mod tests {
         db.set_proving_status(id, lock_price).await.unwrap();
 
         let db_order = db.get_order(id).await.unwrap().unwrap();
-        assert_eq!(db_order.status, OrderStatus::Locked);
+        assert_eq!(db_order.status, OrderStatus::PendingProving);
         assert_eq!(db_order.lock_price, Some(lock_price));
     }
 
@@ -1350,7 +1350,7 @@ mod tests {
 
         let id = U256::ZERO;
         let mut order = create_order();
-        order.status = OrderStatus::Locked;
+        order.status = OrderStatus::PendingProving;
         db.add_order(id, order.clone()).await.unwrap();
 
         let db_order = db.get_proving_order().await.unwrap();
@@ -1399,7 +1399,7 @@ mod tests {
 
         let id = U256::ZERO;
         let mut order = create_order();
-        order.status = OrderStatus::Locked;
+        order.status = OrderStatus::PendingProving;
         db.add_order(id, order.clone()).await.unwrap();
 
         let image_id = "test_img";
