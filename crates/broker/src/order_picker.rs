@@ -9,7 +9,7 @@ use crate::{
     db::DbObj,
     provers::{ProverError, ProverObj},
     task::{RetryRes, RetryTask, SupervisorErr},
-    Order, OrderStatus,
+    Order,
 };
 use crate::{now_timestamp, provers::ProofResult};
 use alloy::{
@@ -197,8 +197,7 @@ where
 
         // If order_expiration > lock_expiration the period in-between is when order can be filled
         // by anyone without staking to partially claim the slashed stake
-        let lock_expired =
-            order.status != OrderStatus::Done && lock_expiration <= now && order_expiration > now;
+        let lock_expired = lock_expiration <= now && order_expiration > now;
 
         if lock_expired {
             tracing::info!("Order {order_id:x} lock period has expired but it is unfulfilled");
@@ -652,7 +651,7 @@ where
             return Ok(());
         }
 
-        let order_res = self.db.update_orders_for_pricing(capacity).await?;
+        let order_res = self.db.update_orders_for_pricing(capacity, now_timestamp()).await?;
 
         for (order_id, order) in order_res {
             let picker_clone = self.clone();

@@ -159,6 +159,8 @@ enum OrderStatus {
     Failed,
     /// Order was analyzed and marked as skipable
     Skipped,
+    /// Order was observed to be locked by another prover
+    LockedByOther,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

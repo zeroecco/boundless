@@ -81,7 +81,11 @@ pub trait BrokerDb {
         id: U256,
     ) -> Result<(ProofRequest, String, B256, U256), DbError>;
     async fn get_order_compressed_proof_id(&self, id: U256) -> Result<String, DbError>;
-    async fn update_orders_for_pricing(&self, limit: u32) -> Result<Vec<(U256, Order)>, DbError>;
+    async fn update_orders_for_pricing(
+        &self,
+        limit: u32,
+        timestamp: u64,
+    ) -> Result<Vec<(U256, Order)>, DbError>;
     async fn get_active_pricing_orders(&self) -> Result<Vec<(U256, Order)>, DbError>;
     async fn set_order_lock(
         &self,
@@ -267,23 +271,30 @@ impl BrokerDb for SqliteDb {
         }
     }
 
+    // Pick orders that are either new or have not been fulfilled but have had their lock period expire (but are not expired)
     #[instrument(level = "trace", skip_all, fields(limit = %limit))]
-    async fn update_orders_for_pricing(&self, limit: u32) -> Result<Vec<(U256, Order)>, DbError> {
+    async fn update_orders_for_pricing(
+        &self,
+        limit: u32,
+        timestamp: u64,
+    ) -> Result<Vec<(U256, Order)>, DbError> {
         let orders: Vec<DbOrder> = sqlx::query_as(
             r#"
             WITH orders_to_update AS (
                 SELECT id
                 FROM orders
-                WHERE data->>'status' = $1
-                LIMIT $2
+                WHERE data->>'status' = $1 OR (data->>'status' = $2 AND data->>'request'->>'offer'->>'lockTimeout' <= $3 AND data->>'request'->>'offer'->>'timeout' > $3)
+                LIMIT $4
             )
             UPDATE orders
-            SET data = json_set(json_set(data, '$.status', $3), '$.updated_at', $4)
+            SET data = json_set(json_set(data, '$.status', $5), '$.updated_at', $6)
             WHERE id IN (SELECT id FROM orders_to_update)
             RETURNING *
             "#,
         )
         .bind(OrderStatus::New)
+        .bind(OrderStatus::LockedByOther)
+        .bind(i64::try_from(timestamp).map_err(|_| DbError::BadBlockNumb(timestamp.to_string()))?)
         .bind(i64::from(limit))
         .bind(OrderStatus::Pricing)
         .bind(Utc::now().timestamp())
@@ -1188,19 +1199,101 @@ mod tests {
         db.add_order(id + U256::from(1), order.clone()).await.unwrap();
         db.add_order(id + U256::from(2), order.clone()).await.unwrap();
 
-        let price_order = db.update_orders_for_pricing(1).await.unwrap();
+        let price_order = db.update_orders_for_pricing(1, 0).await.unwrap();
         assert_eq!(price_order.len(), 1);
         assert_eq!(price_order[0].0, id);
         assert_eq!(price_order[0].1.status, OrderStatus::Pricing);
         assert_ne!(price_order[0].1.updated_at, order.updated_at);
 
         // Request the next two orders, which should skip the first
-        let price_order = db.update_orders_for_pricing(2).await.unwrap();
+        let price_order = db.update_orders_for_pricing(2, 0).await.unwrap();
         assert_eq!(price_order.len(), 2);
         assert_eq!(price_order[0].0, id + U256::from(1));
         assert_eq!(price_order[0].1.status, OrderStatus::Pricing);
         assert_eq!(price_order[1].0, id + U256::from(2));
         assert_eq!(price_order[1].1.status, OrderStatus::Pricing);
+    }
+
+    /// Create a db with two slashed orders with different lockTimeouts and timeouts
+    async fn init_db_slashed_unexpired_tests(pool: SqlitePool) -> DbObj {
+        let db = Arc::new(SqliteDb::from(pool).await.unwrap());
+        let mut order = create_order();
+        order.status = OrderStatus::LockedByOther;
+        order.request.offer.lockTimeout = 100;
+        order.request.offer.timeout = 200;
+        db.add_order(U256::from(1), order.clone()).await.unwrap();
+
+        let mut order = create_order();
+        order.status = OrderStatus::LockedByOther;
+        order.request.offer.lockTimeout = 150;
+        order.request.offer.timeout = 250;
+        db.add_order(U256::from(2), order.clone()).await.unwrap();
+        db
+    }
+
+    #[sqlx::test]
+    async fn update_orders_for_pricing_skips_locked(pool: SqlitePool) {
+        // // both still locked
+        let db = init_db_slashed_unexpired_tests(pool).await;
+        let result = db.update_orders_for_pricing(2, 99).await.unwrap();
+
+        assert_eq!(result.len(), 0);
+        assert_eq!(
+            db.get_order(U256::from(1)).await.unwrap().unwrap().status,
+            OrderStatus::LockedByOther
+        );
+        assert_eq!(
+            db.get_order(U256::from(2)).await.unwrap().unwrap().status,
+            OrderStatus::LockedByOther
+        );
+    }
+
+    #[sqlx::test]
+    async fn update_orders_for_pricing_handles_overlap(pool: SqlitePool) {
+        // // 1 unlocked, 2 unlocked
+        let db = init_db_slashed_unexpired_tests(pool).await;
+        let result = db.update_orders_for_pricing(2, 149).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            db.get_order(U256::from(1)).await.unwrap().unwrap().status,
+            OrderStatus::Pricing
+        );
+        assert_eq!(
+            db.get_order(U256::from(2)).await.unwrap().unwrap().status,
+            OrderStatus::LockedByOther
+        );
+    }
+
+    #[sqlx::test]
+    async fn update_orders_for_pricing_picks_unlocked(pool: SqlitePool) {
+        // // 1 and 2 unlocked
+        let db = init_db_slashed_unexpired_tests(pool).await;
+        let result = db.update_orders_for_pricing(2, 151).await.unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            db.get_order(U256::from(1)).await.unwrap().unwrap().status,
+            OrderStatus::Pricing
+        );
+        assert_eq!(
+            db.get_order(U256::from(2)).await.unwrap().unwrap().status,
+            OrderStatus::Pricing
+        );
+    }
+
+    #[sqlx::test]
+    async fn update_orders_for_pricing_skips_expired(pool: SqlitePool) {
+        // // both expired
+        let db = init_db_slashed_unexpired_tests(pool).await;
+        let result = db.update_orders_for_pricing(2, 251).await.unwrap();
+        assert_eq!(result.len(), 0);
+        assert_eq!(
+            db.get_order(U256::from(1)).await.unwrap().unwrap().status,
+            OrderStatus::LockedByOther
+        );
+        assert_eq!(
+            db.get_order(U256::from(2)).await.unwrap().unwrap().status,
+            OrderStatus::LockedByOther
+        );
     }
 
     #[sqlx::test]
