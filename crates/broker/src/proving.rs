@@ -71,9 +71,13 @@ impl ProvingService {
     }
 
     pub async fn prove_order(&self, order_id: U256, order: Order) -> Result<()> {
-        let (max_file_size, fetch_retries) = {
+        let (max_file_size, fetch_retries, prover_secret) = {
             let config = self.config.lock_all().context("Failed to read config")?;
-            (config.market.max_file_size, config.market.max_fetch_retries)
+            (
+                config.market.max_file_size,
+                config.market.max_fetch_retries,
+                config.prover.benchmarking_prover_secret.clone(),
+            )
         };
 
         // If the ID's are not present then upload them now
@@ -86,9 +90,15 @@ impl ProvingService {
         };
         let input_id = match order.input_id.as_ref() {
             Some(val) => val.clone(),
-            None => crate::upload_input_uri(&self.prover, &order, max_file_size, fetch_retries)
-                .await
-                .context("Failed to upload input")?,
+            None => crate::upload_input_uri(
+                &self.prover,
+                &order,
+                max_file_size,
+                fetch_retries,
+                prover_secret,
+            )
+            .await
+            .context("Failed to upload input")?,
         };
 
         tracing::info!("Proving order {order_id:x}");

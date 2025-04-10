@@ -12,7 +12,7 @@ use crate::{
     task::{RetryRes, RetryTask, SupervisorErr},
     Order,
 };
-use crate::{now_timestamp, provers::ProofResult};
+use crate::{now_timestamp, provers::ProofResult, ADD_SECRET_URI_DIRECTIVE};
 use alloy::{
     network::Ethereum,
     primitives::{
@@ -27,6 +27,7 @@ use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, RequestError},
     selector::{ProofType, SupportedSelectors},
 };
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::task::JoinSet;
 
@@ -148,14 +149,31 @@ where
     ) -> Result<Option<OrderLockTiming>, PriceOrderErr> {
         tracing::debug!("Processing order {order_id:x}: {order:?}");
 
-        let (min_deadline, allowed_addresses_opt) = {
+        let (
+            min_deadline,
+            allowed_addresses_opt,
+            benchmarker_client_addresses,
+            benchmark_directive,
+        ) = {
             let config = self.config.lock_all().context("Failed to read config")?;
-            (config.market.min_deadline, config.market.allow_client_addresses.clone())
+            (
+                config.market.min_deadline,
+                config.market.allow_client_addresses.clone(),
+                config.market.benchmarker_client_addresses.clone(),
+                format!(
+                    "{}:{:x}",
+                    ADD_SECRET_URI_DIRECTIVE,
+                    Sha256::digest(
+                        config.prover.benchmarking_prover_secret.clone().unwrap_or_default()
+                    )
+                ),
+            )
         };
 
         // Initial sanity checks:
+        let client_addr = order.request.client_address();
+
         if let Some(allow_addresses) = allowed_addresses_opt {
-            let client_addr = order.request.client_address();
             if !allow_addresses.contains(&client_addr) {
                 tracing::info!("Removing order {order_id:x} from {client_addr} because it is not in allowed addrs");
                 return Ok(None);
@@ -186,6 +204,31 @@ where
         if seconds_left <= min_deadline {
             tracing::info!("Removing order {order_id:x} because it expires within the deadline left: {seconds_left} deadline: {min_deadline}");
             return Ok(None);
+        }
+
+        // If its a benchmark order then skip the rest of the picking logic and lock it in right away
+        // TODO: Once supported also skip the locking stage for these orders
+        if benchmarker_client_addresses.contains(&client_addr) {
+            tracing::debug!(
+                "Order {order_id:x} is detected as a benchmark order from {client_addr}"
+            );
+
+            let input_uri_str =
+                std::str::from_utf8(&order.request.input.data).context("input url is not utf8")?;
+            if input_uri_str.contains(&benchmark_directive) {
+                tracing::info!(
+                    "Selecting benchmark Order {order_id:x}. It is a request for this prover."
+                );
+                return Ok(Some(OrderLockTiming {
+                    target_timestamp_secs: 0,
+                    expiry_secs: expiration,
+                }));
+            } else {
+                tracing::info!(
+                    "Skipping benchmark Order {order_id:x}. It is intended for another prover."
+                );
+                return Ok(None);
+            }
         }
 
         // Check if the stake is sane and if we can afford it
@@ -267,7 +310,7 @@ where
             .await
             .map_err(PriceOrderErr::FetchImageErr)?;
 
-        let input_id = crate::upload_input_uri(&self.prover, order, max_size, fetch_retries)
+        let input_id = crate::upload_input_uri(&self.prover, order, max_size, fetch_retries, None)
             .await
             .map_err(PriceOrderErr::FetchInputErr)?;
 

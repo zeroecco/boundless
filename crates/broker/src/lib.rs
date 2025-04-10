@@ -31,6 +31,8 @@ use storage::UriHandlerBuilder;
 use tokio::task::JoinSet;
 use url::Url;
 
+const ADD_SECRET_URI_DIRECTIVE: &str = "boundless_add_secret";
+
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
 pub(crate) mod config;
@@ -615,6 +617,7 @@ async fn upload_input_uri(
     order: &Order,
     max_size: usize,
     retries: Option<u8>,
+    secret: Option<Vec<u8>>,
 ) -> Result<String> {
     Ok(match order.request.input.inputType {
         InputType::Inline => prover
@@ -638,7 +641,7 @@ async fn upload_input_uri(
             let input_uri = input_uri.build().context("Failed to parse input uri")?;
 
             if !input_uri.exists() {
-                let input_data = GuestEnv::decode(
+                let mut input_data = GuestEnv::decode(
                     &input_uri
                         .fetch()
                         .await
@@ -646,6 +649,17 @@ async fn upload_input_uri(
                 )
                 .with_context(|| format!("Failed to decode input from URI: {input_uri_str}"))?
                 .stdin;
+
+                // prepend this provers secret to the input if the input uri has the directive
+                if input_uri.uri().fragment().is_some_and(|f| f.contains(ADD_SECRET_URI_DIRECTIVE))
+                {
+                    if let Some(secret) = secret {
+                        input_data = secret.iter().copied().chain(input_data).collect();
+                        tracing::debug!("Prover secret added to input data");
+                    } else {
+                        anyhow::bail!("Input URI: {input_uri_str} requested secret value be added but secret was not provided. Try setting the benchmarking_prover_secret prover config.");
+                    }
+                }
 
                 prover.upload_input(input_data).await.context("Failed to upload input")?
             } else {
