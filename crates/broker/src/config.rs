@@ -85,6 +85,12 @@ pub struct MarketConf {
     ///
     /// If enabled, all proof orders not in the allow list are skipped
     pub allow_client_addresses: Option<Vec<Address>>,
+    /// Optional allow list for submitter addresses from which all orders will be prioritized
+    ///
+    /// Prioritized orders skip preflight, pricing and will never be batched. The broker
+    /// will attempt to process orders originating from these addresses as quickly as possible.
+    #[serde(default)]
+    pub priority_client_addresses: Vec<Address>,
     /// lockinRequest priority gas
     ///
     /// Optional additional gas to add to the transaction for lockinRequest, good
@@ -141,6 +147,7 @@ impl Default for MarketConf {
             max_stake: "0.1".to_string(),
             skip_preflight_ids: None,
             allow_client_addresses: None,
+            priority_client_addresses: vec![],
             lockin_priority_gas: None,
             max_file_size: 50_000_000,
             max_fetch_retries: Some(2),
