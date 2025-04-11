@@ -429,7 +429,8 @@ mod tests {
         prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
 
         // Build the correctly formatted input and serve it from a mock provider
-        let guest_env = InputBuilder::new().write(b"test input data").unwrap().build_env().unwrap();
+        let input_bytes = b"test input data";
+        let guest_env = InputBuilder::new().write(input_bytes).unwrap().build_env().unwrap();
         let storage = MockStorageProvider::start();
         let input_url = storage.upload_input(&guest_env.encode().unwrap()).await.unwrap();
 
@@ -494,5 +495,17 @@ mod tests {
 
         let order = db.get_order(order_id).await.unwrap().unwrap();
         assert_eq!(order.status, OrderStatus::SkipAggregation);
+
+        let receipt = proving_service
+            .prover
+            .get_receipt(&order.proof_id.expect("proof ID was not set on order"))
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The expected journal for the echo guest is the input
+        // The input should have been the prover_secret + the input_bytes
+        // Note this reveals the secret which is bad and should not be used outside a test
+        assert_eq!(receipt.journal.bytes[..prover_secret.len()], prover_secret);
     }
 }
