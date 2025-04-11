@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use crate::{benchmark_directive, now_timestamp, provers::ProofResult};
 use crate::{
     chain_monitor::ChainMonitorService,
     config::ConfigLock,
@@ -13,6 +12,7 @@ use crate::{
     task::{RetryRes, RetryTask, SupervisorErr},
     Order,
 };
+use crate::{now_timestamp, provers::ProofResult};
 use alloy::{
     network::Ethereum,
     primitives::{
@@ -24,6 +24,7 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use boundless_market::{
+    benchmark_directive,
     contracts::{boundless_market::BoundlessMarketService, RequestError},
     selector::{ProofType, SupportedSelectors},
 };
@@ -1767,9 +1768,28 @@ mod tests {
         let mut order =
             ctx.generate_next_order(OrderParams { lock_stake, ..Default::default() }).await;
 
-        order.request.id = RequestId::new(benchmarker_address, 1).into();
-        order.request.input =
-            Input::url(format!("http://get.input/#{}", benchmark_directive(&prover_secret)));
+        let mut request = ProofRequest::builder()
+            .with_image_url("http://get/image/")
+            .with_input(Input::url(format!(
+                "http://get/input/#{}",
+                benchmark_directive(&prover_secret)
+            )))
+            .with_requirements(
+                Requirements::new(ECHO_ID, Predicate::prefix_match(vec![1, 2, 3]))
+                    .with_selector(FixedBytes::from(Selector::Groth16V2_0 as u32)),
+            )
+            .with_offer(
+                Offer::default()
+                    .with_min_price(U256::from(1))
+                    .with_max_price(U256::from(1))
+                    .with_bidding_start(now_timestamp())
+                    .with_timeout(1000)
+                    .with_lock_timeout(1000),
+            )
+            .build()
+            .unwrap();
+        request.id = RequestId::new(benchmarker_address, 1).into();
+        order.request = request;
 
         let order_id = order.request.id;
         ctx.db.add_order(order_id, order.clone()).await.unwrap();

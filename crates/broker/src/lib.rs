@@ -12,6 +12,7 @@ use alloy::{
 };
 use anyhow::{ensure, Context, Result};
 use boundless_market::{
+    benchmark_directive,
     contracts::{boundless_market::BoundlessMarketService, InputType, ProofRequest},
     input::GuestEnv,
     order_stream_client::Client as OrderStreamClient,
@@ -27,14 +28,9 @@ use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::sha::Digest;
 pub use rpc_retry_policy::CustomRetryPolicy;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use storage::UriHandlerBuilder;
 use tokio::task::JoinSet;
 use url::Url;
-
-pub fn benchmark_directive(secret: impl AsRef<[u8]>) -> String {
-    format!("boundless_bench:{:x}", Sha256::digest(secret))
-}
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
@@ -657,7 +653,7 @@ async fn upload_input_uri(
                 if let Some(secret) = secret {
                     if input_uri.uri().fragment().is_some_and(|f| f == benchmark_directive(&secret))
                     {
-                        input_data = secret.iter().copied().chain(input_data).collect();
+                        input_data = [secret, input_data].concat();
                         tracing::debug!("Benchmark detected. Prover secret added to input data");
                     }
                 }
