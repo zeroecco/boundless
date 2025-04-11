@@ -27,11 +27,14 @@ use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::sha::Digest;
 pub use rpc_retry_policy::CustomRetryPolicy;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use storage::UriHandlerBuilder;
 use tokio::task::JoinSet;
 use url::Url;
 
-const ADD_SECRET_URI_DIRECTIVE: &str = "boundless_add_secret";
+pub fn benchmark_directive(secret: impl AsRef<[u8]>) -> String {
+    format!("boundless_bench:{:x}", Sha256::digest(secret))
+}
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
@@ -651,13 +654,11 @@ async fn upload_input_uri(
                 .stdin;
 
                 // prepend this provers secret to the input if the input uri has the directive
-                if input_uri.uri().fragment().is_some_and(|f| f.contains(ADD_SECRET_URI_DIRECTIVE))
-                {
-                    if let Some(secret) = secret {
+                if let Some(secret) = secret {
+                    if input_uri.uri().fragment().is_some_and(|f| f == benchmark_directive(&secret))
+                    {
                         input_data = secret.iter().copied().chain(input_data).collect();
                         tracing::debug!("Prover secret added to input data");
-                    } else {
-                        anyhow::bail!("Input URI: {input_uri_str} requested secret value be added but secret was not provided. Try setting the benchmarking_prover_secret prover config.");
                     }
                 }
 
