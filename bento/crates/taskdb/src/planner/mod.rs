@@ -52,14 +52,14 @@ pub struct PerformanceFactors {
 impl Default for PerformanceFactors {
     fn default() -> Self {
         Self {
-            segment_time: 5.0,
-            keccak_time: 7.0,
-            join_base_time: 3.0,
-            join_height_factor: 0.5,
-            union_base_time: 4.0,
-            union_height_factor: 0.7,
-            finalize_base_time: 2.0,
-            finalize_height_factor: 0.3,
+            segment_time: 3.0,
+            keccak_time: 2.0,
+            join_base_time: 1.0,
+            join_height_factor: 1.0,
+            union_base_time: 1.0,
+            union_height_factor: 1.0,
+            finalize_base_time: 1.0,
+            finalize_height_factor: 1.0,
             parallelism_factor: 1.0,
         }
     }
