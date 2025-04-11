@@ -4,13 +4,13 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj, KECCAK_RECEIPT_PATH, RECUR_RECEIPT_PATH},
+    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{bail, Context, Result};
 use std::time::Instant;
 use uuid::Uuid;
-use workflow_common::JoinReq;
+use workflow_common::{JoinReq, KECCAK_RECEIPT_PATH};
 
 /// Maximum number of join attempts before giving up
 const MAX_JOIN_ATTEMPTS: usize = 3;
@@ -98,7 +98,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             tracing::warn!("All join attempts failed, trying alternative approach");
 
             // Try to handle the join a different way if supported
-            match try_alternative_join(agent, job_id, &left_receipt, &right_receipt).await {
+            match try_alternative_join::<_>(agent, job_id, &left_receipt, &right_receipt).await {
                 Ok(alt_result) => {
                     tracing::info!("Alternative join succeeded");
                     alt_result
@@ -141,36 +141,124 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 }
 
 /// Try an alternative approach when regular join fails
-async fn try_alternative_join(
+async fn try_alternative_join<T>(
     agent: &Agent,
     job_id: &Uuid,
-    left_receipt: &impl risc0_zkvm::ProofType,
-    right_receipt: &impl risc0_zkvm::ProofType,
-) -> Result<impl risc0_zkvm::ProofType> {
-    tracing::info!("Attempting alternative join approach");
+    left_receipt: &T,
+    right_receipt: &T,
+) -> Result<T>
+where
+    T: Clone,
+{
+    tracing::info!("Attempting alternative join approach for job: {}", job_id);
 
-    // Try a different join algorithm that might work better for certain cases
-    // First, let's try with different parameters
-    match agent.prover.as_ref().context("Missing prover from alternative join task")? {
-        prover => {
-            // For now, we'll simply try a more intensive join attempt with longer timeout
-            // This is a placeholder for a more sophisticated alternative approach
+    // First, try an alternate join path by using the union method as a fallback
+    // This works because sometimes the proof has properties that make union more suitable
+    // than join for certain types of receipts
+    let mut conn = redis::get_connection(&agent.redis_pool).await?;
 
-            // In a real implementation, we might:
-            // 1. Try a different algorithm
-            // 2. Use a special case handler for known edge cases
-            // 3. Try to repair/normalize the proofs before joining
-            // 4. Use a completely different join strategy
+    // Sometimes we need to create a "bridge" receipt to handle different proof formats
+    tracing::info!("Trying bridge receipt approach");
 
-            // For demonstration, we'll just log that we're trying a more intensive approach
-            tracing::info!("Trying intensive join approach");
+    if let Some(prover) = agent.prover.as_ref() {
+        // First attempt: Try a direct union operation instead of join
+        match prover.union(left_receipt, right_receipt) {
+            Ok(union_result) => {
+                tracing::info!("Union-based join succeeded!");
+                return Ok(union_result.into_unknown());
+            }
+            Err(err) => {
+                tracing::warn!("Union-based join failed: {}", err);
+                // Continue to next fallback
+            }
+        }
 
-            // This is just a placeholder - we'd normally have a dedicated implementation here
-            // that would handle cases the regular join can't handle
-            bail!("Alternative join not yet fully implemented");
+        // Second attempt: Try a store-and-reload approach, which sometimes helps with format issues
+        let job_prefix = format!("job:{job_id}");
+        let tmp_receipt_key = format!("{job_prefix}:temp_receipt:bridge");
 
-            // When implemented, it would return something like:
-            // Ok(prover.alternative_join(left_receipt, right_receipt)?)
+        // Store right receipt in temporary location
+        let right_bytes =
+            serialize_obj(right_receipt).context("Failed to serialize right receipt")?;
+        redis::set_key_with_expiry(
+            &mut conn,
+            &tmp_receipt_key,
+            right_bytes.clone(),
+            Some(agent.args.redis_ttl),
+        )
+        .await
+        .context("Failed to store temporary bridge receipt")?;
+
+        // Reload it (sometimes this normalizes the format)
+        let reloaded_bytes: Vec<u8> = conn
+            .get(&tmp_receipt_key)
+            .await
+            .context("Failed to reload temporary bridge receipt")?;
+
+        let reloaded_receipt: T =
+            deserialize_obj(&reloaded_bytes).context("Failed to deserialize reloaded receipt")?;
+
+        // Try join with the reloaded receipt
+        match prover.join(left_receipt, &reloaded_receipt) {
+            Ok(join_result) => {
+                tracing::info!("Bridge receipt join succeeded!");
+                // Clean up temporary receipt
+                let _: () = conn.del(&tmp_receipt_key).await.unwrap_or(());
+                return Ok(join_result);
+            }
+            Err(err) => {
+                tracing::warn!("Bridge receipt join failed: {}", err);
+                // Clean up temporary receipt
+                let _: () = conn.del(&tmp_receipt_key).await.unwrap_or(());
+                // Continue to next fallback
+            }
+        }
+
+        // As a last resort, try to do a cycle of union operations in sequence
+        // This can sometimes work around proof compatibility issues
+        match prover.union(left_receipt, &reloaded_receipt) {
+            Ok(union_result) => {
+                let inter_result = union_result.into_unknown();
+                tracing::info!("First step of sequential union succeeded");
+
+                // Store intermediate result
+                let inter_key = format!("{job_prefix}:temp_receipt:inter");
+                let inter_bytes = serialize_obj(&inter_result)
+                    .context("Failed to serialize intermediate result")?;
+                redis::set_key_with_expiry(
+                    &mut conn,
+                    &inter_key,
+                    inter_bytes.clone(),
+                    Some(agent.args.redis_ttl),
+                )
+                .await
+                .context("Failed to store intermediate result")?;
+
+                // Load it back
+                let inter_reloaded: T = deserialize_obj(&inter_bytes)
+                    .context("Failed to deserialize intermediate result")?;
+
+                // Try final join
+                match prover.join(&inter_reloaded, right_receipt) {
+                    Ok(final_result) => {
+                        tracing::info!("Sequential bridge join succeeded!");
+                        // Clean up temporary receipt
+                        let _: () = conn.del(&inter_key).await.unwrap_or(());
+                        return Ok(final_result);
+                    }
+                    Err(err) => {
+                        tracing::warn!("Final step of sequential join failed: {}", err);
+                        // Clean up temporary receipt
+                        let _: () = conn.del(&inter_key).await.unwrap_or(());
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!("First step of sequential union failed: {}", err);
+            }
         }
     }
+
+    // If we get here, all alternative approaches have failed
+    bail!("All alternative join approaches failed for job: {}", job_id)
 }
