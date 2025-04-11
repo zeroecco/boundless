@@ -2,7 +2,10 @@
 pub mod task;
 
 use crate::planner::task::{Command, Task};
-use std::{cmp::Ordering, collections::{HashMap, VecDeque}};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, VecDeque},
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -134,10 +137,10 @@ impl Planner {
             match task.command {
                 Command::Segment => {
                     self.completion_times.insert(task_id, self.performance_factors.segment_time);
-                },
+                }
                 Command::Keccak => {
                     self.completion_times.insert(task_id, self.performance_factors.keccak_time);
-                },
+                }
                 Command::Join => {
                     let left = task.depends_on[0];
                     let right = task.depends_on[1];
@@ -146,41 +149,49 @@ impl Planner {
 
                     // Apply parallelism factor to model concurrent execution
                     let max_dependency_time = if self.performance_factors.parallelism_factor > 1.0 {
-                        let parallel_time = (left_time + right_time) / self.performance_factors.parallelism_factor;
+                        let parallel_time =
+                            (left_time + right_time) / self.performance_factors.parallelism_factor;
                         f64::max(f64::max(left_time, right_time), parallel_time)
                     } else {
                         f64::max(left_time, right_time)
                     };
 
-                    let join_op_time = self.performance_factors.join_base_time +
-                        (task.task_height as f64 * self.performance_factors.join_height_factor);
+                    let join_op_time = self.performance_factors.join_base_time
+                        + (task.task_height as f64 * self.performance_factors.join_height_factor);
 
                     self.completion_times.insert(task_id, join_op_time + max_dependency_time);
-                },
+                }
                 Command::Union => {
                     if let Some(left) = task.keccak_depends_on.front().copied() {
                         if let Some(right) = task.keccak_depends_on.get(1).copied() {
-                            let left_time = self.completion_times.get(&left).copied().unwrap_or(0.0);
-                            let right_time = self.completion_times.get(&right).copied().unwrap_or(0.0);
+                            let left_time =
+                                self.completion_times.get(&left).copied().unwrap_or(0.0);
+                            let right_time =
+                                self.completion_times.get(&right).copied().unwrap_or(0.0);
 
                             // Apply parallelism factor to model concurrent execution
-                            let max_dependency_time = if self.performance_factors.parallelism_factor > 1.0 {
-                                let parallel_time = (left_time + right_time) / self.performance_factors.parallelism_factor;
-                                f64::max(f64::max(left_time, right_time), parallel_time)
-                            } else {
-                                f64::max(left_time, right_time)
-                            };
+                            let max_dependency_time =
+                                if self.performance_factors.parallelism_factor > 1.0 {
+                                    let parallel_time = (left_time + right_time)
+                                        / self.performance_factors.parallelism_factor;
+                                    f64::max(f64::max(left_time, right_time), parallel_time)
+                                } else {
+                                    f64::max(left_time, right_time)
+                                };
 
-                            let union_op_time = self.performance_factors.union_base_time +
-                                (task.task_height as f64 * self.performance_factors.union_height_factor);
+                            let union_op_time = self.performance_factors.union_base_time
+                                + (task.task_height as f64
+                                    * self.performance_factors.union_height_factor);
 
-                            self.completion_times.insert(task_id, union_op_time + max_dependency_time);
+                            self.completion_times
+                                .insert(task_id, union_op_time + max_dependency_time);
                         }
                     }
-                },
+                }
                 Command::Finalize => {
                     let depends_on = task.depends_on[0];
-                    let depends_on_time = self.completion_times.get(&depends_on).copied().unwrap_or(0.0);
+                    let depends_on_time =
+                        self.completion_times.get(&depends_on).copied().unwrap_or(0.0);
 
                     let mut keccak_time = 0.0;
                     for &peak in &task.keccak_depends_on {
@@ -189,16 +200,19 @@ impl Planner {
                         }
                     }
 
-                    let finalize_op_time = self.performance_factors.finalize_base_time +
-                        (task.task_height as f64 * self.performance_factors.finalize_height_factor);
+                    let finalize_op_time = self.performance_factors.finalize_base_time
+                        + (task.task_height as f64
+                            * self.performance_factors.finalize_height_factor);
 
                     // Apply parallelism factor for finalize operation
-                    let max_dependency_time = if self.performance_factors.parallelism_factor > 1.0 && keccak_time > 0.0 {
-                        let parallel_time = (depends_on_time + keccak_time) / self.performance_factors.parallelism_factor;
-                        f64::max(f64::max(depends_on_time, keccak_time), parallel_time)
-                    } else {
-                        f64::max(depends_on_time, keccak_time)
-                    };
+                    let max_dependency_time =
+                        if self.performance_factors.parallelism_factor > 1.0 && keccak_time > 0.0 {
+                            let parallel_time = (depends_on_time + keccak_time)
+                                / self.performance_factors.parallelism_factor;
+                            f64::max(f64::max(depends_on_time, keccak_time), parallel_time)
+                        } else {
+                            f64::max(depends_on_time, keccak_time)
+                        };
 
                     self.completion_times.insert(task_id, finalize_op_time + max_dependency_time);
                 }
@@ -242,7 +256,11 @@ impl Planner {
         }
     }
 
-    fn join_segment_with_strategy(&mut self, task_number: usize, strategy: BalanceStrategy) -> Result<usize, PlannerErr> {
+    fn join_segment_with_strategy(
+        &mut self,
+        task_number: usize,
+        strategy: BalanceStrategy,
+    ) -> Result<usize, PlannerErr> {
         let mut new_peak = task_number;
 
         match strategy {
@@ -260,21 +278,41 @@ impl Planner {
                         Ordering::Greater => unreachable!(),
                     }
                 }
-            },
+            }
             BalanceStrategy::BreadthFirst | BalanceStrategy::Adaptive => {
                 // Breadth-first approach - try to join with lowest available peak first
                 // This creates wider, less tall trees which can improve parallelism
                 if !self.peaks.is_empty() {
-                    // Find peak with lowest completion time (roughly corresponds to task complexity)
+                    // Find peak with matching height first (for balanced trees)
+                    // If no matching height, find peak with lowest completion time
+                    let new_height = self.get_task(new_peak).task_height;
                     let mut best_peak_idx = self.peaks.len() - 1;
                     let mut best_time = f64::MAX;
+                    let mut matched_height = false;
 
                     for (i, &peak) in self.peaks.iter().enumerate() {
-                        if let Some(&completion_time) = self.completion_times.get(&peak) {
-                            if completion_time < best_time {
-                                best_time = completion_time;
-                                best_peak_idx = i;
-                            }
+                        let peak_height = self.get_task(peak).task_height;
+                        let completion_time =
+                            self.completion_times.get(&peak).copied().unwrap_or(f64::MAX);
+
+                        // Prioritize matching heights for balanced trees
+                        if peak_height == new_height && !matched_height {
+                            best_peak_idx = i;
+                            best_time = completion_time;
+                            matched_height = true;
+                        }
+                        // If we haven't found a height match, use completion time
+                        else if !matched_height && completion_time < best_time {
+                            best_time = completion_time;
+                            best_peak_idx = i;
+                        }
+                        // If we already found a height match, look for a better match with same height
+                        else if matched_height
+                            && peak_height == new_height
+                            && completion_time < best_time
+                        {
+                            best_time = completion_time;
+                            best_peak_idx = i;
                         }
                     }
 
@@ -302,8 +340,9 @@ impl Planner {
         if self.use_union {
             // Improved union strategy for keccak operations
             // We'll use a similar breadth-first approach to join keccak tasks when possible
-            if self.balance_strategy == BalanceStrategy::BreadthFirst ||
-               (self.balance_strategy == BalanceStrategy::Adaptive && self.segment_count > 40) {
+            if self.balance_strategy == BalanceStrategy::BreadthFirst
+                || (self.balance_strategy == BalanceStrategy::Adaptive && self.segment_count > 40)
+            {
                 // Try to find the keccak task with minimum completion time
                 if !self.keccak_peaks.is_empty() {
                     let mut min_time = f64::MAX;
@@ -395,11 +434,8 @@ impl Planner {
 
     pub fn finish(&mut self) -> Result<usize, PlannerErr> {
         // Finish unions first
-        let keccak_depends_on = if self.use_union {
-            self.finish_unions()
-        } else {
-            Some(self.keccak_peaks.clone())
-        };
+        let keccak_depends_on =
+            if self.use_union { self.finish_unions() } else { Some(self.keccak_peaks.clone()) };
 
         // Return error if plan has not yet started
         if self.peaks.is_empty() {
@@ -413,35 +449,82 @@ impl Planner {
             if self.peaks.len() >= 2 {
                 let mut peaks: Vec<_> = self.peaks.drain(..).collect();
 
-                // Sort peaks by estimated completion time
-                peaks.sort_by(|&a, &b| {
-                    let time_a = self.completion_times.get(&a).copied().unwrap_or(0.0);
-                    let time_b = self.completion_times.get(&b).copied().unwrap_or(0.0);
-                    time_a.partial_cmp(&time_b).unwrap()
-                });
+                // Group peaks by height for better balancing
+                let mut height_groups: HashMap<u32, Vec<usize>> = HashMap::new();
+                for &peak in &peaks {
+                    let height = self.get_task(peak).task_height;
+                    height_groups.entry(height).or_default().push(peak);
+                }
 
-                // Join peaks in pairs to create a balanced tree
-                while peaks.len() >= 2 {
-                    let mut new_peaks = Vec::new();
+                // Process same-height groups first to build a balanced tree
+                let mut new_peaks = Vec::new();
 
-                    // Process pairs of peaks
-                    for chunk in peaks.chunks(2) {
-                        if chunk.len() == 2 {
-                            let left = chunk[0];
-                            let right = chunk[1];
-                            let join_peak = self.enqueue_join(left, right);
-                            new_peaks.push(join_peak);
-                        } else {
-                            // Add remaining odd peak
-                            new_peaks.push(chunk[0]);
-                        }
+                // Sort heights in ascending order for processing
+                let mut heights: Vec<_> = height_groups.keys().copied().collect();
+                heights.sort_unstable();
+
+                // Process each height group
+                for height in heights {
+                    let mut peaks_of_height = height_groups.remove(&height).unwrap_or_default();
+
+                    // Sort peaks within a height group by completion time
+                    peaks_of_height.sort_by(|&a, &b| {
+                        let time_a = self.completion_times.get(&a).copied().unwrap_or(0.0);
+                        let time_b = self.completion_times.get(&b).copied().unwrap_or(0.0);
+                        time_a.partial_cmp(&time_b).unwrap()
+                    });
+
+                    // Join peaks of the same height in pairs
+                    while peaks_of_height.len() >= 2 {
+                        let right = peaks_of_height.pop().unwrap();
+                        let left = peaks_of_height.pop().unwrap();
+                        let join_peak = self.enqueue_join(left, right);
+                        new_peaks.push(join_peak);
                     }
 
-                    peaks = new_peaks;
+                    // Add any remaining peak
+                    new_peaks.extend(peaks_of_height);
+                }
+
+                // Continue joining until we have a single peak
+                while new_peaks.len() >= 2 {
+                    let mut next_peaks = Vec::new();
+
+                    // Again, group by height
+                    let mut height_groups: HashMap<u32, Vec<usize>> = HashMap::new();
+                    for &peak in &new_peaks {
+                        let height = self.get_task(peak).task_height;
+                        height_groups.entry(height).or_default().push(peak);
+                    }
+
+                    let mut heights: Vec<_> = height_groups.keys().copied().collect();
+                    heights.sort_unstable();
+
+                    // Process each height group
+                    for height in heights {
+                        let mut peaks_of_height = height_groups.remove(&height).unwrap_or_default();
+
+                        peaks_of_height.sort_by(|&a, &b| {
+                            let time_a = self.completion_times.get(&a).copied().unwrap_or(0.0);
+                            let time_b = self.completion_times.get(&b).copied().unwrap_or(0.0);
+                            time_a.partial_cmp(&time_b).unwrap()
+                        });
+
+                        while peaks_of_height.len() >= 2 {
+                            let right = peaks_of_height.pop().unwrap();
+                            let left = peaks_of_height.pop().unwrap();
+                            let join_peak = self.enqueue_join(left, right);
+                            next_peaks.push(join_peak);
+                        }
+
+                        next_peaks.extend(peaks_of_height);
+                    }
+
+                    new_peaks = next_peaks;
                 }
 
                 // Add the final peak back to self.peaks
-                self.peaks.extend(peaks);
+                self.peaks.extend(new_peaks);
             }
 
             // Add the Finalize task
@@ -479,10 +562,8 @@ impl Planner {
         let task_number = self.next_task_number();
 
         // Calculate the task height based on input task heights
-        let task_height = 1 + u32::max(
-            self.get_task(left).task_height,
-            self.get_task(right).task_height,
-        );
+        let task_height =
+            1 + u32::max(self.get_task(left).task_height, self.get_task(right).task_height);
 
         self.tasks.push(Task::new_join(task_number, task_height, left, right));
 
@@ -492,12 +573,13 @@ impl Planner {
 
         // Join time is max of input times plus join operation time
         // We use a sliding scale based on height to model real-world performance
-        let join_op_time = self.performance_factors.join_base_time +
-            (task_height as f64 * self.performance_factors.join_height_factor);
+        let join_op_time = self.performance_factors.join_base_time
+            + (task_height as f64 * self.performance_factors.join_height_factor);
 
         // Apply parallelism factor to model concurrent execution when possible
         let max_dependency_time = if self.performance_factors.parallelism_factor > 1.0 {
-            let parallel_time = (left_time + right_time) / self.performance_factors.parallelism_factor;
+            let parallel_time =
+                (left_time + right_time) / self.performance_factors.parallelism_factor;
             f64::max(f64::max(left_time, right_time), parallel_time)
         } else {
             f64::max(left_time, right_time)
@@ -511,10 +593,8 @@ impl Planner {
 
     fn enqueue_union(&mut self, left: usize, right: usize) -> usize {
         let task_number = self.next_task_number();
-        let task_height = 1 + u32::max(
-            self.get_task(left).task_height,
-            self.get_task(right).task_height,
-        );
+        let task_height =
+            1 + u32::max(self.get_task(left).task_height, self.get_task(right).task_height);
 
         self.tasks.push(Task::new_union(task_number, task_height, left, right));
 
@@ -523,12 +603,13 @@ impl Planner {
         let right_time = self.completion_times.get(&right).copied().unwrap_or(0.0);
 
         // Union operations are typically more expensive than joins
-        let union_op_time = self.performance_factors.union_base_time +
-            (task_height as f64 * self.performance_factors.union_height_factor);
+        let union_op_time = self.performance_factors.union_base_time
+            + (task_height as f64 * self.performance_factors.union_height_factor);
 
         // Apply parallelism factor to model concurrent execution
         let max_dependency_time = if self.performance_factors.parallelism_factor > 1.0 {
-            let parallel_time = (left_time + right_time) / self.performance_factors.parallelism_factor;
+            let parallel_time =
+                (left_time + right_time) / self.performance_factors.parallelism_factor;
             f64::max(f64::max(left_time, right_time), parallel_time)
         } else {
             f64::max(left_time, right_time)
@@ -574,16 +655,18 @@ impl Planner {
 
         // Calculate finalize completion time
         let depends_on_time = self.completion_times.get(&depends_on).copied().unwrap_or(0.0);
-        let finalize_op_time = self.performance_factors.finalize_base_time +
-            (task_height as f64 * self.performance_factors.finalize_height_factor);
+        let finalize_op_time = self.performance_factors.finalize_base_time
+            + (task_height as f64 * self.performance_factors.finalize_height_factor);
 
         // Apply parallelism factor for finalize operation
-        let max_dependency_time = if self.performance_factors.parallelism_factor > 1.0 && keccak_time > 0.0 {
-            let parallel_time = (depends_on_time + keccak_time) / self.performance_factors.parallelism_factor;
-            f64::max(f64::max(depends_on_time, keccak_time), parallel_time)
-        } else {
-            f64::max(depends_on_time, keccak_time)
-        };
+        let max_dependency_time =
+            if self.performance_factors.parallelism_factor > 1.0 && keccak_time > 0.0 {
+                let parallel_time =
+                    (depends_on_time + keccak_time) / self.performance_factors.parallelism_factor;
+                f64::max(f64::max(depends_on_time, keccak_time), parallel_time)
+            } else {
+                f64::max(depends_on_time, keccak_time)
+            };
 
         // Finalize time is max of dependencies plus finalize operation time
         let completion_time = finalize_op_time + max_dependency_time;
@@ -816,9 +899,11 @@ mod tests {
         let finalize_task = tasks.iter().find(|t| matches!(t.command, Command::Finalize)).unwrap();
 
         // In breadth-first, total tree height should be lower
-        assert!(finalize_task.task_height <= 4,
-                "Breadth-first strategy should have lower tree height, got {}",
-                finalize_task.task_height);
+        assert!(
+            finalize_task.task_height <= 4,
+            "Breadth-first strategy should have lower tree height, got {}",
+            finalize_task.task_height
+        );
     }
 
     #[test]
@@ -841,8 +926,10 @@ mod tests {
         let finalize_task = planner.get_task(planner.last_task.unwrap());
 
         // In adaptive strategy with many segments, the tree should be relatively balanced
-        println!("Adaptive strategy with 60 segments produced task height: {}",
-                 finalize_task.task_height);
+        println!(
+            "Adaptive strategy with 60 segments produced task height: {}",
+            finalize_task.task_height
+        );
     }
 
     #[test]

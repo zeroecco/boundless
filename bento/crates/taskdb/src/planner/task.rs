@@ -70,7 +70,7 @@ impl Task {
                 } else {
                     Priority::Low
                 }
-            },
+            }
 
             // Segments are high priority because they're needed for joins
             Command::Segment => Priority::High,
@@ -84,7 +84,7 @@ impl Task {
                 } else {
                     Priority::Normal
                 }
-            },
+            }
 
             // Keccak operations can be executed in parallel with segment operations
             Command::Keccak => Priority::High,

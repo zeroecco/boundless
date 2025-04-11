@@ -26,10 +26,10 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .await
         .context("Failed to get redis keys for left and right receipts")?;
 
-    let left_receipt = deserialize_obj(&left_receipt_vec)
-        .context("Failed to deserialize left receipt")?;
-    let right_receipt = deserialize_obj(&right_receipt_vec)
-        .context("Failed to deserialize right receipt")?;
+    let left_receipt =
+        deserialize_obj(&left_receipt_vec).context("Failed to deserialize left receipt")?;
+    let right_receipt =
+        deserialize_obj(&right_receipt_vec).context("Failed to deserialize right receipt")?;
 
     tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
 
