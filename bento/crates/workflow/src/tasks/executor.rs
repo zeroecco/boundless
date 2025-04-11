@@ -461,6 +461,25 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     // Generate tasks
     writer_tasks.spawn(async move {
         let mut planner = Planner::default();
+        // Enable union operations by default for better task execution
+        planner.use_union();
+        // Set adaptive balance strategy for optimal performance
+        planner.set_balance_strategy(taskdb::planner::BalanceStrategy::Adaptive);
+
+        // Set optimized performance factors based on benchmarking
+        let perf_factors = taskdb::planner::PerformanceFactors {
+            // Increase parallelism factor to better model modern hardware
+            parallelism_factor: 3.0,
+            segment_time: 3.0,
+            keccak_time: 2.0,
+            join_base_time: 1.0,
+            join_height_factor: 1.0,
+            union_base_time: 1.0,
+            union_height_factor: 1.0,
+            finalize_base_time: 2.0,
+            finalize_height_factor: 0.3,
+        };
+        planner.set_performance_factors(perf_factors);
         while let Some(task_type) = task_rx.recv().await {
             if exec_only {
                 continue;
