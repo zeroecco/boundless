@@ -247,17 +247,23 @@ impl RetryTask for ProvingService {
 mod tests {
     use super::*;
     use crate::{
+        benchmark_directive,
         db::SqliteDb,
         now_timestamp,
         provers::{encode_input, DefaultProver},
         OrderStatus,
     };
-    use alloy::primitives::{Bytes, U256};
-    use boundless_market::contracts::{
-        Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+    use alloy::primitives::{Bytes, FixedBytes, U256};
+    use boundless_market::{
+        contracts::{
+            Input, InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+        },
+        input::InputBuilder,
+        storage::{MockStorageProvider, StorageProvider},
     };
     use chrono::Utc;
     use guest_util::{ECHO_ELF, ECHO_ID};
+    use risc0_ethereum_contracts::selector::Selector;
     use risc0_zkvm::sha::Digest;
     use std::sync::Arc;
     use tracing_test::traced_test;
@@ -404,5 +410,89 @@ mod tests {
         assert_eq!(order.proof_id, Some(proof_id));
 
         assert!(logs_contain("Found 1 proofs currently proving"));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn prove_benchmark_order() {
+        let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
+        let prover_secret = vec![0x1, 0x2, 0x3, 0x4];
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().prover.benchmarking_prover_secret =
+                Some(prover_secret.clone());
+        }
+
+        let prover: ProverObj = Arc::new(DefaultProver::new());
+
+        let image_id = Digest::from(ECHO_ID).to_string();
+        prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
+
+        // Build the correctly formatted input and serve it from a mock provider
+        let guest_env = InputBuilder::new().write(b"test input data").unwrap().build_env().unwrap();
+        let storage = MockStorageProvider::start();
+        let input_url = storage.upload_input(&guest_env.encode().unwrap()).await.unwrap();
+
+        let proving_service =
+            ProvingService::new(db.clone(), prover, config.clone()).await.unwrap();
+
+        let order_id = U256::ZERO;
+        let min_price = 2;
+        let max_price = 4;
+
+        let order = Order {
+            status: OrderStatus::Locking,
+            updated_at: Utc::now(),
+            target_timestamp: Some(0),
+            request: ProofRequest {
+                id: U256::ZERO,
+                requirements: Requirements::new(
+                    Digest::ZERO,
+                    Predicate {
+                        predicateType: PredicateType::PrefixMatch,
+                        data: Default::default(),
+                    },
+                )
+                .with_selector(FixedBytes::from(Selector::Groth16V2_0 as u32)), // benchmarks should not be batched
+                imageUrl: "http://risczero.com/image".into(),
+                input: Input {
+                    inputType: InputType::Url,
+                    data: format!(
+                        "{}#{}",
+                        input_url,
+                        benchmark_directive(&prover_secret) // Directive indicates this should be process as a benchmark
+                    )
+                    .as_bytes()
+                    .to_vec()
+                    .into(),
+                },
+                offer: Offer {
+                    minPrice: U256::from(min_price),
+                    maxPrice: U256::from(max_price),
+                    biddingStart: now_timestamp(),
+                    rampUpPeriod: 1,
+                    lockTimeout: 100,
+                    timeout: 100,
+                    lockStake: U256::from(10),
+                },
+            },
+            image_id: Some(image_id),
+            input_id: None, // must be None to force checking the URL
+            proof_id: None,
+            compressed_proof_id: None,
+            expire_timestamp: None,
+            client_sig: Bytes::new(),
+            lock_price: None,
+            error_msg: None,
+        };
+
+        db.add_order(order_id, order.clone()).await.unwrap();
+
+        proving_service.prove_order(order_id, order).await.unwrap();
+
+        assert!(logs_contain("Benchmark detected. Prover secret added to input data"));
+
+        let order = db.get_order(order_id).await.unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::SkipAggregation);
     }
 }

@@ -658,7 +658,7 @@ async fn upload_input_uri(
                     if input_uri.uri().fragment().is_some_and(|f| f == benchmark_directive(&secret))
                     {
                         input_data = secret.iter().copied().chain(input_data).collect();
-                        tracing::debug!("Prover secret added to input data");
+                        tracing::debug!("Benchmark detected. Prover secret added to input data");
                     }
                 }
 
