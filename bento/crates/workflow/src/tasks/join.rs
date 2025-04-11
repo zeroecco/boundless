@@ -25,16 +25,6 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let left_path_key = format!("{recur_receipts_prefix}:{}", request.left);
     let right_path_key = format!("{recur_receipts_prefix}:{}", request.right);
 
-    // Check if both receipts exist before attempting to join
-    let keys_exist: Vec<bool> = conn
-        .exists(vec![&left_path_key, &right_path_key])
-        .await
-        .context("Failed to check if receipt keys exist in Redis")?;
-
-    if keys_exist.iter().any(|&exists| !exists) {
-        bail!("One or more receipts do not exist: {left_path_key}, {right_path_key}");
-    }
-
     let (left_receipt_vec, right_receipt_vec): (Vec<u8>, Vec<u8>) = conn
         .mget(vec![left_path_key, right_path_key])
         .await

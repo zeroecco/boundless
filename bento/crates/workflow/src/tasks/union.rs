@@ -25,16 +25,6 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let left_receipt_key = format!("{keccak_receipts_prefix}:{}", request.left);
     let right_receipt_key = format!("{keccak_receipts_prefix}:{}", request.right);
 
-    // Check if both receipts exist before attempting to union
-    let keys_exist: Vec<bool> = conn
-        .exists(vec![&left_receipt_key, &right_receipt_key])
-        .await
-        .context("Failed to check if receipt keys exist in Redis")?;
-
-    if keys_exist.iter().any(|&exists| !exists) {
-        bail!("One or more receipts do not exist: {left_receipt_key}, {right_receipt_key}");
-    }
-
     // get assets from redis
     let (left_receipt_bytes, right_receipt_bytes): (Vec<u8>, Vec<u8>) = conn
         .mget(vec![&left_receipt_key, &right_receipt_key])
