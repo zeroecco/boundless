@@ -21,19 +21,16 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let left_path_key = format!("{recur_receipts_prefix}:{}", request.left);
     let right_path_key = format!("{recur_receipts_prefix}:{}", request.right);
 
-    let left_receipt: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&left_path_key)
+    let (left_receipt_vec, right_receipt_vec): (Vec<u8>, Vec<u8>) = conn
+        .mget(vec![left_path_key, right_path_key])
         .await
-        .with_context(|| format!("segment data not found for segment key: {left_path_key}"))?;
-    let left_receipt =
-        deserialize_obj(&left_receipt).context("Failed to deserialize left receipt")?;
+        .context("Failed to get redis keys for left and right receipts")?;
 
-    let right_receipt: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&right_path_key)
-        .await
-        .with_context(|| format!("segment data not found for segment key: {right_path_key}"))?;
+    let left_receipt =
+        deserialize_obj(&left_receipt_vec).context("Failed to deserialize left receipt")?;
+
     let right_receipt =
-        deserialize_obj(&right_receipt).context("Failed to deserialize right receipt")?;
+        deserialize_obj(&right_receipt_vec).context("Failed to deserialize right receipt")?;
 
     tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
 

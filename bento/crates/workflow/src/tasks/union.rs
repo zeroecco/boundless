@@ -22,15 +22,14 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let right_receipt_key = format!("{keccak_receipts_prefix}:{0}", request.right);
 
     // get assets from redis
-    let left_receipt_bytes: Vec<u8> = conn.get(&left_receipt_key).await.with_context(|| {
-        format!("segment data not found for root receipt key: {left_receipt_key}")
-    })?;
+    let (left_receipt_bytes, right_receipt_bytes): (Vec<u8>, Vec<u8>) = conn
+        .mget(vec![&left_receipt_key, &right_receipt_key])
+        .await
+        .context("Failed to get redis keys for left and right receipts")?;
+
     let left_receipt =
         deserialize_obj(&left_receipt_bytes).context("Failed to deserialize left receipt")?;
 
-    let right_receipt_bytes: Vec<u8> = conn.get(&right_receipt_key).await.with_context(|| {
-        format!("segment data not found for root receipt key: {right_receipt_key}")
-    })?;
     let right_receipt =
         deserialize_obj(&right_receipt_bytes).context("Failed to deserialize right receipt")?;
 
