@@ -265,59 +265,34 @@ impl Planner {
 
         match strategy {
             BalanceStrategy::Traditional => {
-                // Traditional approach - build balanced binary tree
-                while let Some(smallest_peak) = self.peaks.last().copied() {
-                    let new_height = self.get_task(new_peak).task_height;
-                    let smallest_peak_height = self.get_task(smallest_peak).task_height;
-                    match new_height.cmp(&smallest_peak_height) {
-                        Ordering::Less => break,
-                        Ordering::Equal => {
-                            self.peaks.pop();
-                            new_peak = self.enqueue_join(smallest_peak, new_peak);
-                        }
-                        Ordering::Greater => unreachable!(),
-                    }
+                // Critical fix: Always join with the most recently added peak (LIFO order)
+                // This ensures we're joining adjoining segments to avoid hash mismatch errors
+                if let Some(last_peak) = self.peaks.pop() {
+                    // Always join with the last peak to maintain adjacency
+                    tracing::info!(
+                        "Joining with most recent peak {} + {} for adjacency",
+                        last_peak,
+                        new_peak
+                    );
+                    new_peak = self.enqueue_join(last_peak, new_peak);
                 }
             }
             BalanceStrategy::BreadthFirst | BalanceStrategy::Adaptive => {
-                // Breadth-first approach - try to join with lowest available peak first
-                // This creates wider, less tall trees which can improve parallelism
+                // For breadth-first, we still want to maintain adjoining segment joins
+                // but we need to be smarter about which peaks to join
                 if !self.peaks.is_empty() {
-                    // Find peak with matching height first (for balanced trees)
-                    // If no matching height, find peak with lowest completion time
-                    let new_height = self.get_task(new_peak).task_height;
-                    let mut best_peak_idx = self.peaks.len() - 1;
-                    let mut best_time = f64::MAX;
-                    let mut matched_height = false;
+                    // Prioritize joining with the most recently added peak for adjacency
+                    // This is critical to avoid hash mismatch errors between non-adjacent segments
+                    let last_idx = self.peaks.len() - 1;
+                    let join_with = self.peaks.remove(last_idx);
 
-                    for (i, &peak) in self.peaks.iter().enumerate() {
-                        let peak_height = self.get_task(peak).task_height;
-                        let completion_time =
-                            self.completion_times.get(&peak).copied().unwrap_or(f64::MAX);
+                    // Log the join operation for debugging
+                    tracing::info!(
+                        "Joining segments {} and {} for adjacency (breadth-first)",
+                        join_with,
+                        new_peak
+                    );
 
-                        // Prioritize matching heights for balanced trees
-                        if peak_height == new_height && !matched_height {
-                            best_peak_idx = i;
-                            best_time = completion_time;
-                            matched_height = true;
-                        }
-                        // If we haven't found a height match, use completion time
-                        else if !matched_height && completion_time < best_time {
-                            best_time = completion_time;
-                            best_peak_idx = i;
-                        }
-                        // If we already found a height match, look for a better match with same height
-                        else if matched_height
-                            && peak_height == new_height
-                            && completion_time < best_time
-                        {
-                            best_time = completion_time;
-                            best_peak_idx = i;
-                        }
-                    }
-
-                    // Join with the best peak
-                    let join_with = self.peaks.remove(best_peak_idx);
                     new_peak = self.enqueue_join(join_with, new_peak);
                 }
             }
@@ -391,41 +366,36 @@ impl Planner {
             return None;
         }
 
-        // Join remaining peaks if using union
-        // Use a breadth-first approach for unioning remaining peaks
-        // to minimize the overall tree height
+        // Join remaining peaks if using union - preserving adjacency
+        // to avoid hash mismatch errors and ensure unions work properly
         if 2 <= self.keccak_peaks.len() && self.use_union {
             let mut peaks: Vec<_> = self.keccak_peaks.drain(..).collect();
 
-            // Sort peaks by estimated completion time to join faster tasks first
-            peaks.sort_by(|&a, &b| {
-                let time_a = self.completion_times.get(&a).copied().unwrap_or(0.0);
-                let time_b = self.completion_times.get(&b).copied().unwrap_or(0.0);
-                time_a.partial_cmp(&time_b).unwrap()
-            });
+            // CRITICAL: Sort peaks numerically to preserve adjacency
+            // Lower peak numbers were created earlier
+            peaks.sort();
 
-            // Join peaks in a balanced way
-            while peaks.len() >= 2 {
-                let mut new_peaks = Vec::new();
+            tracing::info!(
+                "Ordered remaining keccak peaks for adjacency-preserving unions: {:?}",
+                peaks
+            );
 
-                // Process pairs of peaks
-                for chunk in peaks.chunks(2) {
-                    if chunk.len() == 2 {
-                        let left = chunk[0];
-                        let right = chunk[1];
-                        let union_peak = self.enqueue_union(left, right);
-                        new_peaks.push(union_peak);
-                    } else {
-                        // Add remaining odd peak
-                        new_peaks.push(chunk[0]);
-                    }
-                }
-
-                peaks = new_peaks;
+            // Union peaks sequentially, preserving their original ordering
+            // This creates a right-leaning tree but ensures all unions are between adjacent segments
+            let mut final_peak = peaks[0];
+            for i in 1..peaks.len() {
+                tracing::info!(
+                    "Final unioning of keccak segments {} and {} for adjacency",
+                    final_peak,
+                    peaks[i]
+                );
+                final_peak = self.enqueue_union(final_peak, peaks[i]);
             }
 
-            // Add the final peak back to keccak_peaks
-            self.keccak_peaks.extend(peaks);
+            // Add the final peak back
+            self.keccak_peaks.push(final_peak);
+
+            tracing::info!("Final keccak peak after adjacency-preserving unions: {}", final_peak);
         }
 
         // Return only highest peak
@@ -444,87 +414,37 @@ impl Planner {
 
         // Finish the plan (if it's not yet finished)
         if self.last_task.is_none() {
-            // Use a better strategy for joining remaining peaks
-            // to create a more balanced join tree
+            // Join remaining peaks in a way that preserves adjacency
+            // This is critical to avoid hash mismatch errors
             if self.peaks.len() >= 2 {
+                // Convert to a vector for easier manipulation
                 let mut peaks: Vec<_> = self.peaks.drain(..).collect();
 
-                // Group peaks by height for better balancing
-                let mut height_groups: HashMap<u32, Vec<usize>> = HashMap::new();
-                for &peak in &peaks {
-                    let height = self.get_task(peak).task_height;
-                    height_groups.entry(height).or_default().push(peak);
+                // CRITICAL: Sort peaks numerically to preserve adjacency
+                // Lower peak numbers were created earlier
+                peaks.sort();
+
+                tracing::info!(
+                    "Ordered remaining peaks for adjacency-preserving joins: {:?}",
+                    peaks
+                );
+
+                // Join peaks sequentially, preserving their original ordering
+                // This creates a right-leaning tree but ensures all joins are between adjacent segments
+                let mut final_peak = peaks[0];
+                for i in 1..peaks.len() {
+                    tracing::info!(
+                        "Final joining of segments {} and {} for adjacency",
+                        final_peak,
+                        peaks[i]
+                    );
+                    final_peak = self.enqueue_join(final_peak, peaks[i]);
                 }
 
-                // Process same-height groups first to build a balanced tree
-                let mut new_peaks = Vec::new();
+                // Add the final peak back
+                self.peaks.push(final_peak);
 
-                // Sort heights in ascending order for processing
-                let mut heights: Vec<_> = height_groups.keys().copied().collect();
-                heights.sort_unstable();
-
-                // Process each height group
-                for height in heights {
-                    let mut peaks_of_height = height_groups.remove(&height).unwrap_or_default();
-
-                    // Sort peaks within a height group by completion time
-                    peaks_of_height.sort_by(|&a, &b| {
-                        let time_a = self.completion_times.get(&a).copied().unwrap_or(0.0);
-                        let time_b = self.completion_times.get(&b).copied().unwrap_or(0.0);
-                        time_a.partial_cmp(&time_b).unwrap()
-                    });
-
-                    // Join peaks of the same height in pairs
-                    while peaks_of_height.len() >= 2 {
-                        let right = peaks_of_height.pop().unwrap();
-                        let left = peaks_of_height.pop().unwrap();
-                        let join_peak = self.enqueue_join(left, right);
-                        new_peaks.push(join_peak);
-                    }
-
-                    // Add any remaining peak
-                    new_peaks.extend(peaks_of_height);
-                }
-
-                // Continue joining until we have a single peak
-                while new_peaks.len() >= 2 {
-                    let mut next_peaks = Vec::new();
-
-                    // Again, group by height
-                    let mut height_groups: HashMap<u32, Vec<usize>> = HashMap::new();
-                    for &peak in &new_peaks {
-                        let height = self.get_task(peak).task_height;
-                        height_groups.entry(height).or_default().push(peak);
-                    }
-
-                    let mut heights: Vec<_> = height_groups.keys().copied().collect();
-                    heights.sort_unstable();
-
-                    // Process each height group
-                    for height in heights {
-                        let mut peaks_of_height = height_groups.remove(&height).unwrap_or_default();
-
-                        peaks_of_height.sort_by(|&a, &b| {
-                            let time_a = self.completion_times.get(&a).copied().unwrap_or(0.0);
-                            let time_b = self.completion_times.get(&b).copied().unwrap_or(0.0);
-                            time_a.partial_cmp(&time_b).unwrap()
-                        });
-
-                        while peaks_of_height.len() >= 2 {
-                            let right = peaks_of_height.pop().unwrap();
-                            let left = peaks_of_height.pop().unwrap();
-                            let join_peak = self.enqueue_join(left, right);
-                            next_peaks.push(join_peak);
-                        }
-
-                        next_peaks.extend(peaks_of_height);
-                    }
-
-                    new_peaks = next_peaks;
-                }
-
-                // Add the final peak back to self.peaks
-                self.peaks.extend(new_peaks);
+                tracing::info!("Final peak after adjacency-preserving joins: {}", final_peak);
             }
 
             // Add the Finalize task
