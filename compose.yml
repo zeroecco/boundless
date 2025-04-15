@@ -89,7 +89,7 @@ services:
       # JOIN_STREAM: 1
       # COPROC_STREAM: 1
 
-    entrypoint: /app/agent -t exec --segment-po2 ${SEGMENT_SIZE}
+    entrypoint: /app/agent -t executor --segment-po2 ${SEGMENT_SIZE}
 
   aux_agent:
     image: agent

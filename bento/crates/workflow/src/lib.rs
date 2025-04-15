@@ -166,7 +166,7 @@ impl Agent {
     pub async fn poll_work(&self) -> Result<()> {
         let term_sig = Self::create_sig_monitor().context("Failed to create signal hook")?;
         let mut conn = self.redis_conn.clone();
-        let queue_name = format!("queue:{}", self.args.task_stream);
+        let queue_name = self.args.task_stream.clone();
         tracing::info!("Starting work polling for queue: {}", queue_name);
         tracing::info!("Agent configuration - task_stream: {}, poll_time: {}s", self.args.task_stream, self.args.poll_time);
 
