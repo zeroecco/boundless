@@ -245,17 +245,22 @@ async fn image_upload_put(
     Path(image_id): Path<String>,
     body: Body,
 ) -> Result<(), AppError> {
+    tracing::info!("Starting ELF upload for image_id: {}", image_id);
     let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
+    tracing::debug!("Received {} bytes for ELF", body_bytes.len());
 
     let comp_img_id = compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
     if comp_img_id != image_id {
+        tracing::error!("Image ID mismatch: requested={}, computed={}", image_id, comp_img_id);
         return Err(AppError::ImageIdMismatch(image_id, comp_img_id));
     }
+    tracing::info!("Image ID verified: {}", image_id);
 
     let mut conn = state.redis_client.lock().await;
     let elf_key = format!("elf:{}", image_id);
     conn.set_ex(&elf_key, body_bytes.to_vec(), 60 * 60 * 2).await
         .context("Failed to store ELF in Redis")?;
+    tracing::info!("Successfully stored ELF in Redis with key: {}", elf_key);
 
     Ok(())
 }
@@ -289,12 +294,15 @@ async fn input_upload_put(
     Path(input_id): Path<String>,
     body: Body,
 ) -> Result<(), AppError> {
+    tracing::info!("Starting input upload for input_id: {}", input_id);
     let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
+    tracing::debug!("Received {} bytes for input", body_bytes.len());
 
     let mut conn = state.redis_client.lock().await;
     let input_key = format!("input:{}", input_id);
     conn.set_ex(&input_key, body_bytes.to_vec(), 60 * 60 * 2).await
         .context("Failed to store input in Redis")?;
+    tracing::info!("Successfully stored input in Redis with key: {}", input_key);
 
     Ok(())
 }
@@ -351,21 +359,28 @@ async fn prove_stark(
     let mut conn = state.redis_client.lock().await;
 
     let elf_key = format!("elf:{}", start_req.img);
+    tracing::info!("Fetching ELF data from Redis with key: {}", elf_key);
     let elf_data: Vec<u8> = conn.get(&elf_key).await
         .context("Failed to get ELF data from Redis")?;
+    tracing::debug!("Retrieved {} bytes of ELF data", elf_data.len());
 
     let input_key = format!("input:{}", start_req.input);
+    tracing::info!("Fetching input data from Redis with key: {}", input_key);
     let input_data: Vec<u8> = conn.get(&input_key).await
         .context("Failed to get input data from Redis")?;
+    tracing::debug!("Retrieved {} bytes of input data", input_data.len());
 
     let job_id = Uuid::new_v4();
+    tracing::info!("Generated new job_id: {}", job_id);
 
     // Store data with job_id keys
     let job_elf_key = format!("elf:{}", job_id);
+    tracing::info!("Storing ELF data with job key: {}", job_elf_key);
     conn.set_ex(&job_elf_key, elf_data, 60 * 60 * 2).await
         .context("Failed to store ELF with job_id")?;
 
     let job_input_key = format!("input:{}", job_id);
+    tracing::info!("Storing input data with job key: {}", job_input_key);
     conn.set_ex(&job_input_key, input_data, 60 * 60 * 2).await
         .context("Failed to store input with job_id")?;
 
