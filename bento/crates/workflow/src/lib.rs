@@ -206,53 +206,77 @@ impl Agent {
 
     /// Process a task and dispatch based on the task type
     pub async fn process_work(&self, task: Task) -> Result<()> {
+        let task_clone = task.clone();
+        tracing::info!("Processing task: job_id={}, task_id={}", task_clone.job_id, task_clone.task_id);
+
         let task_def: TaskType = serde_json::from_value(task.task_def.clone())
-            .with_context(|| format!("Invalid task_def: {}:{}", task.job_id, task.task_id))?;
+            .with_context(|| format!("Invalid task_def: {}:{}", task_clone.job_id, task_clone.task_id))?;
+        tracing::debug!("Task definition parsed: {:?}", task_def);
 
         // run the task
         match task_def {
             TaskType::Executor(_req) => {
+                tracing::info!("Starting executor task for job_id={}", task_clone.job_id);
                 tasks::executor::executor(self.redis_conn.clone(), task)
                     .await
-                    .map_err(|e| anyhow::anyhow!("Executor failed: {}", e))?;
+                    .map_err(|e| {
+                        tracing::error!("Executor failed for job_id={}: {}", task_clone.job_id, e);
+                        anyhow::anyhow!("Executor failed: {}", e)
+                    })?;
+                tracing::info!("Executor task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Prove(req) => {
-                tasks::prove::prover(self, &task.job_id, &task.task_id, &req)
+                tracing::info!("Starting prove task for job_id={}", task_clone.job_id);
+                tasks::prove::prover(self, &task_clone.job_id, &task_clone.task_id, &req)
                     .await
                     .context("Prove failed")?;
+                tracing::info!("Prove task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Join(req) => {
-                tasks::join::join(self, &task.job_id, &req)
+                tracing::info!("Starting join task for job_id={}", task_clone.job_id);
+                tasks::join::join(self, &task_clone.job_id, &req)
                     .await
                     .context("Join failed")?;
+                tracing::info!("Join task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Resolve(req) => {
-                let _ = tasks::resolve::resolver(self, &task.job_id, &req)
+                tracing::info!("Starting resolve task for job_id={}", task_clone.job_id);
+                tasks::resolve::resolver(self, &task_clone.job_id, &req)
                     .await
                     .context("Resolve failed")?;
+                tracing::info!("Resolve task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Finalize(req) => {
-                tasks::finalize::finalize(self, &task.job_id, &req)
+                tracing::info!("Starting finalize task for job_id={}", task_clone.job_id);
+                tasks::finalize::finalize(self, &task_clone.job_id, &req)
                     .await
                     .context("Finalize failed")?;
+                tracing::info!("Finalize task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Snark(req) => {
-                tasks::snark::stark2snark(self, &task.job_id.to_string(), &req)
+                tracing::info!("Starting snark task for job_id={}", task_clone.job_id);
+                tasks::snark::stark2snark(self, &task_clone.job_id.to_string(), &req)
                     .await
                     .context("Snark failed")?;
+                tracing::info!("Snark task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Keccak(req) => {
-                tasks::keccak::keccak(self, &task.job_id, &task.task_id, &req)
+                tracing::info!("Starting keccak task for job_id={}", task_clone.job_id);
+                tasks::keccak::keccak(self, &task_clone.job_id, &task_clone.task_id, &req)
                     .await
                     .context("Keccak failed")?;
+                tracing::info!("Keccak task completed for job_id={}", task_clone.job_id);
             },
             TaskType::Union(req) => {
-                tasks::union::union(self, &task.job_id, &req)
+                tracing::info!("Starting union task for job_id={}", task_clone.job_id);
+                tasks::union::union(self, &task_clone.job_id, &req)
                     .await
                     .context("Union failed")?;
+                tracing::info!("Union task completed for job_id={}", task_clone.job_id);
             },
         };
 
+        tracing::info!("Task processing completed successfully for job_id={}", task_clone.job_id);
         Ok(())
     }
 

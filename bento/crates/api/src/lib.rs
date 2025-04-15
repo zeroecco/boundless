@@ -381,6 +381,7 @@ async fn prove_stark(
     ExtractApiKey(api_key): ExtractApiKey,
     Json(start_req): Json<ProofReq>,
 ) -> Result<Json<CreateSessRes>, AppError> {
+    tracing::info!("Starting STARK proof request for image: {}, input: {}", start_req.img, start_req.input);
 
     let task_def = serde_json::to_value(TaskType::Executor(ExecutorReq {
         image: start_req.img,
@@ -392,6 +393,8 @@ async fn prove_stark(
         exec_limit: start_req.exec_cycle_limit,
     }))
     .context("Failed to serialize ExecutorReq")?;
+    tracing::debug!("Created task definition: {:?}", task_def);
+
     let job_id = Uuid::new_v4();
     let task = Task {
         job_id,
@@ -400,10 +403,13 @@ async fn prove_stark(
         prereqs: vec![],
         max_retries: 3,
     };
+    tracing::info!("Created task with job_id: {}", job_id);
 
     let mut conn = state.redis_client.lock().await;
+    tracing::info!("Attempting to enqueue task to 'executor' queue");
     task_queue::enqueue_task(&mut conn, "executor", task).await
         .context("Failed to create exec / init task")?;
+    tracing::info!("Successfully enqueued task to 'executor' queue");
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
@@ -504,12 +510,15 @@ async fn prove_groth16(
     ExtractApiKey(api_key): ExtractApiKey,
     Json(start_req): Json<SnarkReq>,
 ) -> Result<Json<CreateSessRes>, AppError> {
+    tracing::info!("Starting Groth16 proof request for receipt: {}", start_req.session_id);
 
     let task_def = serde_json::to_value(TaskType::Snark(WorkflowSnarkReq {
         receipt: start_req.session_id,
         compress_type: CompressType::Groth16,
     }))
     .context("Failed to serialize ExecutorReq")?;
+    tracing::debug!("Created task definition: {:?}", task_def);
+
     let job_id = Uuid::new_v4();
     let task = Task {
         job_id,
@@ -518,10 +527,13 @@ async fn prove_groth16(
         prereqs: vec![],
         max_retries: 3,
     };
+    tracing::info!("Created task with job_id: {}", job_id);
 
     let mut conn = state.redis_client.lock().await;
+    tracing::info!("Attempting to enqueue task to 'snark' queue");
     task_queue::enqueue_task(&mut conn, "snark", task).await
         .context("Failed to create exec / init task")?;
+    tracing::info!("Successfully enqueued task to 'snark' queue");
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
