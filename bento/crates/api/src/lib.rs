@@ -227,16 +227,21 @@ async fn image_upload(
     Path(image_id): Path<String>,
     Host(hostname): Host,
 ) -> Result<Json<ImgUploadRes>, AppError> {
-    let new_img_key = format!("{ELF_BUCKET_DIR}/{image_id}");
-    if state
-        .s3_client
-        .object_exists(&new_img_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
+    tracing::info!("Handling image upload request for image_id: {}", image_id);
+
+    // Check if image already exists in Redis
+    let mut conn = state.redis_client.lock().await;
+    let elf_key = format!("elf:{}", image_id);
+
+    let exists: bool = conn.exists(&elf_key).await
+        .context("Failed to check if image exists in Redis")?;
+
+    if exists {
+        tracing::warn!("Image with ID {} already exists in Redis", image_id);
         return Err(AppError::ImgAlreadyExists(image_id));
     }
 
+    tracing::info!("Image ID {} is available for upload", image_id);
     Ok(Json(ImgUploadRes { url: format!("http://{hostname}/images/upload/{image_id}") }))
 }
 
@@ -309,17 +314,21 @@ async fn input_upload(
     Host(hostname): Host,
 ) -> Result<Json<UploadRes>, AppError> {
     let input_id = Uuid::new_v4();
+    tracing::info!("Generated new input_id: {}", input_id);
 
-    let new_img_key = format!("{INPUT_BUCKET_DIR}/{input_id}");
-    if state
-        .s3_client
-        .object_exists(&new_img_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
+    // Check if input already exists in Redis (should never happen with UUID)
+    let mut conn = state.redis_client.lock().await;
+    let input_key = format!("input:{}", input_id);
+
+    let exists: bool = conn.exists(&input_key).await
+        .context("Failed to check if input exists in Redis")?;
+
+    if exists {
+        tracing::warn!("Input with ID {} already exists in Redis (unlikely with UUID)", input_id);
         return Err(AppError::InputAlreadyExists(input_id.to_string()));
     }
 
+    tracing::info!("Input ID {} is available for upload", input_id);
     Ok(Json(UploadRes {
         url: format!("http://{hostname}/inputs/upload/{input_id}"),
         uuid: input_id.to_string(),
@@ -351,16 +360,21 @@ async fn receipt_upload(
     Host(hostname): Host,
 ) -> Result<Json<UploadRes>, AppError> {
     let receipt_id = Uuid::new_v4();
-    let new_receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{receipt_id}.bincode");
-    if state
-        .s3_client
-        .object_exists(&new_receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::InputAlreadyExists(receipt_id.to_string()));
+    tracing::info!("Generated new receipt_id: {}", receipt_id);
+
+    // Check if receipt already exists in Redis (should never happen with UUID)
+    let mut conn = state.redis_client.lock().await;
+    let receipt_key = format!("receipt:{}", receipt_id);
+
+    let exists: bool = conn.exists(&receipt_key).await
+        .context("Failed to check if receipt exists in Redis")?;
+
+    if exists {
+        tracing::warn!("Receipt with ID {} already exists in Redis (unlikely with UUID)", receipt_id);
+        return Err(AppError::ReceiptAlreadyExists(receipt_id.to_string()));
     }
 
+    tracing::info!("Receipt ID {} is available for upload", receipt_id);
     Ok(Json(UploadRes {
         url: format!("http://{hostname}/receipts/upload/{receipt_id}"),
         uuid: receipt_id.to_string(),
