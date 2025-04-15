@@ -8,9 +8,9 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
+use std::path::Path;
 use uuid::Uuid;
 use workflow_common::ProveReq;
-use std::path::Path;
 
 /// Run a prove request
 pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
@@ -50,8 +50,7 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
     // Write out lifted receipt
     let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
 
-    agent.set_in_redis(&output_key, &lift_asset, Some(agent.args.redis_ttl))
-        .await?;
+    agent.set_in_redis(&output_key, &lift_asset, Some(agent.args.redis_ttl)).await?;
 
     Ok(())
 }

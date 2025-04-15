@@ -106,13 +106,10 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
         serialize_obj(&conditional_receipt).context("Failed to serialize resolved receipt")?;
 
     tracing::info!("Writing resolved receipt to Redis key: {root_receipt_key}");
-    agent.set_in_redis(
-        &root_receipt_key,
-        &serialized_asset,
-        Some(agent.args.redis_ttl),
-    )
-    .await
-    .context("Failed to set root receipt key with expiry")?;
+    agent
+        .set_in_redis(&root_receipt_key, &serialized_asset, Some(agent.args.redis_ttl))
+        .await
+        .context("Failed to set root receipt key with expiry")?;
 
     tracing::info!("Resolve operation completed successfully");
     Ok(assumptions_len)

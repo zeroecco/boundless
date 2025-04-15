@@ -8,9 +8,9 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
+use std::path::Path;
 use uuid::Uuid;
 use workflow_common::JoinReq;
-use std::path::Path;
 
 /// Run the join operation
 pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()> {
@@ -46,8 +46,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let join_result = serialize_obj(&joined).expect("Failed to serialize the segment");
     let output_key = format!("{recur_receipts_prefix}:{}", request.idx);
 
-    agent.set_in_redis(&output_key, &join_result, Some(agent.args.redis_ttl))
-        .await?;
+    agent.set_in_redis(&output_key, &join_result, Some(agent.args.redis_ttl)).await?;
 
     tracing::info!("Join Complete {job_id} - {}", request.left);
 

@@ -13,14 +13,18 @@ use axum::{
     Json, Router,
 };
 use bonsai_sdk::responses::{
-    CreateSessRes, ImgUploadRes, ProofReq, ReceiptDownload, SessionStatusRes,
-    SnarkReq, SnarkStatusRes, UploadRes,
+    CreateSessRes, ImgUploadRes, ProofReq, ReceiptDownload, SessionStatusRes, SnarkReq,
+    SnarkStatusRes, UploadRes,
 };
 use clap::Parser;
+use redis::aio::ConnectionManager;
+use redis::AsyncCommands;
 use risc0_zkvm::compute_image_id;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use task_queue::Task;
 use thiserror::Error;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use workflow_common::{
     s3::{
@@ -29,10 +33,6 @@ use workflow_common::{
     },
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
 };
-use task_queue::Task;
-use redis::aio::ConnectionManager;
-use redis::AsyncCommands;
-use tokio::sync::Mutex;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ErrMsg {
@@ -197,9 +197,8 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(args: &Args) -> Result<Arc<Self>> {
-        let redis_client = redis::Client::open(args.redis_url.clone())?
-            .get_connection_manager()
-            .await?;
+        let redis_client =
+            redis::Client::open(args.redis_url.clone())?.get_connection_manager().await?;
 
         let s3_client = S3Client::from_minio(
             &args.s3_url,
@@ -210,10 +209,7 @@ impl AppState {
         .await
         .context("Failed to initialize s3 client / bucket")?;
 
-        Ok(Arc::new(Self {
-            redis_client: Arc::new(Mutex::new(redis_client)),
-            s3_client,
-        }))
+        Ok(Arc::new(Self { redis_client: Arc::new(Mutex::new(redis_client)), s3_client }))
     }
 }
 
@@ -233,8 +229,8 @@ async fn image_upload(
     let mut conn = state.redis_client.lock().await;
     let elf_key = format!("elf:{}", image_id);
 
-    let exists: bool = conn.exists(&elf_key).await
-        .context("Failed to check if image exists in Redis")?;
+    let exists: bool =
+        conn.exists(&elf_key).await.context("Failed to check if image exists in Redis")?;
 
     if exists {
         tracing::warn!("Image with ID {} already exists in Redis", image_id);
@@ -251,13 +247,17 @@ async fn image_upload_put(
     body: Body,
 ) -> Result<(), AppError> {
     tracing::info!("Starting ELF upload for image_id: {}", image_id);
-    let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
+    let body_bytes =
+        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
     tracing::debug!("Received {} bytes for ELF", body_bytes.len());
 
     // Validate ELF data
     if body_bytes.len() < 4 {
         tracing::error!("ELF data is too small: {} bytes", body_bytes.len());
-        return Err(AppError::ImageInvalid(format!("ELF data is too small: {} bytes", body_bytes.len())));
+        return Err(AppError::ImageInvalid(format!(
+            "ELF data is too small: {} bytes",
+            body_bytes.len()
+        )));
     }
 
     // Check magic bytes for standard ELF or RISC0 format
@@ -271,7 +271,8 @@ async fn image_upload_put(
     }
     tracing::info!("ELF binary appears valid with magic: {:?}", magic);
 
-    let comp_img_id = compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
+    let comp_img_id =
+        compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
     if comp_img_id != image_id {
         tracing::error!("Image ID mismatch: requested={}, computed={}", image_id, comp_img_id);
         return Err(AppError::ImageIdMismatch(image_id, comp_img_id));
@@ -294,12 +295,15 @@ async fn image_upload_put(
     match verification {
         Ok(data) => {
             if data.len() != body_bytes.len() {
-                tracing::error!("Verification failed: size mismatch. Original: {}, Retrieved: {}",
-                                body_bytes.len(), data.len());
+                tracing::error!(
+                    "Verification failed: size mismatch. Original: {}, Retrieved: {}",
+                    body_bytes.len(),
+                    data.len()
+                );
             } else {
                 tracing::info!("Verification successful: read back {} bytes", data.len());
             }
-        },
+        }
         Err(e) => {
             tracing::error!("Verification failed: couldn't read back ELF data: {}", e);
         }
@@ -320,8 +324,8 @@ async fn input_upload(
     let mut conn = state.redis_client.lock().await;
     let input_key = format!("input:{}", input_id);
 
-    let exists: bool = conn.exists(&input_key).await
-        .context("Failed to check if input exists in Redis")?;
+    let exists: bool =
+        conn.exists(&input_key).await.context("Failed to check if input exists in Redis")?;
 
     if exists {
         tracing::warn!("Input with ID {} already exists in Redis (unlikely with UUID)", input_id);
@@ -342,12 +346,14 @@ async fn input_upload_put(
     body: Body,
 ) -> Result<(), AppError> {
     tracing::info!("Starting input upload for input_id: {}", input_id);
-    let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
+    let body_bytes =
+        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
     tracing::debug!("Received {} bytes for input", body_bytes.len());
 
     let mut conn = state.redis_client.lock().await;
     let input_key = format!("input:{}", input_id);
-    conn.set_ex(&input_key, body_bytes.to_vec(), 60 * 60 * 2).await
+    conn.set_ex(&input_key, body_bytes.to_vec(), 60 * 60 * 2)
+        .await
         .context("Failed to store input in Redis")?;
     tracing::info!("Successfully stored input in Redis with key: {}", input_key);
 
@@ -366,11 +372,14 @@ async fn receipt_upload(
     let mut conn = state.redis_client.lock().await;
     let receipt_key = format!("receipt:{}", receipt_id);
 
-    let exists: bool = conn.exists(&receipt_key).await
-        .context("Failed to check if receipt exists in Redis")?;
+    let exists: bool =
+        conn.exists(&receipt_key).await.context("Failed to check if receipt exists in Redis")?;
 
     if exists {
-        tracing::warn!("Receipt with ID {} already exists in Redis (unlikely with UUID)", receipt_id);
+        tracing::warn!(
+            "Receipt with ID {} already exists in Redis (unlikely with UUID)",
+            receipt_id
+        );
         return Err(AppError::ReceiptAlreadyExists(receipt_id.to_string()));
     }
 
@@ -387,11 +396,13 @@ async fn receipt_upload_put(
     Path(receipt_id): Path<String>,
     body: Body,
 ) -> Result<(), AppError> {
-    let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
+    let body_bytes =
+        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
 
     let mut conn = state.redis_client.lock().await;
     let receipt_key = format!("receipt:{}", receipt_id);
-    conn.set_ex(&receipt_key, body_bytes.to_vec(), 60 * 60 * 2).await
+    conn.set_ex(&receipt_key, body_bytes.to_vec(), 60 * 60 * 2)
+        .await
         .context("Failed to store receipt in Redis")?;
 
     Ok(())
@@ -405,21 +416,25 @@ async fn prove_stark(
     ExtractApiKey(api_key): ExtractApiKey,
     Json(start_req): Json<ProofReq>,
 ) -> Result<Json<CreateSessRes>, AppError> {
-    tracing::info!("Starting STARK proof request for image: {}, input: {}", start_req.img, start_req.input);
+    tracing::info!(
+        "Starting STARK proof request for image: {}, input: {}",
+        start_req.img,
+        start_req.input
+    );
 
     // Get ELF and input data from Redis first
     let mut conn = state.redis_client.lock().await;
 
     let elf_key = format!("elf:{}", start_req.img);
     tracing::info!("Fetching ELF data from Redis with key: {}", elf_key);
-    let elf_data: Vec<u8> = conn.get(&elf_key).await
-        .context("Failed to get ELF data from Redis")?;
+    let elf_data: Vec<u8> =
+        conn.get(&elf_key).await.context("Failed to get ELF data from Redis")?;
     tracing::debug!("Retrieved {} bytes of ELF data", elf_data.len());
 
     let input_key = format!("input:{}", start_req.input);
     tracing::info!("Fetching input data from Redis with key: {}", input_key);
-    let input_data: Vec<u8> = conn.get(&input_key).await
-        .context("Failed to get input data from Redis")?;
+    let input_data: Vec<u8> =
+        conn.get(&input_key).await.context("Failed to get input data from Redis")?;
     tracing::debug!("Retrieved {} bytes of input data", input_data.len());
 
     let job_id = Uuid::new_v4();
@@ -428,12 +443,14 @@ async fn prove_stark(
     // Store data with job_id keys
     let job_elf_key = format!("elf:{}", job_id);
     tracing::info!("Storing ELF data with job key: {}", job_elf_key);
-    conn.set_ex(&job_elf_key, elf_data, 60 * 60 * 2).await
+    conn.set_ex(&job_elf_key, elf_data, 60 * 60 * 2)
+        .await
         .context("Failed to store ELF with job_id")?;
 
     let job_input_key = format!("input:{}", job_id);
     tracing::info!("Storing input data with job key: {}", job_input_key);
-    conn.set_ex(&job_input_key, input_data, 60 * 60 * 2).await
+    conn.set_ex(&job_input_key, input_data, 60 * 60 * 2)
+        .await
         .context("Failed to store input with job_id")?;
 
     let task_def = serde_json::to_value(TaskType::Executor(ExecutorReq {
@@ -458,7 +475,8 @@ async fn prove_stark(
     };
     tracing::info!("Created task with job_id: {}", job_id);
 
-    task_queue::enqueue_task(&mut conn, "executor", task).await
+    task_queue::enqueue_task(&mut conn, "executor", task)
+        .await
         .context("Failed to create exec / init task")?;
     tracing::info!("Successfully enqueued task to 'executor' queue");
 
@@ -472,14 +490,13 @@ async fn stark_status(
     Path(job_id): Path<Uuid>,
     ExtractApiKey(api_key): ExtractApiKey,
 ) -> Result<Json<SessionStatusRes>, AppError> {
-
     let (exec_stats, receipt_url) = (None, None);
 
     Ok(Json(SessionStatusRes {
         state: Some("".into()), // TODO
         receipt_url,
-        error_msg: None, // TODO
-        status: "".into(), // TODO
+        error_msg: None,    // TODO
+        status: "".into(),  // TODO
         elapsed_time: None, // TODO
         stats: exec_stats,
     }))
@@ -583,7 +600,8 @@ async fn prove_groth16(
 
     let mut conn = state.redis_client.lock().await;
     tracing::info!("Attempting to enqueue task to 'snark' queue");
-    task_queue::enqueue_task(&mut conn, "snark", task).await
+    task_queue::enqueue_task(&mut conn, "snark", task)
+        .await
         .context("Failed to create exec / init task")?;
     tracing::info!("Successfully enqueued task to 'snark' queue");
 

@@ -2,21 +2,32 @@
 //
 // All rights reserved.
 
-use std::sync::Arc;
 use std::path::Path;
+use std::sync::Arc;
 
+use crate::tasks::finalize::finalize_task;
+use crate::tasks::join::join_task;
+use crate::tasks::keccak::keccak_task;
+use crate::tasks::prove::prove_task;
+use crate::tasks::union::union_task;
 use crate::{
     tasks::{read_image_id, serialize_obj, COPROC_CB_PATH, RECEIPT_PATH, SEGMENTS_PATH},
     Agent, Args, TaskType,
 };
 use anyhow::{bail, Context, Result};
+use bincode;
+use redis::aio::ConnectionManager;
+use redis::AsyncCommands;
+use redis::Value;
 use risc0_zkvm::{
     compute_image_id, sha::Digestible, CoprocessorCallback, ExecutorEnv, ExecutorImpl,
     InnerReceipt, Journal, NullSegmentRef, ProveKeccakRequest, ProveZkrRequest, Receipt, Segment,
 };
+use serde_json::json;
 use task_queue::Task;
 use tempfile::NamedTempFile;
-use serde_json::json;
+use tokio::task::{JoinHandle, JoinSet};
+use uuid::Uuid;
 use workflow_common::{
     s3::{
         ELF_BUCKET_DIR, EXEC_LOGS_BUCKET_DIR, INPUT_BUCKET_DIR, PREFLIGHT_JOURNALS_BUCKET_DIR,
@@ -26,17 +37,6 @@ use workflow_common::{
     SnarkReq, UnionReq, AUX_WORK_TYPE, COPROC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
     SNARK_WORK_TYPE,
 };
-use tokio::task::{JoinHandle, JoinSet};
-use uuid::Uuid;
-use redis::aio::ConnectionManager;
-use redis::AsyncCommands;
-use redis::Value;
-use crate::tasks::prove::prove_task;
-use crate::tasks::join::join_task;
-use crate::tasks::union::union_task;
-use crate::tasks::finalize::finalize_task;
-use crate::tasks::keccak::keccak_task;
-use bincode;
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF"; // const V1_ ELF_MAGIC: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 const TASK_QUEUE_SIZE: usize = 100; // TODO: could be bigger, but requires testing IRL
@@ -94,7 +94,7 @@ pub async fn executor(
         Ok(data) => {
             tracing::info!("Successfully retrieved ELF binary of size: {} bytes", data.len());
             data
-        },
+        }
         Err(err) => {
             tracing::error!("Failed to retrieve ELF binary: {}", err);
             return Err(err.to_string().into());
@@ -106,7 +106,7 @@ pub async fn executor(
         tracing::error!("ELF data is too small: {} bytes", elf_data.len());
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "ELF data is too small"
+            "ELF data is too small",
         )));
     }
 
@@ -117,7 +117,7 @@ pub async fn executor(
         tracing::error!("Invalid ELF magic bytes: {:?}", magic);
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Invalid ELF magic bytes: {:?}", magic)
+            format!("Invalid ELF magic bytes: {:?}", magic),
         )));
     }
 
@@ -128,7 +128,7 @@ pub async fn executor(
         Ok(data) => {
             tracing::info!("Successfully retrieved input data of size: {} bytes", data.len());
             data
-        },
+        }
         Err(err) => {
             tracing::error!("Failed to retrieve input data: {}", err);
             return Err(err.to_string().into());
@@ -138,7 +138,10 @@ pub async fn executor(
     // Execute task based on type
     match task_type {
         TaskType::Executor(_) => {
-            tracing::info!("Creating executor environment with input data of size: {}", input_data.len());
+            tracing::info!(
+                "Creating executor environment with input data of size: {}",
+                input_data.len()
+            );
             // Create executor environment
             let mut env_builder = ExecutorEnv::builder();
             env_builder.write_slice(&input_data);
@@ -185,12 +188,14 @@ pub async fn executor(
                 };
 
                 // Enqueue prove task with segment data included
-                if let Err(err) = enqueue_prove_task(&mut conn, job_id.clone(), i, segment_data).await {
+                if let Err(err) =
+                    enqueue_prove_task(&mut conn, job_id.clone(), i, segment_data).await
+                {
                     tracing::error!("Failed to enqueue prove task for segment {}: {}", i, err);
                     // Continue processing other segments
+                } else {
+                    tracing::info!("Successfully enqueued segment {} for proving", i);
                 }
-
-                tracing::info!("Successfully enqueued segment {} for proving", i);
             }
 
             // Store session info in Redis
@@ -222,7 +227,7 @@ pub async fn executor(
             }
 
             tracing::info!("Stored session info for job {}", job_id);
-        },
+        }
         _ => {
             // Handle other task types...
             tracing::info!("Skipping non-executor task type");
@@ -238,18 +243,13 @@ pub async fn store_data_in_redis(
     key: &str,
     data: &[u8],
 ) -> Result<()> {
-    conn.set(key, data).await
-        .context("Failed to store data in Redis")?;
+    conn.set(key, data).await.context("Failed to store data in Redis")?;
     Ok(())
 }
 
 // Helper function to get data from Redis
-pub async fn get_data_from_redis(
-    conn: &mut ConnectionManager,
-    key: &str,
-) -> Result<Vec<u8>> {
-    let data: Vec<u8> = conn.get(key).await
-        .context("Failed to get data from Redis")?;
+pub async fn get_data_from_redis(conn: &mut ConnectionManager, key: &str) -> Result<Vec<u8>> {
+    let data: Vec<u8> = conn.get(key).await.context("Failed to get data from Redis")?;
     Ok(data)
 }
 
@@ -281,35 +281,35 @@ pub async fn execute_task(task: Task) -> Result<()> {
         TaskType::Join(_) => {
             join_task(elf_path, input_path).await?;
             Ok(())
-        },
+        }
         TaskType::Union(_) => {
             union_task(elf_path, input_path).await?;
             Ok(())
-        },
+        }
         TaskType::Finalize(_) => {
             finalize_task(elf_path, input_path).await?;
             Ok(())
-        },
+        }
         TaskType::Keccak(_) => {
             keccak_task(elf_path, input_path).await?;
             Ok(())
-        },
+        }
         TaskType::Executor(_) => {
             // TODO: Implement executor task logic
             Ok(())
-        },
+        }
         TaskType::Resolve(_) => {
             // TODO: Implement resolve task logic
             Ok(())
-        },
+        }
         TaskType::Snark(_) => {
             // TODO: Implement snark task logic
             Ok(())
-        },
+        }
         TaskType::Prove(_) => {
             // TODO: Implement prove task logic
             Ok(())
-        },
+        }
     }
 }
 
@@ -318,13 +318,12 @@ async fn enqueue_prove_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
     segment_idx: usize,
-    segment: Segment
+    segment: Segment,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Generate a task ID that includes all needed information
     let task_id = format!("prove:{}:{}", job_id, segment_idx);
 
     tracing::debug!("Serializing segment {}", segment_idx);
-
     let segment_bytes = match bincode::serialize(&segment) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -334,23 +333,22 @@ async fn enqueue_prove_task(
     };
 
     // Create ProveReq
-    let task_def = serde_json::to_value(TaskType::Prove(ProveReq {
-        index: segment_idx,
-    })).map_err(|e| e.to_string())?;
+    let task_def = serde_json::to_value(TaskType::Prove(ProveReq { index: segment_idx }))
+        .map_err(|e| e.to_string())?;
 
+    tracing::debug!("Creating task for job_id: {}, segment_idx: {}", job_id, segment_idx);
+
+    // Create Task with embedded segment data
     let task = Task {
         job_id,
         task_id: task_id.clone(),
         task_def,
-        segment: segment_bytes,
+        segment: segment_bytes, // Directly include segment data in the task
         prereqs: vec![],
         max_retries: 3,
     };
 
-    // Execute Redis pipeline to store both segment and task info together
-    tracing::debug!("enqueueing prove task - job_id: {}, segment_idx: {}", job_id, segment_idx);
-    // Enqueue task
-    tracing::debug!("Enqueuing prove task for segment {}", segment_idx);
+    tracing::info!("Enqueuing prove task for segment {} with embedded data", segment_idx);
     task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
 }
 

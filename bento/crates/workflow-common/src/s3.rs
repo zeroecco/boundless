@@ -46,10 +46,7 @@ pub struct S3Client {
 impl S3Client {
     pub fn clone_state(client: &Self) -> Self {
         let config = client.client.config().clone();
-        Self {
-            bucket: client.bucket.clone(),
-            client: Client::from_conf(config),
-        }
+        Self { bucket: client.bucket.clone(), client: Client::from_conf(config) }
     }
 }
 

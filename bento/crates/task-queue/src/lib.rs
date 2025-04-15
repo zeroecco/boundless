@@ -32,11 +32,7 @@ pub async fn enqueue_task(
     task: Task,
 ) -> Result<(), TaskQueueError> {
     let task_json = serde_json::to_string(&task)?;
-    let _: () = redis::cmd("RPUSH")
-        .arg(queue_name)
-        .arg(&task_json)
-        .query_async(conn)
-        .await?;
+    let _: () = redis::cmd("RPUSH").arg(queue_name).arg(&task_json).query_async(conn).await?;
     Ok(())
 }
 
@@ -44,10 +40,7 @@ pub async fn dequeue_task(
     conn: &mut ConnectionManager,
     queue_name: &str,
 ) -> Result<Option<Task>, TaskQueueError> {
-    let result: Option<String> = redis::cmd("LPOP")
-        .arg(queue_name)
-        .query_async(conn)
-        .await?;
+    let result: Option<String> = redis::cmd("LPOP").arg(queue_name).query_async(conn).await?;
 
     match result {
         Some(json) => Ok(Some(serde_json::from_str(&json)?)),
@@ -59,11 +52,8 @@ pub async fn peek_task(
     conn: &mut ConnectionManager,
     queue_name: &str,
 ) -> Result<Option<Task>, TaskQueueError> {
-    let result: Option<String> = redis::cmd("LINDEX")
-        .arg(queue_name)
-        .arg(0)
-        .query_async(conn)
-        .await?;
+    let result: Option<String> =
+        redis::cmd("LINDEX").arg(queue_name).arg(0).query_async(conn).await?;
 
     match result {
         Some(json) => Ok(Some(serde_json::from_str(&json)?)),
@@ -75,10 +65,7 @@ pub async fn queue_length(
     conn: &mut ConnectionManager,
     queue_name: &str,
 ) -> Result<usize, TaskQueueError> {
-    let length: usize = redis::cmd("LLEN")
-        .arg(queue_name)
-        .query_async(conn)
-        .await?;
+    let length: usize = redis::cmd("LLEN").arg(queue_name).query_async(conn).await?;
     Ok(length)
 }
 
@@ -91,16 +78,13 @@ mod tests {
     // Run with `REDIS_URL=redis://localhost:6379 cargo test`
     #[tokio::test]
     async fn test_queue_operations() {
-        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
         let client = redis::Client::open(redis_url).unwrap();
         let mut conn = client.get_connection_manager().await.unwrap();
 
         // Clean up any existing test queue
-        let _: () = redis::cmd("DEL")
-            .arg("test_queue")
-            .query_async(&mut conn)
-            .await
-            .unwrap();
+        let _: () = redis::cmd("DEL").arg("test_queue").query_async(&mut conn).await.unwrap();
 
         // Test queue is initially empty
         let len = queue_length(&mut conn, "test_queue").await.unwrap();

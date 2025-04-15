@@ -19,14 +19,14 @@ use std::{
 };
 use task_queue::{Task, TaskQueueError};
 use tokio::time;
-use workflow_common::TaskType;
 use uuid::Uuid;
+use workflow_common::TaskType;
 
 mod tasks;
 
 pub use workflow_common::{
-    s3::S3Client, AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE, SNARK_WORK_TYPE,
-    COPROC_WORK_TYPE,
+    s3::S3Client, AUX_WORK_TYPE, COPROC_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
+    SNARK_WORK_TYPE,
 };
 
 /// Workflow agent
@@ -123,9 +123,11 @@ impl Agent {
     ///
     /// Starts any connection pools and establishes the agents configs
     pub async fn new(args: Args) -> Result<Self> {
-        let client = redis::Client::open(args.redis_url.clone())
-            .context("Failed to create Redis client")?;
-        let redis_conn = client.get_connection_manager().await
+        let client =
+            redis::Client::open(args.redis_url.clone()).context("Failed to create Redis client")?;
+        let redis_conn = client
+            .get_connection_manager()
+            .await
             .context("Failed to get Redis connection manager")?;
 
         let verifier_ctx = VerifierContext::default();
@@ -140,13 +142,7 @@ impl Agent {
             None
         };
 
-        Ok(Self {
-            segment_po2: args.segment_po2,
-            redis_conn,
-            args,
-            prover,
-            verifier_ctx,
-        })
+        Ok(Self { segment_po2: args.segment_po2, redis_conn, args, prover, verifier_ctx })
     }
 
     /// Create a signal hook to flip a boolean if its triggered
@@ -168,24 +164,38 @@ impl Agent {
         let mut conn = self.redis_conn.clone();
         let queue_name = self.args.task_stream.clone();
         tracing::info!("Starting work polling for queue: {}", queue_name);
-        tracing::info!("Agent configuration - task_stream: {}, poll_time: {}s", self.args.task_stream, self.args.poll_time);
+        tracing::info!(
+            "Agent configuration - task_stream: {}, poll_time: {}s",
+            self.args.task_stream,
+            self.args.poll_time
+        );
 
         while !term_sig.load(Ordering::Relaxed) {
             tracing::debug!("Polling for new tasks in queue: {}", queue_name);
 
             // Try to get a task from the queue
-            let task = task_queue::dequeue_task(&mut conn, &queue_name).await
+            let task = task_queue::dequeue_task(&mut conn, &queue_name)
+                .await
                 .context("Failed to dequeue task")?;
 
             // If no task, sleep and try again
             if task.is_none() {
-                tracing::debug!("No tasks found in queue: {}, sleeping for {} seconds", queue_name, self.args.poll_time);
+                tracing::debug!(
+                    "No tasks found in queue: {}, sleeping for {} seconds",
+                    queue_name,
+                    self.args.poll_time
+                );
                 time::sleep(time::Duration::from_secs(self.args.poll_time)).await;
                 continue;
             }
 
             let task = task.unwrap();
-            tracing::info!("Found task in queue: {} - job_id: {}, task_id: {}", queue_name, task.job_id, task.task_id);
+            tracing::info!(
+                "Found task in queue: {} - job_id: {}, task_id: {}",
+                queue_name,
+                task.job_id,
+                task.task_id
+            );
 
             // Process the task
             let task_clone = task.clone();
@@ -195,13 +205,22 @@ impl Agent {
                 if task_clone.max_retries > 0 {
                     let mut retry_task = task_clone.clone();
                     retry_task.max_retries -= 1;
-                    tracing::info!("Requeuing failed task with remaining retries: {}", retry_task.max_retries);
-                    if let Err(e) = task_queue::enqueue_task(&mut conn, &queue_name, retry_task).await {
+                    tracing::info!(
+                        "Requeuing failed task with remaining retries: {}",
+                        retry_task.max_retries
+                    );
+                    if let Err(e) =
+                        task_queue::enqueue_task(&mut conn, &queue_name, retry_task).await
+                    {
                         tracing::error!("Failed to requeue task: {e:?}");
                     }
                 } else {
                     // Log the failure
-                    tracing::error!("Task failed with no retries left: job_id={}, task_id={}", task_clone.job_id, task_clone.task_id);
+                    tracing::error!(
+                        "Task failed with no retries left: job_id={}, task_id={}",
+                        task_clone.job_id,
+                        task_clone.task_id
+                    );
                 }
                 continue;
             }
@@ -214,73 +233,75 @@ impl Agent {
     /// Process a task and dispatch based on the task type
     pub async fn process_work(&self, task: Task) -> Result<()> {
         let task_clone = task.clone();
-        tracing::info!("Processing task: job_id={}, task_id={}", task_clone.job_id, task_clone.task_id);
+        tracing::info!(
+            "Processing task: job_id={}, task_id={}",
+            task_clone.job_id,
+            task_clone.task_id
+        );
 
-        let task_def: TaskType = serde_json::from_value(task.task_def.clone())
-            .with_context(|| format!("Invalid task_def: {}:{}", task_clone.job_id, task_clone.task_id))?;
+        let task_def: TaskType =
+            serde_json::from_value(task.task_def.clone()).with_context(|| {
+                format!("Invalid task_def: {}:{}", task_clone.job_id, task_clone.task_id)
+            })?;
         tracing::debug!("Task definition parsed: {:?}", task_def);
 
         // run the task
         match task_def {
             TaskType::Executor(_req) => {
                 tracing::info!("Starting executor task for job_id={}", task_clone.job_id);
-                tasks::executor::executor(self.redis_conn.clone(), task)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Executor failed for job_id={}: {}", task_clone.job_id, e);
-                        anyhow::anyhow!("Executor failed: {}", e)
-                    })?;
+                tasks::executor::executor(self.redis_conn.clone(), task).await.map_err(|e| {
+                    tracing::error!("Executor failed for job_id={}: {}", task_clone.job_id, e);
+                    anyhow::anyhow!("Executor failed: {}", e)
+                })?;
                 tracing::info!("Executor task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Prove(req) => {
                 tracing::info!("Starting prove task for job_id={}", task_clone.job_id);
                 tasks::prove::prover(self, &task_clone.job_id, &task_clone.task_id, &req)
                     .await
                     .context("Prove failed")?;
                 tracing::info!("Prove task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Join(req) => {
                 tracing::info!("Starting join task for job_id={}", task_clone.job_id);
-                tasks::join::join(self, &task_clone.job_id, &req)
-                    .await
-                    .context("Join failed")?;
+                tasks::join::join(self, &task_clone.job_id, &req).await.context("Join failed")?;
                 tracing::info!("Join task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Resolve(req) => {
                 tracing::info!("Starting resolve task for job_id={}", task_clone.job_id);
                 tasks::resolve::resolver(self, &task_clone.job_id, &req)
                     .await
                     .context("Resolve failed")?;
                 tracing::info!("Resolve task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Finalize(req) => {
                 tracing::info!("Starting finalize task for job_id={}", task_clone.job_id);
                 tasks::finalize::finalize(self, &task_clone.job_id, &req)
                     .await
                     .context("Finalize failed")?;
                 tracing::info!("Finalize task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Snark(req) => {
                 tracing::info!("Starting snark task for job_id={}", task_clone.job_id);
                 tasks::snark::stark2snark(self, &task_clone.job_id.to_string(), &req)
                     .await
                     .context("Snark failed")?;
                 tracing::info!("Snark task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Keccak(req) => {
                 tracing::info!("Starting keccak task for job_id={}", task_clone.job_id);
                 tasks::keccak::keccak(self, &task_clone.job_id, &task_clone.task_id, &req)
                     .await
                     .context("Keccak failed")?;
                 tracing::info!("Keccak task completed for job_id={}", task_clone.job_id);
-            },
+            }
             TaskType::Union(req) => {
                 tracing::info!("Starting union task for job_id={}", task_clone.job_id);
                 tasks::union::union(self, &task_clone.job_id, &req)
                     .await
                     .context("Union failed")?;
                 tracing::info!("Union task completed for job_id={}", task_clone.job_id);
-            },
+            }
         };
 
         tracing::info!("Task processing completed successfully for job_id={}", task_clone.job_id);
@@ -288,7 +309,13 @@ impl Agent {
     }
 
     /// Enqueue a new task to be processed
-    pub async fn enqueue_task(&self, queue_name: &str, task_type: TaskType, prereqs: Vec<String>, max_retries: i32) -> Result<(), TaskQueueError> {
+    pub async fn enqueue_task(
+        &self,
+        queue_name: &str,
+        task_type: TaskType,
+        prereqs: Vec<String>,
+        max_retries: i32,
+    ) -> Result<(), TaskQueueError> {
         let mut conn = self.redis_conn.clone();
         let task = Task {
             job_id: Uuid::new_v4(),
@@ -317,7 +344,12 @@ impl Agent {
     }
 
     /// Helper to set a value in Redis with optional expiry
-    pub async fn set_in_redis(&self, key: &str, value: &[u8], expiry_seconds: Option<u64>) -> Result<()> {
+    pub async fn set_in_redis(
+        &self,
+        key: &str,
+        value: &[u8],
+        expiry_seconds: Option<u64>,
+    ) -> Result<()> {
         let mut conn = self.redis_conn.clone();
 
         if let Some(seconds) = expiry_seconds {
