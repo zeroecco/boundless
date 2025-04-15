@@ -96,9 +96,7 @@ pub async fn executor(
             // Create a separate task for executing the ELF
             let executor_handle = tokio::task::spawn_blocking(move || {
                 // Create the executor environment
-                let env = match ExecutorEnv::builder()
-                    .write_slice(&input_data_clone)
-                    .build() {
+                let env = match ExecutorEnv::builder().write_slice(&input_data_clone).build() {
                     Ok(env) => env,
                     Err(e) => return Err(e.to_string()),
                 };
@@ -138,7 +136,9 @@ pub async fn executor(
                     segment_count += 1;
                     tracing::info!("Received segment {} in real-time", idx);
                     match enqueue_prove_task(&mut conn, job_id_clone, idx, segment).await {
-                        Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
+                        Ok(_) => {
+                            tracing::info!("Successfully enqueued segment {} for proving", idx)
+                        }
                         Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
                     }
                 }
@@ -168,12 +168,7 @@ pub async fn executor(
             // Store session info in Redis
             let session_key = format!("session:{}", job_id);
             tracing::info!("Creating session data with {} segments", segment_count);
-            let session_data = SessionData {
-                segment_count,
-                user_cycles,
-                total_cycles,
-                journal,
-            };
+            let session_data = SessionData { segment_count, user_cycles, total_cycles, journal };
 
             tracing::debug!("Serializing session data");
             let session_bytes = match bincode::serialize(&session_data) {
