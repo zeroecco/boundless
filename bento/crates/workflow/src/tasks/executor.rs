@@ -142,6 +142,7 @@ pub async fn executor(
             // Create executor environment
             let mut env_builder = ExecutorEnv::builder();
             env_builder.write_slice(&input_data);
+
             let env = match env_builder.build() {
                 Ok(env) => env,
                 Err(err) => {
@@ -168,12 +169,13 @@ pub async fn executor(
                 }
             };
 
-            tracing::info!("Execution completed. Storing {} segments", session.segments.len());
+            tracing::info!("Execution completed with {} segments", session.segments.len());
 
-            // Store segments in Redis
+            // Process segments and enqueue for proving
             for (i, segment_ref) in session.segments.iter().enumerate() {
-                let segment_key = format!("{}:segment:{}", job_id, i);
-                tracing::debug!("Resolving segment {}", i);
+                tracing::debug!("Processing segment {}", i);
+
+                // Resolve the segment
                 let segment_data = match segment_ref.resolve() {
                     Ok(data) => data,
                     Err(err) => {
@@ -182,23 +184,13 @@ pub async fn executor(
                     }
                 };
 
-                tracing::debug!("Serializing segment {}", i);
-                let segment_bytes = match bincode::serialize(&segment_data) {
-                    Ok(bytes) => bytes,
-                    Err(err) => {
-                        tracing::error!("Failed to serialize segment {}: {}", i, err);
-                        return Err(err.to_string().into());
-                    }
-                };
-
-                tracing::debug!("Storing segment {} with key: {}", i, segment_key);
-                match conn.set_ex::<_, _, ()>(&segment_key, segment_bytes, 60 * 60 * 2).await {
-                    Ok(_) => (),
-                    Err(err) => {
-                        tracing::error!("Failed to store segment {}: {}", i, err);
-                        return Err(err.to_string().into());
-                    }
+                // Enqueue prove task with segment data included
+                if let Err(err) = enqueue_prove_task(&mut conn, job_id.clone(), i, segment_data).await {
+                    tracing::error!("Failed to enqueue prove task for segment {}: {}", i, err);
+                    // Continue processing other segments
                 }
+
+                tracing::info!("Successfully enqueued segment {} for proving", i);
             }
 
             // Store session info in Redis
@@ -319,6 +311,47 @@ pub async fn execute_task(task: Task) -> Result<()> {
             Ok(())
         },
     }
+}
+
+// Helper function to enqueue prove tasks with segment data
+async fn enqueue_prove_task(
+    conn: &mut ConnectionManager,
+    job_id: Uuid,
+    segment_idx: usize,
+    segment: Segment
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Generate a task ID that includes all needed information
+    let task_id = format!("prove:{}:{}", job_id, segment_idx);
+
+    tracing::debug!("Serializing segment {}", segment_idx);
+
+    let segment_bytes = match bincode::serialize(&segment) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::error!("Failed to serialize segment {}: {}", segment_idx, err);
+            return Err(err.to_string().into());
+        }
+    };
+
+    // Create ProveReq
+    let task_def = serde_json::to_value(TaskType::Prove(ProveReq {
+        index: segment_idx,
+    })).map_err(|e| e.to_string())?;
+
+    let task = Task {
+        job_id,
+        task_id: task_id.clone(),
+        task_def,
+        segment: segment_bytes,
+        prereqs: vec![],
+        max_retries: 3,
+    };
+
+    // Execute Redis pipeline to store both segment and task info together
+    tracing::debug!("enqueueing prove task - job_id: {}, segment_idx: {}", job_id, segment_idx);
+    // Enqueue task
+    tracing::debug!("Enqueuing prove task for segment {}", segment_idx);
+    task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
 }
 
 // ... existing code ...
