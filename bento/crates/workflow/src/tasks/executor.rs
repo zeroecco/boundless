@@ -89,42 +89,146 @@ pub async fn executor(
 
     // Get ELF binary from Redis
     let elf_key = format!("elf:{}", job_id);
-    let elf_data: Vec<u8> = conn.get(&elf_key).await?;
+    tracing::info!("Fetching ELF binary from Redis with key: {}", elf_key);
+    let elf_data: Vec<u8> = match conn.get::<_, Vec<u8>>(&elf_key).await {
+        Ok(data) => {
+            tracing::info!("Successfully retrieved ELF binary of size: {} bytes", data.len());
+            data
+        },
+        Err(err) => {
+            tracing::error!("Failed to retrieve ELF binary: {}", err);
+            return Err(err.to_string().into());
+        }
+    };
+
+    // Validate ELF data
+    if elf_data.len() < 4 {
+        tracing::error!("ELF data is too small: {} bytes", elf_data.len());
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "ELF data is too small"
+        )));
+    }
+
+    // Check magic bytes for ELF
+    let magic = &elf_data[0..4];
+    tracing::debug!("ELF magic bytes: {:?}", magic);
+    if magic != b"\x7fELF" && magic != V2_ELF_MAGIC {
+        tracing::error!("Invalid ELF magic bytes: {:?}", magic);
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Invalid ELF magic bytes: {:?}", magic)
+        )));
+    }
 
     // Get input data from Redis
     let input_key = format!("input:{}", job_id);
-    let input_data: Vec<u8> = conn.get(&input_key).await?;
+    tracing::info!("Fetching input data from Redis with key: {}", input_key);
+    let input_data: Vec<u8> = match conn.get::<_, Vec<u8>>(&input_key).await {
+        Ok(data) => {
+            tracing::info!("Successfully retrieved input data of size: {} bytes", data.len());
+            data
+        },
+        Err(err) => {
+            tracing::error!("Failed to retrieve input data: {}", err);
+            return Err(err.to_string().into());
+        }
+    };
 
     // Execute task based on type
     match task_type {
         TaskType::Executor(_) => {
+            tracing::info!("Creating executor environment with input data of size: {}", input_data.len());
             // Create executor environment
             let mut env_builder = ExecutorEnv::builder();
             env_builder.write_slice(&input_data);
-            let env = env_builder.build()?;
+            let env = match env_builder.build() {
+                Ok(env) => env,
+                Err(err) => {
+                    tracing::error!("Failed to build executor environment: {}", err);
+                    return Err(err.to_string().into());
+                }
+            };
 
             // Execute the program
-            let mut exec = ExecutorImpl::from_elf(env, &elf_data)?;
-            let session = exec.run()?;
+            tracing::info!("Executing program from ELF of size: {}", elf_data.len());
+            let mut exec = match ExecutorImpl::from_elf(env, &elf_data) {
+                Ok(exec) => exec,
+                Err(err) => {
+                    tracing::error!("Failed to create executor from ELF: {}", err);
+                    return Err(err.to_string().into());
+                }
+            };
+
+            let session = match exec.run() {
+                Ok(session) => session,
+                Err(err) => {
+                    tracing::error!("Failed to run executor: {}", err);
+                    return Err(err.to_string().into());
+                }
+            };
+
+            tracing::info!("Execution completed. Storing {} segments", session.segments.len());
 
             // Store segments in Redis
             for (i, segment_ref) in session.segments.iter().enumerate() {
                 let segment_key = format!("{}:segment:{}", job_id, i);
-                let segment_data = segment_ref.resolve()?;
-                let segment_bytes = bincode::serialize(&segment_data)?;
-                conn.set_ex(&segment_key, segment_bytes, 60 * 60 * 2).await?;
+                tracing::debug!("Resolving segment {}", i);
+                let segment_data = match segment_ref.resolve() {
+                    Ok(data) => data,
+                    Err(err) => {
+                        tracing::error!("Failed to resolve segment {}: {}", i, err);
+                        return Err(err.to_string().into());
+                    }
+                };
+
+                tracing::debug!("Serializing segment {}", i);
+                let segment_bytes = match bincode::serialize(&segment_data) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        tracing::error!("Failed to serialize segment {}: {}", i, err);
+                        return Err(err.to_string().into());
+                    }
+                };
+
+                tracing::debug!("Storing segment {} with key: {}", i, segment_key);
+                match conn.set_ex::<_, _, ()>(&segment_key, segment_bytes, 60 * 60 * 2).await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        tracing::error!("Failed to store segment {}: {}", i, err);
+                        return Err(err.to_string().into());
+                    }
+                }
             }
 
             // Store session info in Redis
             let session_key = format!("session:{}", job_id);
+            tracing::info!("Creating session data with {} segments", session.segments.len());
             let session_data = SessionData {
                 segment_count: session.segments.len(),
                 user_cycles: session.user_cycles,
                 total_cycles: session.total_cycles,
                 journal: session.journal,
             };
-            let session_bytes = bincode::serialize(&session_data)?;
-            conn.set_ex(&session_key, session_bytes, 60 * 60 * 2).await?;
+
+            tracing::debug!("Serializing session data");
+            let session_bytes = match bincode::serialize(&session_data) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    tracing::error!("Failed to serialize session data: {}", err);
+                    return Err(err.to_string().into());
+                }
+            };
+
+            tracing::debug!("Storing session data with key: {}", session_key);
+            match conn.set_ex::<_, _, ()>(&session_key, session_bytes, 60 * 60 * 2).await {
+                Ok(_) => (),
+                Err(err) => {
+                    tracing::error!("Failed to store session data: {}", err);
+                    return Err(err.to_string().into());
+                }
+            }
+
             tracing::info!("Stored session info for job {}", job_id);
         },
         _ => {

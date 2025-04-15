@@ -249,6 +249,23 @@ async fn image_upload_put(
     let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
     tracing::debug!("Received {} bytes for ELF", body_bytes.len());
 
+    // Validate ELF data
+    if body_bytes.len() < 4 {
+        tracing::error!("ELF data is too small: {} bytes", body_bytes.len());
+        return Err(AppError::ImageInvalid(format!("ELF data is too small: {} bytes", body_bytes.len())));
+    }
+
+    // Check magic bytes for standard ELF or RISC0 format
+    let magic = &body_bytes[0..4];
+    tracing::debug!("ELF magic bytes: {:?}", magic);
+
+    let is_elf = magic == b"\x7fELF" || magic == b"R0BF";
+    if !is_elf {
+        tracing::error!("Invalid ELF magic bytes: {:?}", magic);
+        return Err(AppError::ImageInvalid("Invalid ELF magic bytes".to_string()));
+    }
+    tracing::info!("ELF binary appears valid with magic: {:?}", magic);
+
     let comp_img_id = compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
     if comp_img_id != image_id {
         tracing::error!("Image ID mismatch: requested={}, computed={}", image_id, comp_img_id);
@@ -258,9 +275,30 @@ async fn image_upload_put(
 
     let mut conn = state.redis_client.lock().await;
     let elf_key = format!("elf:{}", image_id);
-    conn.set_ex(&elf_key, body_bytes.to_vec(), 60 * 60 * 2).await
-        .context("Failed to store ELF in Redis")?;
+
+    // Store as raw bytes, don't manipulate the data
+    if let Err(e) = conn.set_ex::<_, _, ()>(&elf_key, body_bytes.to_vec(), 60 * 60 * 2).await {
+        tracing::error!("Failed to store ELF in Redis: {}", e);
+        return Err(AppError::InternalErr(anyhow::anyhow!("Failed to store ELF: {}", e)));
+    }
+
     tracing::info!("Successfully stored ELF in Redis with key: {}", elf_key);
+
+    // Verify we can read it back
+    let verification: Result<Vec<u8>, _> = conn.get(&elf_key).await;
+    match verification {
+        Ok(data) => {
+            if data.len() != body_bytes.len() {
+                tracing::error!("Verification failed: size mismatch. Original: {}, Retrieved: {}",
+                                body_bytes.len(), data.len());
+            } else {
+                tracing::info!("Verification successful: read back {} bytes", data.len());
+            }
+        },
+        Err(e) => {
+            tracing::error!("Verification failed: couldn't read back ELF data: {}", e);
+        }
+    }
 
     Ok(())
 }
