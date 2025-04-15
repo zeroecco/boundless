@@ -165,55 +165,14 @@ pub async fn executor(
                     // Add to buffer
                     segment_buffer.push((idx, segment));
 
-                    // Process if we have 2 segments or this is the last one (channel closed)
-                    if segment_buffer.len() >= 2 || rx.is_closed() {
-                        let segments_to_process = segment_buffer.drain(..).collect::<Vec<_>>();
-
-                        if segments_to_process.len() > 1 {
-                            // Combine segments for batched prove
-                            let batch_indices = segments_to_process.iter()
-                                .map(|(idx, _)| *idx)
-                                .collect::<Vec<_>>();
-
-                            tracing::info!("Batching segments {:?} together", batch_indices);
-
-                            match enqueue_batched_prove(&mut conn.clone(), job_id_clone, &segments_to_process).await {
-                                Ok(_) => tracing::info!("Successfully enqueued batch with segments {:?}", batch_indices),
-                                Err(e) => tracing::error!("Failed to enqueue batch with segments {:?}: {}", batch_indices, e),
-                            }
-                        } else {
-                            // Just one segment, process normally
-                            let (idx, segment) = &segments_to_process[0];
-                            match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
-                                Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
-                                Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
-                            }
-                        }
+                    // For stability, avoid batching for now and process each segment individually
+                    // This fixes the "serialized page has wrong length" error by avoiding page size issues
+                    let (idx, segment) = &segment_buffer[0];
+                    match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
+                        Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
+                        Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
                     }
-                }
-
-                // Process any remaining segments
-                if !segment_buffer.is_empty() {
-                    let segments_to_process = segment_buffer.drain(..).collect::<Vec<_>>();
-                    let batch_indices = segments_to_process.iter()
-                        .map(|(idx, _)| *idx)
-                        .collect::<Vec<_>>();
-
-                    if segments_to_process.len() > 1 {
-                        tracing::info!("Batching remaining segments {:?} together", batch_indices);
-
-                        match enqueue_batched_prove(&mut conn.clone(), job_id_clone, &segments_to_process).await {
-                            Ok(_) => tracing::info!("Successfully enqueued batch with segments {:?}", batch_indices),
-                            Err(e) => tracing::error!("Failed to enqueue batch with segments {:?}: {}", batch_indices, e),
-                        }
-                    } else {
-                        // Just one segment, process normally
-                        let (idx, segment) = &segments_to_process[0];
-                        match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
-                            Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
-                            Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
-                        }
-                    }
+                    segment_buffer.clear();
                 }
 
                 tracing::info!("Finished processing {} segments", segment_count);
@@ -327,7 +286,7 @@ async fn run_planner(
     segment_map: Arc<Mutex<HashMap<usize, Segment>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Each job type has its own index counter - independent from segment indexing
-    let mut keccak_counter = 0;
+    let mut keccak_count = 0;
 
     while let Some(task_type) = task_rx.recv().await {
         match task_type {
@@ -336,13 +295,13 @@ async fn run_planner(
             }
             SenderType::Keccak(keccak_req) => {
                 // Increment keccak counter - independent from segment indexing
-                keccak_counter += 1;
+                keccak_count += 1;
 
                 // Process keccak task with its own counter
-                tracing::info!("Processing keccak request {:?} with keccak_idx {}", keccak_req, keccak_counter);
+                tracing::info!("Processing keccak request {:?} with keccak_idx {}", keccak_req, keccak_count);
 
                 // Create keccak task with unique identifiers
-                let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_counter);
+                let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_count);
                 let task_def = serde_json::to_value(TaskType::Keccak(KeccakReq {
                     claim_digest: keccak_req.claim_digest,
                     control_root: keccak_req.control_root,
@@ -364,8 +323,8 @@ async fn run_planner(
                 tracing::info!("Successfully enqueued keccak task: {}", task_id);
 
                 // Enqueue a finalize task for this keccak task
-                let finalize_keccak_req = FinalizeReq { max_idx: keccak_counter };
-                let finalize_task_id = format!("finalize_keccak:{}:{}", job_id, keccak_counter);
+                let finalize_keccak_req = FinalizeReq { max_idx: keccak_count };
+                let finalize_task_id = format!("finalize_keccak:{}:{}", job_id, keccak_count);
                 let finalize_task_def = match serde_json::to_value(TaskType::Finalize(finalize_keccak_req)) {
                     Ok(def) => def,
                     Err(e) => {
@@ -435,51 +394,5 @@ async fn enqueue_prove_task(
     };
 
     tracing::info!("Enqueuing prove task for segment {} with embedded data", segment_idx);
-    task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
-}
-
-// Helper function to enqueue batched prove tasks
-async fn enqueue_batched_prove(
-    conn: &mut ConnectionManager,
-    job_id: Uuid,
-    segments: &[(usize, Segment)],
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Generate a batch ID
-    let batch_id = Uuid::new_v4();
-    let indices = segments.iter().map(|(idx, _)| *idx).collect::<Vec<_>>();
-    let task_id = format!("prove_batch:{}:{}", job_id, batch_id);
-
-    tracing::debug!("Creating batched task for segments {:?}", indices);
-
-    // Serialize all segments with their indices
-    let batch_data = segments.iter().map(|(idx, segment)| {
-        bincode::serialize(&(*idx, segment)).map_err(|e| e.to_string())
-    }).collect::<Result<Vec<_>, _>>()?;
-
-    // Concatenate all serialized data
-    let mut combined_data = Vec::new();
-    for segment_data in batch_data {
-        // Add the length prefix so we can split them later
-        let len_bytes = (segment_data.len() as u32).to_le_bytes();
-        combined_data.extend_from_slice(&len_bytes);
-        combined_data.extend_from_slice(&segment_data);
-    }
-
-    // Create batch prove task
-    let task_def = serde_json::to_value(TaskType::Prove(ProveReq {
-        index: 0, // This is a batch, actual indices are in the data
-    })).map_err(|e| e.to_string())?;
-
-    // Create Task with embedded batch data
-    let task = Task {
-        job_id,
-        task_id: task_id.clone(),
-        task_def,
-        data: combined_data,
-        prereqs: vec![],
-        max_retries: 3,
-    };
-
-    tracing::info!("Enqueuing batched prove task for segments {:?}", indices);
     task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
 }
