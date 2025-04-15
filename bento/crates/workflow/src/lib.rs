@@ -323,6 +323,7 @@ impl Agent {
             task_def: serde_json::to_value(task_type)?,
             prereqs,
             max_retries,
+            segment: vec![],
         };
 
         task_queue::enqueue_task(&mut conn, queue_name, task).await
