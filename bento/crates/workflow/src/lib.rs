@@ -167,19 +167,25 @@ impl Agent {
         let term_sig = Self::create_sig_monitor().context("Failed to create signal hook")?;
         let mut conn = self.redis_conn.clone();
         let queue_name = format!("queue:{}", self.args.task_stream);
+        tracing::info!("Starting work polling for queue: {}", queue_name);
+        tracing::info!("Agent configuration - task_stream: {}, poll_time: {}s", self.args.task_stream, self.args.poll_time);
 
         while !term_sig.load(Ordering::Relaxed) {
+            tracing::debug!("Polling for new tasks in queue: {}", queue_name);
+
             // Try to get a task from the queue
             let task = task_queue::dequeue_task(&mut conn, &queue_name).await
                 .context("Failed to dequeue task")?;
 
             // If no task, sleep and try again
             if task.is_none() {
+                tracing::debug!("No tasks found in queue: {}, sleeping for {} seconds", queue_name, self.args.poll_time);
                 time::sleep(time::Duration::from_secs(self.args.poll_time)).await;
                 continue;
             }
 
             let task = task.unwrap();
+            tracing::info!("Found task in queue: {} - job_id: {}, task_id: {}", queue_name, task.job_id, task.task_id);
 
             // Process the task
             let task_clone = task.clone();
@@ -189,6 +195,7 @@ impl Agent {
                 if task_clone.max_retries > 0 {
                     let mut retry_task = task_clone.clone();
                     retry_task.max_retries -= 1;
+                    tracing::info!("Requeuing failed task with remaining retries: {}", retry_task.max_retries);
                     if let Err(e) = task_queue::enqueue_task(&mut conn, &queue_name, retry_task).await {
                         tracing::error!("Failed to requeue task: {e:?}");
                     }
