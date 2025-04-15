@@ -325,11 +325,9 @@ impl Agent {
                     .context("Snark failed")?;
                 tracing::info!("Snark task completed for job_id={}", task_clone.job_id);
             }
-            TaskType::Keccak(req) => {
+            TaskType::Keccak(_req) => {
                 tracing::info!("Starting keccak task for job_id={}", task_clone.job_id);
-                tasks::keccak::keccak(self, &task_clone.job_id, &task_clone.task_id, &req)
-                    .await
-                    .context("Keccak failed")?;
+                tasks::keccak::keccak(self, &task_clone).await.context("Keccak failed")?;
                 tracing::info!("Keccak task completed for job_id={}", task_clone.job_id);
             }
             TaskType::Union(req) => {
