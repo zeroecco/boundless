@@ -342,35 +342,6 @@ impl Agent {
         }
     }
 
-    /// Helper to set a value in Redis with optional expiry
-    pub async fn set_in_redis(
-        &self,
-        key: &str,
-        value: &[u8],
-        expiry_seconds: Option<u64>,
-    ) -> Result<()> {
-        let mut conn = self.redis_conn.clone();
-
-        if let Some(seconds) = expiry_seconds {
-            let _: () = redis::cmd("SETEX")
-                .arg(key)
-                .arg(seconds)
-                .arg(value)
-                .query_async(&mut conn)
-                .await
-                .context("Failed to set value in Redis with expiry")?;
-        } else {
-            let _: () = redis::cmd("SET")
-                .arg(key)
-                .arg(value)
-                .query_async(&mut conn)
-                .await
-                .context("Failed to set value in Redis")?;
-        }
-
-        Ok(())
-    }
-
     /// Helper to scan for keys matching a pattern and delete them
     pub async fn scan_and_delete(&self, pattern: &str) -> Result<u64> {
         let mut conn = self.redis_conn.clone();
@@ -405,5 +376,34 @@ impl Agent {
         }
 
         Ok(count)
+    }
+
+    /// Helper to set a value in Redis with optional expiry
+    pub async fn set_in_redis(
+        &self,
+        key: &str,
+        value: &[u8],
+        expiry_seconds: Option<u64>,
+    ) -> Result<()> {
+        let mut conn = self.redis_conn.clone();
+
+        if let Some(seconds) = expiry_seconds {
+            let _: () = redis::cmd("SETEX")
+                .arg(key)
+                .arg(seconds)
+                .arg(value)
+                .query_async(&mut conn)
+                .await
+                .context("Failed to set value in Redis with expiry")?;
+        } else {
+            let _: () = redis::cmd("SET")
+                .arg(key)
+                .arg(value)
+                .query_async(&mut conn)
+                .await
+                .context("Failed to set value in Redis")?;
+        }
+
+        Ok(())
     }
 }

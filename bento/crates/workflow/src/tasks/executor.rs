@@ -2,17 +2,26 @@
 //
 // All rights reserved.
 
+use std::{sync::Arc, collections::HashMap};
+
 use crate::TaskType;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use risc0_zkvm::{ExecutorEnv, ExecutorImpl, Journal, NullSegmentRef, Segment};
 use task_queue::Task;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use workflow_common::ProveReq;
+use workflow_common::{FinalizeReq, KeccakReq, ProveReq};
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF"; // const V1_ ELF_MAGIC: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
+
+// Different types of tasks that can be sent to the planner
+enum SenderType {
+    Segment(usize),
+    Keccak(workflow_common::KeccakReq),
+    Fault,
+}
 
 #[derive(serde::Serialize)]
 struct SessionData {
@@ -85,6 +94,10 @@ pub async fn executor(
                 input_data.len()
             );
 
+            // Create channels for task planning
+            let (task_tx, task_rx) = mpsc::channel::<SenderType>(100);
+            let segment_map = Arc::new(Mutex::new(HashMap::new()));
+
             // Create a channel for segments
             let (tx, mut rx) = mpsc::channel(100);
 
@@ -92,6 +105,9 @@ pub async fn executor(
             let elf_data_clone = elf_data.clone();
             let input_data_clone = input_data.clone();
             let job_id_clone = job_id;
+            let conn_clone = conn.clone();
+            let task_tx_clone = task_tx.clone();
+            let segment_map_clone = segment_map.clone();
 
             // Create a separate task for executing the ELF
             let executor_handle = tokio::task::spawn_blocking(move || {
@@ -120,6 +136,11 @@ pub async fn executor(
                         println!("Failed to send segment to channel: {}", e);
                     }
 
+                    // Also notify the planner that a segment is ready
+                    if let Err(e) = task_tx_clone.blocking_send(SenderType::Segment(idx)) {
+                        println!("Failed to send segment notification to planner: {}", e);
+                    }
+
                     Ok(Box::new(NullSegmentRef {}))
                 }) {
                     Ok(session) => session,
@@ -132,14 +153,66 @@ pub async fn executor(
             // Process segments as they arrive
             let process_segments = async {
                 let mut segment_count = 0;
+                let mut segment_buffer: Vec<(usize, Segment)> = Vec::new();
+
                 while let Some((idx, segment)) = rx.recv().await {
                     segment_count += 1;
                     tracing::info!("Received segment {} in real-time", idx);
-                    match enqueue_prove_task(&mut conn, job_id_clone, idx, segment).await {
-                        Ok(_) => {
-                            tracing::info!("Successfully enqueued segment {} for proving", idx)
+
+                    // Store segment in map for later processing
+                    segment_map.lock().await.insert(idx, segment.clone());
+
+                    // Add to buffer
+                    segment_buffer.push((idx, segment));
+
+                    // Process if we have 2 segments or this is the last one (channel closed)
+                    if segment_buffer.len() >= 2 || rx.is_closed() {
+                        let segments_to_process = segment_buffer.drain(..).collect::<Vec<_>>();
+
+                        if segments_to_process.len() > 1 {
+                            // Combine segments for batched prove
+                            let batch_indices = segments_to_process.iter()
+                                .map(|(idx, _)| *idx)
+                                .collect::<Vec<_>>();
+
+                            tracing::info!("Batching segments {:?} together", batch_indices);
+
+                            match enqueue_batched_prove(&mut conn.clone(), job_id_clone, &segments_to_process).await {
+                                Ok(_) => tracing::info!("Successfully enqueued batch with segments {:?}", batch_indices),
+                                Err(e) => tracing::error!("Failed to enqueue batch with segments {:?}: {}", batch_indices, e),
+                            }
+                        } else {
+                            // Just one segment, process normally
+                            let (idx, segment) = &segments_to_process[0];
+                            match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
+                                Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
+                                Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
+                            }
                         }
-                        Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
+                    }
+                }
+
+                // Process any remaining segments
+                if !segment_buffer.is_empty() {
+                    let segments_to_process = segment_buffer.drain(..).collect::<Vec<_>>();
+                    let batch_indices = segments_to_process.iter()
+                        .map(|(idx, _)| *idx)
+                        .collect::<Vec<_>>();
+
+                    if segments_to_process.len() > 1 {
+                        tracing::info!("Batching remaining segments {:?} together", batch_indices);
+
+                        match enqueue_batched_prove(&mut conn.clone(), job_id_clone, &segments_to_process).await {
+                            Ok(_) => tracing::info!("Successfully enqueued batch with segments {:?}", batch_indices),
+                            Err(e) => tracing::error!("Failed to enqueue batch with segments {:?}: {}", batch_indices, e),
+                        }
+                    } else {
+                        // Just one segment, process normally
+                        let (idx, segment) = &segments_to_process[0];
+                        match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
+                            Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
+                            Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
+                        }
                     }
                 }
 
@@ -147,7 +220,15 @@ pub async fn executor(
                 segment_count
             };
 
-            // Wait for both tasks to complete
+            // Start planner task to handle finalize and keccak
+            let planner_task = tokio::spawn(run_planner(
+                task_rx,
+                conn_clone,
+                job_id_clone,
+                segment_map_clone
+            ));
+
+            // Wait for segment processing to complete
             let segment_count = process_segments.await;
 
             // Get session info from executor
@@ -163,12 +244,26 @@ pub async fn executor(
                 }
             };
 
+            // Drop task sender to signal completion
+            drop(task_tx);
+
+            // Wait for planner to complete
+            match planner_task.await {
+                Ok(_) => tracing::info!("Planner task completed"),
+                Err(e) => tracing::error!("Planner task failed: {}", e),
+            }
+
             tracing::info!("Execution completed with {} segments", segment_count);
 
             // Store session info in Redis
             let session_key = format!("session:{}", job_id);
             tracing::info!("Creating session data with {} segments", segment_count);
-            let session_data = SessionData { segment_count, user_cycles, total_cycles, journal };
+            let session_data = SessionData {
+                segment_count,
+                user_cycles,
+                total_cycles,
+                journal,
+            };
 
             tracing::debug!("Serializing session data");
             let session_bytes = match bincode::serialize(&session_data) {
@@ -189,6 +284,31 @@ pub async fn executor(
             }
 
             tracing::info!("Stored session info for job {}", job_id);
+
+            // Enqueue finalize task
+            let finalize_req = FinalizeReq { max_idx: segment_count };
+            let finalize_task_id = format!("finalize:{}", job_id);
+            let finalize_task_def = match serde_json::to_value(TaskType::Finalize(finalize_req)) {
+                Ok(def) => def,
+                Err(e) => {
+                    tracing::error!("Failed to serialize finalize task def: {}", e);
+                    return Err(e.to_string().into());
+                }
+            };
+
+            let finalize_task = Task {
+                job_id,
+                task_id: finalize_task_id,
+                task_def: finalize_task_def,
+                data: vec![],
+                prereqs: vec![],
+                max_retries: 3,
+            };
+
+            match task_queue::enqueue_task(&mut conn, "finalize", finalize_task).await {
+                Ok(_) => tracing::info!("Successfully enqueued finalize task"),
+                Err(e) => tracing::error!("Failed to enqueue finalize task: {}", e),
+            }
         }
         _ => {
             // Handle other task types...
@@ -196,6 +316,58 @@ pub async fn executor(
         }
     }
 
+    Ok(())
+}
+
+// Planner task function
+async fn run_planner(
+    mut task_rx: mpsc::Receiver<SenderType>,
+    mut conn: ConnectionManager,
+    job_id: Uuid,
+    segment_map: Arc<Mutex<HashMap<usize, Segment>>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let coproc_prefix = format!("coproc:{job_id}");
+    let redis_ttl = 60 * 60 * 2; // 2 hours
+
+    while let Some(task_type) = task_rx.recv().await {
+        match task_type {
+            SenderType::Segment(_) => {
+                // Handled by the main executor
+            }
+            SenderType::Keccak(keccak_req) => {
+                // Process keccak task
+                tracing::info!("Processing keccak request: {:?}", keccak_req);
+
+                // Create keccak task
+                let task_id = format!("keccak:{}:{}", job_id, keccak_req.claim_digest);
+                let task_def = serde_json::to_value(TaskType::Keccak(KeccakReq {
+                    claim_digest: keccak_req.claim_digest,
+                    control_root: keccak_req.control_root,
+                    po2: keccak_req.po2,
+                })).map_err(|e| format!("Failed to serialize keccak task def: {}", e))?;
+
+                let keccak_task = Task {
+                    job_id,
+                    task_id: task_id.clone(),
+                    task_def,
+                    data: vec![],
+                    prereqs: vec![],
+                    max_retries: 3,
+                };
+
+                task_queue::enqueue_task(&mut conn, "keccak", keccak_task).await
+                    .map_err(|e| format!("Failed to enqueue keccak task: {}", e))?;
+
+                tracing::info!("Successfully enqueued keccak task: {}", task_id);
+            }
+            SenderType::Fault => {
+                tracing::error!("Guest fault detected");
+                break;
+            }
+        }
+    }
+
+    tracing::info!("Planner task completed");
     Ok(())
 }
 
@@ -238,4 +410,48 @@ async fn enqueue_prove_task(
     task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
 }
 
-// ... existing code ...
+// Helper function to enqueue batched prove tasks
+async fn enqueue_batched_prove(
+    conn: &mut ConnectionManager,
+    job_id: Uuid,
+    segments: &[(usize, Segment)],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Generate a batch ID
+    let batch_id = Uuid::new_v4();
+    let indices = segments.iter().map(|(idx, _)| *idx).collect::<Vec<_>>();
+    let task_id = format!("prove_batch:{}:{}", job_id, batch_id);
+
+    tracing::debug!("Creating batched task for segments {:?}", indices);
+
+    // Serialize all segments with their indices
+    let batch_data = segments.iter().map(|(idx, segment)| {
+        bincode::serialize(&(*idx, segment)).map_err(|e| e.to_string())
+    }).collect::<Result<Vec<_>, _>>()?;
+
+    // Concatenate all serialized data
+    let mut combined_data = Vec::new();
+    for segment_data in batch_data {
+        // Add the length prefix so we can split them later
+        let len_bytes = (segment_data.len() as u32).to_le_bytes();
+        combined_data.extend_from_slice(&len_bytes);
+        combined_data.extend_from_slice(&segment_data);
+    }
+
+    // Create batch prove task
+    let task_def = serde_json::to_value(TaskType::Prove(ProveReq {
+        index: 0, // This is a batch, actual indices are in the data
+    })).map_err(|e| e.to_string())?;
+
+    // Create Task with embedded batch data
+    let task = Task {
+        job_id,
+        task_id: task_id.clone(),
+        task_def,
+        data: combined_data,
+        prereqs: vec![],
+        max_retries: 3,
+    };
+
+    tracing::info!("Enqueuing batched prove task for segments {:?}", indices);
+    task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
+}

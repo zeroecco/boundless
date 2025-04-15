@@ -44,6 +44,5 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
 
     agent.set_in_redis(&output_key, &lift_asset, Some(agent.args.redis_ttl)).await?;
-
     Ok(())
 }
