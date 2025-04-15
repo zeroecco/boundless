@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 use taskdb::{JobState, TaskDbErr};
+use task_queue::planner::RedisPlanner;
 use thiserror::Error;
 use uuid::Uuid;
 use workflow_common::{
@@ -165,6 +166,10 @@ pub struct Args {
     #[clap(env)]
     database_url: String,
 
+    /// Redis URL
+    #[clap(env)]
+    redis_url: String,
+
     /// S3 / Minio bucket
     #[clap(env)]
     s3_bucket: String,
@@ -201,6 +206,7 @@ pub struct Args {
 pub struct AppState {
     db_pool: PgPool,
     s3_client: S3Client,
+    planner: RedisPlanner,
     exec_timeout: i32,
     exec_retries: i32,
     snark_timeout: i32,
@@ -224,9 +230,14 @@ impl AppState {
         .await
         .context("Failed to initialize s3 client / bucket")?;
 
+        let planner = RedisPlanner::new(&args.redis_url)
+            .await
+            .context("Failed to initialize Redis planner")?;
+
         Ok(Arc::new(Self {
             db_pool,
             s3_client,
+            planner,
             exec_timeout: args.exec_timeout,
             exec_retries: args.exec_retries,
             snark_timeout: args.snark_timeout,
@@ -400,17 +411,6 @@ async fn prove_stark(
     ExtractApiKey(api_key): ExtractApiKey,
     Json(start_req): Json<ProofReq>,
 ) -> Result<Json<CreateSessRes>, AppError> {
-    let (
-        _aux_stream,
-        exec_stream,
-        _gpu_prove_stream,
-        _gpu_coproc_stream,
-        _gpu_join_stream,
-        _snark_stream,
-    ) = helpers::get_or_create_streams(&state.db_pool, &api_key)
-        .await
-        .context("Failed to get / create steams")?;
-
     let task_def = serde_json::to_value(TaskType::Executor(ExecutorReq {
         image: start_req.img,
         input: start_req.input,
@@ -422,16 +422,13 @@ async fn prove_stark(
     }))
     .context("Failed to serialize ExecutorReq")?;
 
-    let job_id = taskdb::create_job(
-        &state.db_pool,
-        &exec_stream,
-        &task_def,
-        state.exec_retries,
-        state.exec_timeout,
-        &api_key,
-    )
-    .await
-    .context("Failed to create exec / init task")?;
+    let mut planner = state.planner.clone();
+    let task_number = planner.enqueue_segment().await?;
+    let job_id = Uuid::new_v4();
+
+    // Store the task definition in Redis
+    let task_key = format!("task:{}", task_number);
+    state.planner.conn.set(&task_key, task_def).await?;
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
@@ -443,19 +440,23 @@ async fn stark_status(
     Path(job_id): Path<Uuid>,
     ExtractApiKey(api_key): ExtractApiKey,
 ) -> Result<Json<SessionStatusRes>, AppError> {
-    let job_state = taskdb::get_job_state(&state.db_pool, &job_id, &api_key)
-        .await
-        .context("Failed to get job state")?;
+    let mut planner = state.planner.clone();
+    let task_count = planner.task_count().await?;
+    let next_task = planner.next_task().await?;
+
+    let job_state = if next_task.is_none() {
+        JobState::Done
+    } else {
+        JobState::Running
+    };
 
     let (exec_stats, receipt_url) = if job_state == JobState::Done {
-        let exec_stats = helpers::get_exec_stats(&state.db_pool, &job_id)
-            .await
-            .context("Failed to get exec stats")?;
+        // TODO: Get actual stats from Redis
         (
             Some(SessionStats {
-                cycles: exec_stats.user_cycles,
-                segments: exec_stats.segments as usize,
-                total_cycles: exec_stats.total_cycles,
+                cycles: 0,
+                segments: 0,
+                total_cycles: 0,
             }),
             Some(format!("http://{hostname}/receipts/stark/receipt/{job_id}")),
         )
@@ -464,11 +465,8 @@ async fn stark_status(
     };
 
     let error_msg = if job_state == JobState::Failed {
-        Some(
-            taskdb::get_job_failure(&state.db_pool, &job_id)
-                .await
-                .context("Failed to get job error message")?,
-        )
+        // TODO: Get error message from Redis
+        Some("Task failed".to_string())
     } else {
         None
     };
@@ -559,33 +557,19 @@ async fn prove_groth16(
     ExtractApiKey(api_key): ExtractApiKey,
     Json(start_req): Json<SnarkReq>,
 ) -> Result<Json<CreateSessRes>, AppError> {
-    let (
-        _aux_stream,
-        _exec_stream,
-        _gpu_prove_stream,
-        _gpu_coproc_stream,
-        _gpu_join_stream,
-        snark_stream,
-    ) = helpers::get_or_create_streams(&state.db_pool, &api_key)
-        .await
-        .context("Failed to get / create steams")?;
-
     let task_def = serde_json::to_value(TaskType::Snark(WorkflowSnarkReq {
         receipt: start_req.session_id,
         compress_type: CompressType::Groth16,
     }))
     .context("Failed to serialize ExecutorReq")?;
 
-    let job_id = taskdb::create_job(
-        &state.db_pool,
-        &snark_stream,
-        &task_def,
-        state.snark_retries,
-        state.snark_timeout,
-        &api_key,
-    )
-    .await
-    .context("Failed to create exec / init task")?;
+    let mut planner = state.planner.clone();
+    let task_number = planner.enqueue_keccak().await?;
+    let job_id = Uuid::new_v4();
+
+    // Store the task definition in Redis
+    let task_key = format!("task:{}", task_number);
+    state.planner.conn.set(&task_key, task_def).await?;
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
@@ -597,16 +581,24 @@ async fn groth16_status(
     Path(job_id): Path<Uuid>,
     Host(hostname): Host,
 ) -> Result<Json<SnarkStatusRes>, AppError> {
-    let job_state = taskdb::get_job_state(&state.db_pool, &job_id, &api_key)
-        .await
-        .context("Failed to get job state")?;
+    let mut planner = state.planner.clone();
+    let task_count = planner.task_count().await?;
+    let next_task = planner.next_task().await?;
+
+    let job_state = if next_task.is_none() {
+        JobState::Done
+    } else {
+        JobState::Running
+    };
+
     let (error_msg, output) = match job_state {
         JobState::Running => (None, None),
         JobState::Done => {
             (None, Some(format!("http://{hostname}/receipts/groth16/receipt/{job_id}")))
         }
-        JobState::Failed => (None, None), // TODO error message
+        JobState::Failed => (Some("Task failed".to_string()), None),
     };
+
     Ok(Json(SnarkStatusRes { status: job_state.to_string(), error_msg, output }))
 }
 

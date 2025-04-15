@@ -3,11 +3,11 @@
 // All rights reserved.
 
 use crate::{
-    redis::{self, AsyncCommands},
     tasks::{deserialize_obj, serialize_obj, RECEIPT_PATH, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
+use redis::AsyncCommands;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt, Unknown};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
 
     tracing::info!("Starting resolve for job_id: {job_id}, max_idx: {max_idx}");
 
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.redis_conn.clone();
     let receipt: Vec<u8> = conn.get::<_, Vec<u8>>(&root_receipt_key).await.with_context(|| {
         format!("segment data not found for root receipt key: {root_receipt_key}")
     })?;
@@ -106,10 +106,9 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
         serialize_obj(&conditional_receipt).context("Failed to serialize resolved receipt")?;
 
     tracing::info!("Writing resolved receipt to Redis key: {root_receipt_key}");
-    redis::set_key_with_expiry(
-        &mut conn,
+    agent.set_in_redis(
         &root_receipt_key,
-        serialized_asset,
+        &serialized_asset,
         Some(agent.args.redis_ttl),
     )
     .await

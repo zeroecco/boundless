@@ -3,18 +3,18 @@
 // All rights reserved.
 
 use crate::{
-    redis::{self, AsyncCommands},
     tasks::{deserialize_obj, serialize_obj},
     Agent,
 };
 use anyhow::{Context, Result};
+use redis::AsyncCommands;
 use uuid::Uuid;
 use workflow_common::{UnionReq, KECCAK_RECEIPT_PATH};
 
 /// Run the union operation
 pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<()> {
     tracing::info!("Starting union for job_id: {job_id}");
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.redis_conn.clone();
 
     // setup redis keys
     let keccak_receipts_prefix = format!("job:{job_id}:{KECCAK_RECEIPT_PATH}");
@@ -48,7 +48,8 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     // send result to redis
     let union_result = serialize_obj(&unioned).context("Failed to serialize union receipt")?;
     let output_key = format!("{keccak_receipts_prefix}:{}", request.idx);
-    redis::set_key_with_expiry(&mut conn, &output_key, union_result, Some(agent.args.redis_ttl))
+    
+    agent.set_in_redis(&output_key, &union_result, Some(agent.args.redis_ttl))
         .await
         .context("Failed to set redis key for union receipt")?;
 

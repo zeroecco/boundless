@@ -3,18 +3,18 @@
 // All rights reserved.
 
 use crate::{
-    redis::{self, AsyncCommands},
     tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH, SEGMENTS_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
+use redis::AsyncCommands;
 use uuid::Uuid;
 use workflow_common::ProveReq;
 
 /// Run a prove request
 pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
     let index = request.index;
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.redis_conn.clone();
     let job_prefix = format!("job:{job_id}");
     let segment_key = format!("{job_prefix}:{SEGMENTS_PATH}:{index}");
 
@@ -48,7 +48,8 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
     let output_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{task_id}");
     // Write out lifted receipt
     let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
-    redis::set_key_with_expiry(&mut conn, &output_key, lift_asset, Some(agent.args.redis_ttl))
+    
+    agent.set_in_redis(&output_key, &lift_asset, Some(agent.args.redis_ttl))
         .await?;
 
     Ok(())

@@ -3,17 +3,17 @@
 // All rights reserved.
 
 use crate::{
-    redis::{self, AsyncCommands},
     tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
+use redis::AsyncCommands;
 use uuid::Uuid;
 use workflow_common::JoinReq;
 
 /// Run the join operation
 pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()> {
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.redis_conn.clone();
     // Build the redis keys for the right and left joins
     let job_prefix = format!("job:{job_id}");
     let recur_receipts_prefix = format!("{job_prefix}:{RECUR_RECEIPT_PATH}");
@@ -44,7 +44,8 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .join(&left_receipt, &right_receipt)?;
     let join_result = serialize_obj(&joined).expect("Failed to serialize the segment");
     let output_key = format!("{recur_receipts_prefix}:{}", request.idx);
-    redis::set_key_with_expiry(&mut conn, &output_key, join_result, Some(agent.args.redis_ttl))
+    
+    agent.set_in_redis(&output_key, &join_result, Some(agent.args.redis_ttl))
         .await?;
 
     tracing::info!("Join Complete {job_id} - {}", request.left);

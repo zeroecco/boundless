@@ -3,11 +3,11 @@
 // All rights reserved.
 
 use crate::{
-    redis::{self, AsyncCommands},
     tasks::{serialize_obj, COPROC_CB_PATH},
     Agent,
 };
 use anyhow::{anyhow, bail, Context, Result};
+use redis::AsyncCommands;
 use risc0_zkvm::ProveKeccakRequest;
 use uuid::Uuid;
 use workflow_common::{KeccakReq, KECCAK_RECEIPT_PATH};
@@ -30,7 +30,7 @@ pub async fn keccak(
     task_id: &str,
     request: &KeccakReq,
 ) -> Result<()> {
-    let mut conn = redis::get_connection(&agent.redis_pool).await?;
+    let mut conn = agent.redis_conn.clone();
 
     let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
     let keccak_input: Vec<u8> = conn
@@ -63,10 +63,9 @@ pub async fn keccak(
     let keccak_receipt_bytes =
         serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
 
-    redis::set_key_with_expiry(
-        &mut conn,
+    agent.set_in_redis(
         &receipts_key,
-        keccak_receipt_bytes,
+        &keccak_receipt_bytes,
         Some(agent.args.redis_ttl),
     )
     .await

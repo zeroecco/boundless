@@ -10,6 +10,7 @@ use aws_sdk_s3::{
     types::CreateBucketConfiguration,
     Client,
 };
+use bincode::{deserialize, serialize};
 use std::path::Path;
 
 /// Object store elf dir

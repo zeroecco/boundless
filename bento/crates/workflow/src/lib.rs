@@ -6,11 +6,10 @@
 
 //! Workflow processing Agent service
 
-use crate::redis::RedisPool;
 use anyhow::{Context, Result};
 use clap::Parser;
+use redis::aio::ConnectionManager;
 use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext};
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::{
     rc::Rc,
     sync::{
@@ -18,21 +17,22 @@ use std::{
         Arc,
     },
 };
-use taskdb::ReadyTask;
+use task_queue::{Task, TaskQueueError};
 use tokio::time;
-use workflow_common::{TaskType, COPROC_WORK_TYPE};
+use workflow_common::TaskType;
+use uuid::Uuid;
 
-mod redis;
 mod tasks;
 
 pub use workflow_common::{
     s3::S3Client, AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE, SNARK_WORK_TYPE,
+    COPROC_WORK_TYPE,
 };
 
 /// Workflow agent
 ///
-/// Monitors taskdb for new tasks on the selected stream and processes the work.
-/// Requires redis / task (psql) access
+/// Monitors task queue for new tasks on the selected stream and processes the work.
+/// Requires redis access
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -48,10 +48,6 @@ pub struct Args {
     #[arg(short, long, default_value_t = 1)]
     pub poll_time: u64,
 
-    /// taskdb postgres DATABASE_URL
-    #[clap(env)]
-    pub database_url: String,
-
     /// redis connection URL
     #[clap(env)]
     pub redis_url: String,
@@ -59,10 +55,6 @@ pub struct Args {
     /// risc0 segment po2 arg
     #[clap(short, long, default_value_t = 20)]
     pub segment_po2: u32,
-
-    /// max connections to SQL db in connection pool
-    #[clap(long, default_value_t = 1)]
-    pub db_max_connections: u32,
 
     /// Redis TTL, seconds before objects expire automatically
     ///
@@ -90,48 +82,22 @@ pub struct Args {
     #[clap(env)]
     pub s3_url: String,
 
-    /// Enables a background thread to monitor for tasks that need to be retried / timed-out
-    #[clap(long, default_value_t = false)]
-    monitor_requeue: bool,
-
     // Task flags
     /// How many times a prove+lift can fail before hard failure
     #[clap(long, default_value_t = 3)]
     prove_retries: i32,
 
-    /// How long can a prove+lift can be running for, before it is marked as timed-out
-    #[clap(long, default_value_t = 30)]
-    prove_timeout: i32,
-
     /// How many times a join can fail before hard failure
     #[clap(long, default_value_t = 3)]
     join_retries: i32,
-
-    /// How long can a join can be running for, before it is marked as timed-out
-    #[clap(long, default_value_t = 10)]
-    join_timeout: i32,
 
     /// How many times a resolve can fail before hard failure
     #[clap(long, default_value_t = 3)]
     resolve_retries: i32,
 
-    /// How long can a resolve can be running for, before it is marked as timed-out
-    #[clap(long, default_value_t = 10)]
-    resolve_timeout: i32,
-
     /// How many times a finalize can fail before hard failure
     #[clap(long, default_value_t = 0)]
     finalize_retries: i32,
-
-    /// How long can a finalize can be running for, before it is marked as timed-out
-    ///
-    /// NOTE: This value is multiplied by the assumption count
-    #[clap(long, default_value_t = 10)]
-    finalize_timeout: i32,
-
-    /// Snark timeout in seconds
-    #[clap(long, default_value_t = 60 * 4)]
-    snark_timeout: i32,
 
     /// Snark retries
     #[clap(long, default_value_t = 0)]
@@ -140,16 +106,14 @@ pub struct Args {
 
 /// Core agent context to hold all optional clients / pools and state
 pub struct Agent {
-    /// Postgresql database connection pool
-    pub db_pool: PgPool,
     /// segment po2 config
     pub segment_po2: u32,
-    /// redis connection pool
-    pub redis_pool: RedisPool,
+    /// redis connection manager
+    pub redis_conn: ConnectionManager,
     /// S3 client
     pub s3_client: S3Client,
     /// all configuration params:
-    args: Args,
+    pub args: Args,
     /// risc0 Prover server
     prover: Option<Rc<dyn ProverServer>>,
     /// risc0 verifier context
@@ -161,13 +125,10 @@ impl Agent {
     ///
     /// Starts any connection pools and establishes the agents configs
     pub async fn new(args: Args) -> Result<Self> {
-        let db_pool = PgPoolOptions::new()
-            .max_connections(args.db_max_connections)
-            .connect(&args.database_url)
-            .await
-            .context("Failed to initialize postgresql pool")?;
-
-        let redis_pool = crate::redis::create_pool(&args.redis_url)?;
+        let client = redis::Client::open(args.redis_url.clone())
+            .context("Failed to create Redis client")?;
+        let redis_conn = client.get_connection_manager().await
+            .context("Failed to get Redis connection manager")?;
 
         let s3_client = S3Client::from_minio(
             &args.s3_url,
@@ -191,9 +152,8 @@ impl Agent {
         };
 
         Ok(Self {
-            db_pool,
             segment_po2: args.segment_po2,
-            redis_pool,
+            redis_conn,
             s3_client,
             args,
             prover,
@@ -217,48 +177,36 @@ impl Agent {
     /// [Self::process_work] result
     pub async fn poll_work(&self) -> Result<()> {
         let term_sig = Self::create_sig_monitor().context("Failed to create signal hook")?;
-
-        // Enables task retry management background thread, good for 1-2 aux workers to run in the
-        // cluster
-        if self.args.monitor_requeue {
-            let term_sig_copy = term_sig.clone();
-            let db_pool_copy = self.db_pool.clone();
-            tokio::spawn(async move {
-                Self::poll_for_requeue(term_sig_copy, db_pool_copy).await.expect("Requeue failed")
-            });
-        }
+        let mut conn = self.redis_conn.clone();
+        let queue_name = format!("queue:{}", self.args.task_stream);
 
         while !term_sig.load(Ordering::Relaxed) {
-            let task = taskdb::request_work(&self.db_pool, &self.args.task_stream)
-                .await
-                .context("Failed to request_work")?;
-            let Some(task) = task else {
+            // Try to get a task from the queue
+            let task = task_queue::dequeue_task(&mut conn, &queue_name).await
+                .context("Failed to dequeue task")?;
+            
+            // If no task, sleep and try again
+            if task.is_none() {
                 time::sleep(time::Duration::from_secs(self.args.poll_time)).await;
                 continue;
-            };
-
-            if let Err(err) = self.process_work(&task).await {
+            }
+            
+            let task = task.unwrap();
+            
+            // Process the task
+            let task_clone = task.clone();
+            if let Err(err) = self.process_work(task).await {
                 tracing::error!("Failure during task processing: {err:?}");
-
-                if task.max_retries > 0 {
-                    if !taskdb::update_task_retry(&self.db_pool, &task.job_id, &task.task_id)
-                        .await
-                        .context("Failed to update task retries")?
-                    {
-                        tracing::info!("update_task_retried failed: {}", task.job_id);
+                // If the task has retries left, requeue it with decremented retries
+                if task_clone.max_retries > 0 {
+                    let mut retry_task = task_clone.clone();
+                    retry_task.max_retries -= 1;
+                    if let Err(e) = task_queue::enqueue_task(&mut conn, &queue_name, retry_task).await {
+                        tracing::error!("Failed to requeue task: {e:?}");
                     }
                 } else {
-                    // Prevent massive errors from being reported to the DB
-                    let mut err_str = format!("{err:?}");
-                    err_str.truncate(1024);
-                    taskdb::update_task_failed(
-                        &self.db_pool,
-                        &task.job_id,
-                        &task.task_id,
-                        &err_str,
-                    )
-                    .await
-                    .context("Failed to report task failure")?;
+                    // Log the failure
+                    tracing::error!("Task failed with no retries left: job_id={}, task_id={}", task_clone.job_id, task_clone.task_id);
                 }
                 continue;
             }
@@ -269,79 +217,143 @@ impl Agent {
     }
 
     /// Process a task and dispatch based on the task type
-    pub async fn process_work(&self, task: &ReadyTask) -> Result<()> {
-        let task_type: TaskType = serde_json::from_value(task.task_def.clone())
+    pub async fn process_work(&self, task: Task) -> Result<()> {
+        let task_def: TaskType = serde_json::from_value(task.task_def.clone())
             .with_context(|| format!("Invalid task_def: {}:{}", task.job_id, task.task_id))?;
 
         // run the task
-        let res = match task_type {
-            TaskType::Executor(req) => serde_json::to_value(
-                tasks::executor::executor(self, &task.job_id, &req)
+        match task_def {
+            TaskType::Executor(req) => {
+                let _ = tasks::executor::executor(self, &task.job_id, &req)
                     .await
-                    .context("Executor failed")?,
-            )
-            .context("Failed to serialize prove response")?,
-            TaskType::Prove(req) => serde_json::to_value(
+                    .context("Executor failed")?;
+            },
+            TaskType::Prove(req) => {
                 tasks::prove::prover(self, &task.job_id, &task.task_id, &req)
                     .await
-                    .context("Prove failed")?,
-            )
-            .context("Failed to serialize prove response")?,
-            TaskType::Join(req) => serde_json::to_value(
-                tasks::join::join(self, &task.job_id, &req).await.context("Join failed")?,
-            )
-            .context("Failed to serialize join response")?,
-            TaskType::Resolve(req) => serde_json::to_value(
-                tasks::resolve::resolver(self, &task.job_id, &req)
+                    .context("Prove failed")?;
+            },
+            TaskType::Join(req) => {
+                tasks::join::join(self, &task.job_id, &req)
                     .await
-                    .context("Resolve failed")?,
-            )
-            .context("Failed to serialize join response")?,
-            TaskType::Finalize(req) => serde_json::to_value(
+                    .context("Join failed")?;
+            },
+            TaskType::Resolve(req) => {
+                let _ = tasks::resolve::resolver(self, &task.job_id, &req)
+                    .await
+                    .context("Resolve failed")?;
+            },
+            TaskType::Finalize(req) => {
                 tasks::finalize::finalize(self, &task.job_id, &req)
                     .await
-                    .context("Finalize failed")?,
-            )
-            .context("Failed to serialize finalize response")?,
-            TaskType::Snark(req) => serde_json::to_value(
+                    .context("Finalize failed")?;
+            },
+            TaskType::Snark(req) => {
                 tasks::snark::stark2snark(self, &task.job_id.to_string(), &req)
                     .await
-                    .context("Snark failed")?,
-            )
-            .context("failed to serialize snark response")?,
-            TaskType::Keccak(req) => serde_json::to_value(
+                    .context("Snark failed")?;
+            },
+            TaskType::Keccak(req) => {
                 tasks::keccak::keccak(self, &task.job_id, &task.task_id, &req)
                     .await
-                    .context("Keccak failed")?,
-            )
-            .context("failed to serialize keccak response")?,
-            TaskType::Union(req) => serde_json::to_value(
-                tasks::union::union(self, &task.job_id, &req).await.context("Union failed")?,
-            )
-            .context("failed to serialize union response")?,
+                    .context("Keccak failed")?;
+            },
+            TaskType::Union(req) => {
+                tasks::union::union(self, &task.job_id, &req)
+                    .await
+                    .context("Union failed")?;
+            },
         };
-
-        taskdb::update_task_done(&self.db_pool, &task.job_id, &task.task_id, res)
-            .await
-            .context("Failed to report task done")?;
 
         Ok(())
     }
 
-    /// background task to poll for jobs that need to be requeued
-    ///
-    /// Scan the queue looking for tasks that need to be retried and update them
-    /// the agent will catch and fail max retries.
-    async fn poll_for_requeue(term_sig: Arc<AtomicBool>, db_pool: PgPool) -> Result<()> {
-        while !term_sig.load(Ordering::Relaxed) {
-            tracing::debug!("Triggering a requeue job...");
-            let retry_tasks = taskdb::requeue_tasks(&db_pool, 100).await?;
-            if retry_tasks > 0 {
-                tracing::info!("Found {retry_tasks} tasks that needed to be retried");
-            }
-            time::sleep(tokio::time::Duration::from_secs(5)).await;
-        }
+    /// Enqueue a new task to be processed
+    pub async fn enqueue_task(&self, queue_name: &str, task_type: TaskType, prereqs: Vec<String>, max_retries: i32) -> Result<(), TaskQueueError> {
+        let mut conn = self.redis_conn.clone();
+        let task = Task {
+            job_id: Uuid::new_v4(),
+            task_id: format!("task:{}", Uuid::new_v4()),
+            task_def: serde_json::to_value(task_type)?,
+            prereqs,
+            max_retries,
+        };
+        
+        task_queue::enqueue_task(&mut conn, queue_name, task).await
+    }
 
+    /// Helper to get and deserialize a value from Redis
+    pub async fn get_from_redis<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<T> {
+        let mut conn = self.redis_conn.clone();
+        let result: Option<String> = redis::cmd("GET")
+            .arg(key)
+            .query_async(&mut conn)
+            .await
+            .context("Failed to get value from Redis")?;
+        
+        match result {
+            Some(value) => Ok(serde_json::from_str(&value).context("Failed to deserialize value")?),
+            None => anyhow::bail!("Key not found in Redis: {}", key),
+        }
+    }
+
+    /// Helper to set a value in Redis with optional expiry
+    pub async fn set_in_redis(&self, key: &str, value: &[u8], expiry_seconds: Option<u64>) -> Result<()> {
+        let mut conn = self.redis_conn.clone();
+        
+        if let Some(seconds) = expiry_seconds {
+            let _: () = redis::cmd("SETEX")
+                .arg(key)
+                .arg(seconds)
+                .arg(value)
+                .query_async(&mut conn)
+                .await
+                .context("Failed to set value in Redis with expiry")?;
+        } else {
+            let _: () = redis::cmd("SET")
+                .arg(key)
+                .arg(value)
+                .query_async(&mut conn)
+                .await
+                .context("Failed to set value in Redis")?;
+        }
+        
         Ok(())
+    }
+
+    /// Helper to scan for keys matching a pattern and delete them
+    pub async fn scan_and_delete(&self, pattern: &str) -> Result<u64> {
+        let mut conn = self.redis_conn.clone();
+        let mut count = 0;
+        
+        let mut cursor = 0;
+        loop {
+            let (next_cursor, keys): (i64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(format!("{}*", pattern))
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+                .context("Failed to scan Redis")?;
+            
+            cursor = next_cursor;
+            
+            if !keys.is_empty() {
+                let deleted: u64 = redis::cmd("DEL")
+                    .arg(keys)
+                    .query_async(&mut conn)
+                    .await
+                    .context("Failed to delete keys")?;
+                count += deleted;
+            }
+            
+            if cursor == 0 {
+                break;
+            }
+        }
+        
+        Ok(count)
     }
 }

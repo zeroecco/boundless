@@ -24,7 +24,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 signal-hook = "0.3"
 sqlx = { workspace = true }
-taskdb = { workspace = true }
+task-queue = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
 tracing = { workspace = true }
