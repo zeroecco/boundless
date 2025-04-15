@@ -31,6 +31,7 @@ use workflow_common::{
 };
 use task_queue::Task;
 use redis::aio::ConnectionManager;
+use redis::AsyncCommands;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -244,30 +245,17 @@ async fn image_upload_put(
     Path(image_id): Path<String>,
     body: Body,
 ) -> Result<(), AppError> {
-    let new_img_key = format!("{ELF_BUCKET_DIR}/{image_id}");
-    if state
-        .s3_client
-        .object_exists(&new_img_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ImgAlreadyExists(image_id));
-    }
+    let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
 
-    let body_bytes =
-        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
-
-    let comp_img_id =
-        compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
+    let comp_img_id = compute_image_id(&body_bytes).context("Failed to compute image id")?.to_string();
     if comp_img_id != image_id {
         return Err(AppError::ImageIdMismatch(image_id, comp_img_id));
     }
 
-    state
-        .s3_client
-        .write_buf_to_s3(&new_img_key, body_bytes.to_vec())
-        .await
-        .context("Failed to upload image to object store")?;
+    let mut conn = state.redis_client.lock().await;
+    let elf_key = format!("elf:{}", image_id);
+    conn.set_ex(&elf_key, body_bytes.to_vec(), 60 * 60 * 2).await
+        .context("Failed to store ELF in Redis")?;
 
     Ok(())
 }
@@ -301,24 +289,12 @@ async fn input_upload_put(
     Path(input_id): Path<String>,
     body: Body,
 ) -> Result<(), AppError> {
-    let new_input_key = format!("{INPUT_BUCKET_DIR}/{input_id}");
-    if state
-        .s3_client
-        .object_exists(&new_input_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::InputAlreadyExists(input_id.to_string()));
-    }
+    let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
 
-    // TODO: Support streaming uploads
-    let body_bytes =
-        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
-    state
-        .s3_client
-        .write_buf_to_s3(&new_input_key, body_bytes.to_vec())
-        .await
-        .context("Failed to upload input to object store")?;
+    let mut conn = state.redis_client.lock().await;
+    let input_key = format!("input:{}", input_id);
+    conn.set_ex(&input_key, body_bytes.to_vec(), 60 * 60 * 2).await
+        .context("Failed to store input in Redis")?;
 
     Ok(())
 }
@@ -351,24 +327,12 @@ async fn receipt_upload_put(
     Path(receipt_id): Path<String>,
     body: Body,
 ) -> Result<(), AppError> {
-    let new_receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{receipt_id}.bincode");
-    if state
-        .s3_client
-        .object_exists(&new_receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::InputAlreadyExists(receipt_id.to_string()));
-    }
+    let body_bytes = to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
 
-    // TODO: Support streaming uploads
-    let body_bytes =
-        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
-    state
-        .s3_client
-        .write_buf_to_s3(&new_receipt_key, body_bytes.to_vec())
-        .await
-        .context("Failed to upload receipt to object store")?;
+    let mut conn = state.redis_client.lock().await;
+    let receipt_key = format!("receipt:{}", receipt_id);
+    conn.set_ex(&receipt_key, body_bytes.to_vec(), 60 * 60 * 2).await
+        .context("Failed to store receipt in Redis")?;
 
     Ok(())
 }

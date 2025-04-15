@@ -115,7 +115,7 @@ pub async fn executor(
                 conn.set_ex(&segment_key, segment_bytes, 60 * 60 * 2).await?;
             }
 
-            // Store session info
+            // Store session info in Redis
             let session_key = format!("session:{}", job_id);
             let session_data = SessionData {
                 segment_count: session.segments.len(),
@@ -124,7 +124,7 @@ pub async fn executor(
                 journal: session.journal,
             };
             let session_bytes = bincode::serialize(&session_data)?;
-            conn.set(&session_key, &session_bytes).await?;
+            conn.set_ex(&session_key, session_bytes, 60 * 60 * 2).await?;
             tracing::info!("Stored session info for job {}", job_id);
         },
         _ => {
