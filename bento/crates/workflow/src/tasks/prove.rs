@@ -9,23 +9,21 @@ use crate::{
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use std::path::Path;
+use task_queue::Task;
 use uuid::Uuid;
 use workflow_common::ProveReq;
 
 /// Run a prove request
-pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
+pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
+    let job_id = task.job_id;
+    let task_id = &task.task_id;
+    let request: ProveReq = serde_json::from_value(task.task_def.clone())?;
     let index = request.index;
-    let mut conn = agent.redis_conn.clone();
+    let segment = bincode::deserialize(&task.data)?;
+
     let job_prefix = format!("job:{job_id}");
-    let segment_key = format!("{job_prefix}:{SEGMENTS_PATH}:{index}");
 
     tracing::info!("Starting proof of idx: {job_id} - {index}");
-    let segment_vec: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&segment_key)
-        .await
-        .with_context(|| format!("segment data not found for segment key: {segment_key}"))?;
-    let segment =
-        deserialize_obj(&segment_vec).context("Failed to deserialize segment data from redis")?;
 
     let segment_receipt = agent
         .prover
@@ -52,10 +50,5 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
 
     agent.set_in_redis(&output_key, &lift_asset, Some(agent.args.redis_ttl)).await?;
 
-    Ok(())
-}
-
-pub async fn prove_task(elf_path: &Path, input_path: &Path) -> Result<()> {
-    // TODO: Implement prove task logic
     Ok(())
 }
