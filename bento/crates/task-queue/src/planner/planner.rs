@@ -191,25 +191,6 @@ impl RedisPlanner {
         })
     }
 
-    pub async fn enqueue_segment(&mut self) -> Result<(), PlannerError> {
-        let mut conn = self.conn.lock().await;
-        let last_task_id: Option<String> = conn.get(LAST_TASK_KEY).await.map_err(|e| PlannerError::RedisError(e))?;
-        let task_id = last_task_id.map_or(0, |id| id.parse().unwrap_or(0)) + 1;
-
-        let task = Task {
-            job_id: self.job_id,
-            task_id,
-            task_def: self.current_segment.clone(),
-            prereqs: vec![],
-            max_retries: 3,
-        };
-
-        let task_json = serde_json::to_string(&task).map_err(|e| PlannerError::SerializationError(e))?;
-        conn.set(LAST_TASK_KEY, task_id.to_string()).await.map_err(|e| PlannerError::RedisError(e))?;
-        conn.lpush(PEAKS_KEY, task_json).await.map_err(|e| PlannerError::RedisError(e))?;
-        Ok(())
-    }
-
     pub async fn enqueue_keccak(&mut self) -> Result<(), PlannerError> {
         let mut conn = self.conn.lock().await;
         let last_task_id: Option<String> = conn.get(LAST_TASK_KEY).await.map_err(|e| PlannerError::RedisError(e))?;

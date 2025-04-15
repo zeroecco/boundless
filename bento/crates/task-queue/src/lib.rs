@@ -15,7 +15,7 @@ pub struct Task {
     pub task_def: JsonValue,
     pub prereqs: Vec<String>,
     pub max_retries: i32,
-    pub segment: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 #[derive(Error, Debug)]
@@ -97,7 +97,7 @@ mod tests {
             task_def: json!({"operation": "test"}),
             prereqs: vec![],
             max_retries: 3,
-            segment: vec![],
+            data: vec![],
         };
 
         // Enqueue the task
