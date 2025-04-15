@@ -3,106 +3,48 @@
 // All rights reserved.
 
 use anyhow::{Context, Result};
-use sqlx::PgPool;
+use serde::Deserialize;
 use uuid::Uuid;
 use workflow_common::{
     ExecutorResp, AUX_WORK_TYPE, COPROC_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
     SNARK_WORK_TYPE,
 };
 
-pub async fn get_or_create_streams(
-    pool: &PgPool,
-    user_id: &str,
-) -> Result<(Uuid, Uuid, Uuid, Uuid, Uuid, Uuid)> {
-    let aux_stream = if let Some(res) = taskdb::get_stream(pool, user_id, AUX_WORK_TYPE)
-        .await
-        .context("Failed to get aux stream")?
-    {
-        res
-    } else {
-        tracing::info!("Creating a new aux stream for key: {user_id}");
-        taskdb::create_stream(pool, AUX_WORK_TYPE, 0, 1.0, user_id)
-            .await
-            .context("Failed to create taskdb aux stream")?
-    };
-
-    let exec_stream = if let Some(res) = taskdb::get_stream(pool, user_id, EXEC_WORK_TYPE)
-        .await
-        .context("Failed to get exec stream")?
-    {
-        res
-    } else {
-        tracing::info!("Creating a new cpu stream for key: {user_id}");
-        taskdb::create_stream(pool, EXEC_WORK_TYPE, 0, 1.0, user_id)
-            .await
-            .context("Failed to create taskdb exec stream")?
-    };
-
-    let gpu_prove_stream = if let Some(res) = taskdb::get_stream(pool, user_id, PROVE_WORK_TYPE)
-        .await
-        .context("Failed to get gpu prove stream")?
-    {
-        res
-    } else {
-        tracing::info!("Creating a new gpu stream for key: {user_id}");
-        taskdb::create_stream(pool, PROVE_WORK_TYPE, 0, 1.0, user_id)
-            .await
-            .context("Failed to create taskdb gpu prove stream")?
-    };
-
-    let gpu_coproc_stream = if let Some(res) = taskdb::get_stream(pool, user_id, COPROC_WORK_TYPE)
-        .await
-        .context("Failed to get gpu prove stream")?
-    {
-        res
-    } else {
-        tracing::info!("Creating a new gpu stream for key: {user_id}");
-        taskdb::create_stream(pool, COPROC_WORK_TYPE, 0, 1.0, user_id)
-            .await
-            .context("Failed to create taskdb gpu coproc stream")?
-    };
-
-    let gpu_join_stream = if let Some(res) = taskdb::get_stream(pool, user_id, JOIN_WORK_TYPE)
-        .await
-        .context("Failed to get gpu join stream")?
-    {
-        res
-    } else {
-        tracing::info!("Creating a new gpu join stream for key: {user_id}");
-        taskdb::create_stream(pool, JOIN_WORK_TYPE, 0, 1.0, user_id)
-            .await
-            .context("Failed to create taskdb gpu join stream")?
-    };
-
-    let snark_stream = if let Some(res) = taskdb::get_stream(pool, user_id, SNARK_WORK_TYPE)
-        .await
-        .context("Failed to get snark stream")?
-    {
-        res
-    } else {
-        tracing::info!("Creating a new snark stream for key: {user_id}");
-        taskdb::create_stream(pool, SNARK_WORK_TYPE, 0, 1.0, user_id)
-            .await
-            .context("Failed to create taskdb snark stream")?
-    };
-
-    Ok((
-        aux_stream,
-        exec_stream,
-        gpu_prove_stream,
-        gpu_coproc_stream,
-        gpu_join_stream,
-        snark_stream,
-    ))
+/// This structure helps handle the asynchronous job responses 
+/// returned from the execution API
+#[derive(Deserialize, Debug)]
+pub struct JobInfo {
+    pub id: String,
+    pub job_id: Uuid,
 }
 
-pub async fn get_exec_stats(pool: &PgPool, job_id: &Uuid) -> Result<ExecutorResp> {
-    let res: sqlx::types::Json<ExecutorResp> =
-        sqlx::query_scalar("SELECT output FROM tasks WHERE job_id = $1 AND task_id = 'init'")
-            .bind(job_id)
-            .fetch_one(pool)
-            .await
-            .context("Failed to get task output as exec response")?;
+impl JobInfo {
+    pub fn from_payload(payload: serde_json::Value) -> Result<Self> {
+        let job_info: JobInfo = serde_json::from_value(payload)?;
+        Ok(job_info)
+    }
+}
 
-    Ok(res.0)
+/// Helper function to extract a value from the response
+pub fn extract_executor_response(results: &serde_json::Value) -> Result<ExecutorResp> {
+    let res: ExecutorResp = serde_json::from_value(results.clone())
+        .context("Failed to deserialize executor response")?;
+    Ok(res)
+}
+
+/// Prepare a new queue name for a specific stream type
+pub fn prepare_queue_name(stream_type: &str) -> String {
+    format!("queue:{}", stream_type)
+}
+
+/// Create all necessary queue names for a user
+pub fn create_queue_names() -> (String, String, String, String, String, String) {
+    let aux_queue = prepare_queue_name(AUX_WORK_TYPE);
+    let exec_queue = prepare_queue_name(EXEC_WORK_TYPE);
+    let prove_queue = prepare_queue_name(PROVE_WORK_TYPE);
+    let coproc_queue = prepare_queue_name(COPROC_WORK_TYPE);
+    let join_queue = prepare_queue_name(JOIN_WORK_TYPE);
+    let snark_queue = prepare_queue_name(SNARK_WORK_TYPE);
+    
+    (aux_queue, exec_queue, prove_queue, coproc_queue, join_queue, snark_queue)
 }

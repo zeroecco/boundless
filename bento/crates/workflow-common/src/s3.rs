@@ -10,7 +10,7 @@ use aws_sdk_s3::{
     types::CreateBucketConfiguration,
     Client,
 };
-use bincode::{deserialize, serialize};
+use bincode;
 use std::path::Path;
 
 /// Object store elf dir
@@ -40,6 +40,17 @@ const MOCK_REGION: &str = "us-west-2";
 pub struct S3Client {
     bucket: String,
     client: Client,
+}
+
+// Adding a helper method to clone the state for the API implementation
+impl S3Client {
+    pub fn clone_state(client: &Self) -> Self {
+        let config = client.client.config().clone();
+        Self {
+            bucket: client.bucket.clone(),
+            client: Client::from_conf(config),
+        }
+    }
 }
 
 impl S3Client {

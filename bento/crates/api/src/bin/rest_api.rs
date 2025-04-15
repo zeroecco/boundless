@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    api::run(&args).await.context("Running REST api failed")?;
+    api::run_app(args).await.context("Running REST api failed")?;
     tracing::info!("REST_API task shutdown");
 
     Ok(())
