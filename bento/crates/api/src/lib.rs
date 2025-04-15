@@ -152,14 +152,6 @@ pub struct Args {
     #[clap(long, default_value = "0.0.0.0:8080")]
     bind_addr: String,
 
-    /// SQL DB Connection pool connections
-    #[clap(long, default_value_t = 10)]
-    db_max_connections: u32,
-
-    /// taskdb postgres DATABASE_URL
-    #[clap(env)]
-    database_url: String,
-
     /// Redis URL
     #[clap(env)]
     redis_url: String,
