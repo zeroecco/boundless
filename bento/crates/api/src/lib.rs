@@ -347,6 +347,28 @@ async fn prove_stark(
 ) -> Result<Json<CreateSessRes>, AppError> {
     tracing::info!("Starting STARK proof request for image: {}, input: {}", start_req.img, start_req.input);
 
+    // Get ELF and input data from Redis first
+    let mut conn = state.redis_client.lock().await;
+
+    let elf_key = format!("elf:{}", start_req.img);
+    let elf_data: Vec<u8> = conn.get(&elf_key).await
+        .context("Failed to get ELF data from Redis")?;
+
+    let input_key = format!("input:{}", start_req.input);
+    let input_data: Vec<u8> = conn.get(&input_key).await
+        .context("Failed to get input data from Redis")?;
+
+    let job_id = Uuid::new_v4();
+
+    // Store data with job_id keys
+    let job_elf_key = format!("elf:{}", job_id);
+    conn.set_ex(&job_elf_key, elf_data, 60 * 60 * 2).await
+        .context("Failed to store ELF with job_id")?;
+
+    let job_input_key = format!("input:{}", job_id);
+    conn.set_ex(&job_input_key, input_data, 60 * 60 * 2).await
+        .context("Failed to store input with job_id")?;
+
     let task_def = serde_json::to_value(TaskType::Executor(ExecutorReq {
         image: start_req.img,
         input: start_req.input,
@@ -359,7 +381,6 @@ async fn prove_stark(
     .context("Failed to serialize ExecutorReq")?;
     tracing::debug!("Created task definition: {:?}", task_def);
 
-    let job_id = Uuid::new_v4();
     let task = Task {
         job_id,
         task_id: "executor".to_string(),
@@ -369,8 +390,6 @@ async fn prove_stark(
     };
     tracing::info!("Created task with job_id: {}", job_id);
 
-    let mut conn = state.redis_client.lock().await;
-    tracing::info!("Attempting to enqueue task to 'executor' queue");
     task_queue::enqueue_task(&mut conn, "executor", task).await
         .context("Failed to create exec / init task")?;
     tracing::info!("Successfully enqueued task to 'executor' queue");
