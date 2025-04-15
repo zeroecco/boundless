@@ -191,14 +191,6 @@ pub struct Args {
     #[clap(env, default_value = "redis://localhost")]
     pub redis_url: String,
 
-    /// Bonsai API URL
-    #[clap(env)]
-    pub bonsai_api_url: String,
-
-    /// Bonsai API Key
-    #[clap(env)]
-    pub bonsai_api_key: String,
-
     /// Max RAM use limit for agent, in MB
     #[clap(long, default_value_t = 16 * 1024)]
     pub max_ram_mb: i64,
