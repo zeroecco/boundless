@@ -11,6 +11,7 @@ use redis::AsyncCommands;
 use risc0_zkvm::ProveKeccakRequest;
 use uuid::Uuid;
 use workflow_common::{KeccakReq, KECCAK_RECEIPT_PATH};
+use std::path::Path;
 
 fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
     let chunks = input.chunks_exact(std::mem::size_of::<[u64; 25]>());
@@ -73,5 +74,10 @@ pub async fn keccak(
 
     tracing::info!("Completed keccak proving {}", request.claim_digest);
 
+    Ok(())
+}
+
+pub async fn keccak_task(elf_path: &Path, input_path: &Path) -> Result<()> {
+    // TODO: Implement keccak task logic
     Ok(())
 }

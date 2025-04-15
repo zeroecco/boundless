@@ -110,8 +110,6 @@ pub struct Agent {
     pub segment_po2: u32,
     /// redis connection manager
     pub redis_conn: ConnectionManager,
-    /// S3 client
-    pub s3_client: S3Client,
     /// all configuration params:
     pub args: Args,
     /// risc0 Prover server
@@ -130,15 +128,6 @@ impl Agent {
         let redis_conn = client.get_connection_manager().await
             .context("Failed to get Redis connection manager")?;
 
-        let s3_client = S3Client::from_minio(
-            &args.s3_url,
-            &args.s3_bucket,
-            &args.s3_access_key,
-            &args.s3_secret_key,
-        )
-        .await
-        .context("Failed to initialize s3 client / bucket")?;
-
         let verifier_ctx = VerifierContext::default();
         let prover = if args.task_stream == PROVE_WORK_TYPE
             || args.task_stream == JOIN_WORK_TYPE
@@ -154,7 +143,6 @@ impl Agent {
         Ok(Self {
             segment_po2: args.segment_po2,
             redis_conn,
-            s3_client,
             args,
             prover,
             verifier_ctx,
@@ -184,15 +172,15 @@ impl Agent {
             // Try to get a task from the queue
             let task = task_queue::dequeue_task(&mut conn, &queue_name).await
                 .context("Failed to dequeue task")?;
-            
+
             // If no task, sleep and try again
             if task.is_none() {
                 time::sleep(time::Duration::from_secs(self.args.poll_time)).await;
                 continue;
             }
-            
+
             let task = task.unwrap();
-            
+
             // Process the task
             let task_clone = task.clone();
             if let Err(err) = self.process_work(task).await {
@@ -223,10 +211,10 @@ impl Agent {
 
         // run the task
         match task_def {
-            TaskType::Executor(req) => {
-                let _ = tasks::executor::executor(self, &task.job_id, &req)
+            TaskType::Executor(_req) => {
+                tasks::executor::executor(self.redis_conn.clone(), task)
                     .await
-                    .context("Executor failed")?;
+                    .map_err(|e| anyhow::anyhow!("Executor failed: {}", e))?;
             },
             TaskType::Prove(req) => {
                 tasks::prove::prover(self, &task.job_id, &task.task_id, &req)
@@ -278,7 +266,7 @@ impl Agent {
             prereqs,
             max_retries,
         };
-        
+
         task_queue::enqueue_task(&mut conn, queue_name, task).await
     }
 
@@ -290,7 +278,7 @@ impl Agent {
             .query_async(&mut conn)
             .await
             .context("Failed to get value from Redis")?;
-        
+
         match result {
             Some(value) => Ok(serde_json::from_str(&value).context("Failed to deserialize value")?),
             None => anyhow::bail!("Key not found in Redis: {}", key),
@@ -300,7 +288,7 @@ impl Agent {
     /// Helper to set a value in Redis with optional expiry
     pub async fn set_in_redis(&self, key: &str, value: &[u8], expiry_seconds: Option<u64>) -> Result<()> {
         let mut conn = self.redis_conn.clone();
-        
+
         if let Some(seconds) = expiry_seconds {
             let _: () = redis::cmd("SETEX")
                 .arg(key)
@@ -317,7 +305,7 @@ impl Agent {
                 .await
                 .context("Failed to set value in Redis")?;
         }
-        
+
         Ok(())
     }
 
@@ -325,7 +313,7 @@ impl Agent {
     pub async fn scan_and_delete(&self, pattern: &str) -> Result<u64> {
         let mut conn = self.redis_conn.clone();
         let mut count = 0;
-        
+
         let mut cursor = 0;
         loop {
             let (next_cursor, keys): (i64, Vec<String>) = redis::cmd("SCAN")
@@ -337,9 +325,9 @@ impl Agent {
                 .query_async(&mut conn)
                 .await
                 .context("Failed to scan Redis")?;
-            
+
             cursor = next_cursor;
-            
+
             if !keys.is_empty() {
                 let deleted: u64 = redis::cmd("DEL")
                     .arg(keys)
@@ -348,12 +336,12 @@ impl Agent {
                     .context("Failed to delete keys")?;
                 count += deleted;
             }
-            
+
             if cursor == 0 {
                 break;
             }
         }
-        
+
         Ok(count)
     }
 }

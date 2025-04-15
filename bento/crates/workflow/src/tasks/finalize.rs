@@ -3,7 +3,7 @@
 // All rights reserved.
 
 use crate::{
-    tasks::{deserialize_obj, read_image_id, RECUR_RECEIPT_PATH},
+    tasks::{deserialize_obj, read_image_id, RECUR_RECEIPT_PATH, serialize_obj},
     Agent,
 };
 use anyhow::{bail, Context, Result};
@@ -11,6 +11,7 @@ use workflow_common::FinalizeReq;
 use risc0_zkvm::{InnerReceipt, Receipt, ReceiptClaim, SuccinctReceipt};
 use uuid::Uuid;
 use workflow_common::s3::{RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR};
+use std::path::Path;
 
 /// Run finalize tasks / cleanup
 ///
@@ -48,14 +49,14 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
         bail!("rollup_receipt is not Succinct")
     }
 
-    // Upload the final receipt to S3
-    let key = &format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{job_id}.bincode");
-    tracing::info!("Uploading rollup receipt to S3: {}", key);
+    // Store the final receipt in Redis
+    let receipt_key = format!("{job_prefix}:final_receipt");
+    let receipt_bytes = serialize_obj(&rollup_receipt)?;
+    tracing::info!("Storing rollup receipt in Redis: {}", receipt_key);
     agent
-        .s3_client
-        .write_to_s3(key, rollup_receipt)
+        .set_in_redis(&receipt_key, &receipt_bytes, Some(agent.args.redis_ttl))
         .await
-        .context("Failed to upload final receipt to obj store")?;
+        .context("Failed to store final receipt in Redis")?;
 
     // Clean up Redis keys
     tracing::debug!("Deleting the keyspace {job_prefix}:*");
@@ -63,5 +64,10 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
         .await
         .context("Failed to delete all redis keys")?;
 
+    Ok(())
+}
+
+pub async fn finalize_task(elf_path: &Path, input_path: &Path) -> Result<()> {
+    // TODO: Implement finalize task logic
     Ok(())
 }

@@ -2,7 +2,10 @@
 //
 // All rights reserved.
 
-use crate::Agent;
+use crate::{
+    tasks::{deserialize_obj, serialize_obj},
+    Agent,
+};
 use anyhow::{bail, Context, Result};
 use nix::{sys::stat, unistd};
 use risc0_zkvm::{
@@ -29,13 +32,10 @@ const PROOF_FILE: &str = "proof.json";
 pub async fn stark2snark(agent: &Agent, job_id: &str, req: &SnarkReq) -> Result<SnarkResp> {
     let work_dir = tempdir().context("Failed to create tmpdir")?;
 
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{}.bincode", req.receipt);
+    let receipt_key = format!("job:{}:receipt", req.receipt);
     tracing::info!("Downloading receipt, {receipt_key}");
-    let receipt: Receipt = agent
-        .s3_client
-        .read_from_s3(&receipt_key)
-        .await
-        .context("Failed to download receipt from obj store")?;
+    let receipt_bytes: Vec<u8> = agent.get_from_redis(&receipt_key).await?;
+    let receipt: Receipt = deserialize_obj(&receipt_bytes)?;
 
     tracing::info!("performing identity predicate on receipt, {job_id}");
 
@@ -118,13 +118,13 @@ pub async fn stark2snark(agent: &Agent, job_id: &str, req: &SnarkReq) -> Result<
     let snark_receipt =
         Receipt::new(risc0_zkvm::InnerReceipt::Groth16(snark_receipt), receipt.journal.bytes);
 
-    let key = &format!("{RECEIPT_BUCKET_DIR}/{GROTH16_BUCKET_DIR}/{job_id}.bincode");
-    tracing::info!("Uploading snark receipt to S3: {}", key);
+    let snark_key = format!("job:{}:snark_receipt", job_id);
+    let snark_bytes = serialize_obj(&snark_receipt)?;
+    tracing::info!("Storing snark receipt in Redis: {}", snark_key);
     agent
-        .s3_client
-        .write_to_s3(key, snark_receipt)
+        .set_in_redis(&snark_key, &snark_bytes, Some(agent.args.redis_ttl))
         .await
-        .context("Failed to upload final receipt to obj store")?;
+        .context("Failed to store snark receipt in Redis")?;
 
     Ok(SnarkResp { snark: job_id.to_string() })
 }

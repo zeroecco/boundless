@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use uuid::Uuid;
 use workflow_common::{UnionReq, KECCAK_RECEIPT_PATH};
+use std::path::Path;
 
 /// Run the union operation
 pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<()> {
@@ -48,12 +49,17 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     // send result to redis
     let union_result = serialize_obj(&unioned).context("Failed to serialize union receipt")?;
     let output_key = format!("{keccak_receipts_prefix}:{}", request.idx);
-    
+
     agent.set_in_redis(&output_key, &union_result, Some(agent.args.redis_ttl))
         .await
         .context("Failed to set redis key for union receipt")?;
 
     tracing::info!("Union complete {job_id} - {}", request.left);
 
+    Ok(())
+}
+
+pub async fn union_task(elf_path: &Path, input_path: &Path) -> Result<()> {
+    // TODO: Implement union task logic
     Ok(())
 }
