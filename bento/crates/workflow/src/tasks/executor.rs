@@ -220,7 +220,7 @@ pub async fn executor(
                 segment_count
             };
 
-            // Start planner task to handle finalize and keccak
+            // Start planner task to handle keccak tasks with independent indexing
             let planner_task = tokio::spawn(run_planner(
                 task_rx,
                 conn_clone,
@@ -285,7 +285,7 @@ pub async fn executor(
 
             tracing::info!("Stored session info for job {}", job_id);
 
-            // Enqueue finalize task
+            // Enqueue finalize task with segment count
             let finalize_req = FinalizeReq { max_idx: segment_count };
             let finalize_task_id = format!("finalize:{}", job_id);
             let finalize_task_def = match serde_json::to_value(TaskType::Finalize(finalize_req)) {
@@ -326,8 +326,8 @@ async fn run_planner(
     job_id: Uuid,
     segment_map: Arc<Mutex<HashMap<usize, Segment>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let coproc_prefix = format!("coproc:{job_id}");
-    let redis_ttl = 60 * 60 * 2; // 2 hours
+    // Each job type has its own index counter - independent from segment indexing
+    let mut keccak_counter = 0;
 
     while let Some(task_type) = task_rx.recv().await {
         match task_type {
@@ -335,11 +335,14 @@ async fn run_planner(
                 // Handled by the main executor
             }
             SenderType::Keccak(keccak_req) => {
-                // Process keccak task
-                tracing::info!("Processing keccak request: {:?}", keccak_req);
+                // Increment keccak counter - independent from segment indexing
+                keccak_counter += 1;
 
-                // Create keccak task
-                let task_id = format!("keccak:{}:{}", job_id, keccak_req.claim_digest);
+                // Process keccak task with its own counter
+                tracing::info!("Processing keccak request {:?} with keccak_idx {}", keccak_req, keccak_counter);
+
+                // Create keccak task with unique identifiers
+                let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_counter);
                 let task_def = serde_json::to_value(TaskType::Keccak(KeccakReq {
                     claim_digest: keccak_req.claim_digest,
                     control_root: keccak_req.control_root,
@@ -359,6 +362,31 @@ async fn run_planner(
                     .map_err(|e| format!("Failed to enqueue keccak task: {}", e))?;
 
                 tracing::info!("Successfully enqueued keccak task: {}", task_id);
+
+                // Enqueue a finalize task for this keccak task
+                let finalize_keccak_req = FinalizeReq { max_idx: keccak_counter };
+                let finalize_task_id = format!("finalize_keccak:{}:{}", job_id, keccak_counter);
+                let finalize_task_def = match serde_json::to_value(TaskType::Finalize(finalize_keccak_req)) {
+                    Ok(def) => def,
+                    Err(e) => {
+                        tracing::error!("Failed to serialize finalize task for keccak: {}", e);
+                        continue;
+                    }
+                };
+
+                let finalize_task = Task {
+                    job_id,
+                    task_id: finalize_task_id.clone(),
+                    task_def: finalize_task_def,
+                    data: vec![],
+                    prereqs: vec![task_id], // Make finalize depend on the keccak task
+                    max_retries: 3,
+                };
+
+                match task_queue::enqueue_task(&mut conn, "finalize", finalize_task).await {
+                    Ok(_) => tracing::info!("Successfully enqueued finalize task for keccak: {}", finalize_task_id),
+                    Err(e) => tracing::error!("Failed to enqueue finalize task for keccak: {}", e),
+                }
             }
             SenderType::Fault => {
                 tracing::error!("Guest fault detected");

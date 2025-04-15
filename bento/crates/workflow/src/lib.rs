@@ -20,7 +20,46 @@ use std::{
 use task_queue::{Task, TaskQueueError};
 use tokio::time;
 use uuid::Uuid;
-use workflow_common::TaskType;
+// Using our TaskType defined below instead of importing from workflow_common
+// use workflow_common::TaskType;
+
+/// High level enum of different sub task types and data
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub enum TaskType {
+    /// Executor task
+    Executor(workflow_common::ExecutorReq),
+    /// rv32im Prove + lift task
+    Prove(workflow_common::ProveReq),
+    /// Join task
+    Join(workflow_common::JoinReq),
+    /// Resolve task
+    Resolve(workflow_common::ResolveReq),
+    /// Finalize task
+    Finalize(workflow_common::FinalizeReq),
+    /// Stark 2 Snark task
+    Snark(workflow_common::SnarkReq),
+    /// Keccak coproc callback req
+    Keccak(workflow_common::KeccakReq),
+    /// Union task
+    Union(workflow_common::UnionReq),
+}
+
+impl TaskType {
+    /// Converts a task type to its string representation
+    #[must_use]
+    pub fn to_job_type_str(&self) -> String {
+        match &self {
+            Self::Executor(_) => "executor".into(),
+            Self::Prove(_) => "prove-lift".into(),
+            Self::Join(_) => "join".into(),
+            Self::Resolve(_) => "resolve".into(),
+            Self::Finalize(_) => "finalize".into(),
+            Self::Snark(_) => "snark".into(),
+            Self::Keccak(_) => "keccak".into(),
+            Self::Union(_) => "union".into(),
+        }
+    }
+}
 
 mod tasks;
 
