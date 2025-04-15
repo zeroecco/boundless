@@ -145,8 +145,6 @@ impl Default for JobState {
 pub struct AppState {
     redis_conn: ConnectionManager,
     s3_client: S3Client,
-    bonsai_api_url: String,
-    bonsai_api_key: String,
 }
 
 impl Clone for AppState {
@@ -154,8 +152,6 @@ impl Clone for AppState {
         Self {
             redis_conn: self.redis_conn.clone(),
             s3_client: S3Client::clone_state(&self.s3_client),
-            bonsai_api_url: self.bonsai_api_url.clone(),
-            bonsai_api_key: self.bonsai_api_key.clone(),
         }
     }
 }
@@ -321,7 +317,6 @@ struct ExecuteOptions {
     image_id: String,
     input_id: String,
     compress_type: Option<CompressType>,
-    max_ram_mb: Option<i64>,
     exec_cycle_limit: Option<u64>,
     assumption_receipt_ids: Option<Vec<String>>,
     execute_only: Option<bool>,
@@ -337,7 +332,6 @@ struct SnarkOptions {
 struct PreflightOptions {
     image_id: String,
     input_id: String,
-    max_ram_mb: Option<i64>,
     exec_cycle_limit: Option<u64>,
     assumption_receipt_ids: Option<Vec<String>>,
 }
@@ -400,9 +394,7 @@ async fn create_router(args: &Args) -> Result<Router> {
             &args.s3_secret_key,
         )
         .await
-        .context("Failed to init s3 client")?,
-        bonsai_api_url: args.bonsai_api_url.clone(),
-        bonsai_api_key: args.bonsai_api_key.clone(),
+        .context("Failed to init s3 client")?
     });
 
     // Build router with routes
@@ -557,9 +549,9 @@ async fn create_execute_task(
     };
 
     let mut conn = state.redis_conn.clone();
-    let queue_name = format!("queue:cpu");
+    let queue_name = "queue:cpu";
 
-    task_queue::enqueue_task(&mut conn, &queue_name, task).await?;
+    task_queue::enqueue_task(&mut conn, queue_name, task).await?;
 
     Ok(Json(JobResponse::new(job_id, JobState::Queued)))
 }
@@ -590,9 +582,9 @@ async fn create_snark_task(
     };
 
     let mut conn = state.redis_conn.clone();
-    let queue_name = format!("queue:snark");
+    let queue_name = "queue:snark";
 
-    task_queue::enqueue_task(&mut conn, &queue_name, task).await?;
+    task_queue::enqueue_task(&mut conn, queue_name, task).await?;
 
     Ok(Json(JobResponse::new(job_id, JobState::Queued)))
 }
@@ -628,9 +620,9 @@ async fn run_preflight(
     };
 
     let mut conn = state.redis_conn.clone();
-    let queue_name = format!("queue:cpu");
+    let queue_name = "queue:cpu";
 
-    task_queue::enqueue_task(&mut conn, &queue_name, task).await?;
+    task_queue::enqueue_task(&mut conn, queue_name, task).await?;
 
     Ok(Json(JobResponse::new(job_id, JobState::Queued)))
 }
