@@ -335,7 +335,7 @@ pub async fn run_app(args: Args) -> Result<()> {
     let app = create_router(&args).await?;
 
     // run our app with hyper, listening globally on port 8080
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.bind_address, args.port))
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port))
         .await
         .context("Failed to bind to port")?;
     tracing::info!("Listening on {}", listener.local_addr()?);
