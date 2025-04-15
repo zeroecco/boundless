@@ -14,18 +14,11 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let job_id = task.job_id;
     let task_id = &task.task_id;
 
-    // Extract task data from the task object
-    let task_def = &task.task_def;
-    let index = match task_def.get("index") {
-        Some(idx) => idx.as_u64().context("Index is not a number")? as usize,
-        None => return Err(anyhow::anyhow!("Missing field 'index' in task definition")),
-    };
-
     let segment = bincode::deserialize(&task.data)?;
 
     let job_prefix = format!("job:{job_id}");
 
-    tracing::info!("Starting proof of idx: {job_id} - {index}");
+    tracing::info!("Starting proof of idx: {job_id} - {task_id}");
 
     let segment_receipt = agent
         .prover
@@ -34,17 +27,17 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         .prove_segment(&agent.verifier_ctx, &segment)
         .context("Failed to prove segment")?;
 
-    tracing::info!("Completed proof: {job_id} - {index}");
+    tracing::info!("Completed proof: {job_id} - {task_id}");
 
-    tracing::info!("lifting {job_id} - {index}");
+    tracing::info!("lifting {job_id} - {task_id}");
     let lift_receipt = agent
         .prover
         .as_ref()
         .context("Missing prover from resolve task")?
         .lift(&segment_receipt)
-        .with_context(|| format!("Failed to lift segment {index}"))?;
+        .with_context(|| format!("Failed to lift segment {task_id}"))?;
 
-    tracing::info!("lifting complete {job_id} - {index}");
+    tracing::info!("lifting complete {job_id} - {task_id}");
 
     let output_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{task_id}");
     // Write out lifted receipt
