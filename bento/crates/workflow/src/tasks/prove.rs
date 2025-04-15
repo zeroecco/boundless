@@ -19,7 +19,7 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let deserialize_start = Instant::now();
     let segment = bincode::deserialize(&task.data)?;
     let deserialize_duration = deserialize_start.elapsed();
-    tracing::info!("Deserialized segment in {:?}", deserialize_duration);
+    tracing::debug!("Deserialized segment in {:?}", deserialize_duration);
 
     let job_prefix = format!("job:{job_id}");
 
@@ -54,7 +54,7 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     // Write out lifted receipt
     let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
     let serialize_duration = serialize_start.elapsed();
-    tracing::info!("Serialized lift receipt in {:?}", serialize_duration);
+    tracing::debug!("Serialized lift receipt in {:?}", serialize_duration);
 
     let store_start = Instant::now();
     agent.set_in_redis(&output_key, &lift_asset, Some(agent.args.redis_ttl)).await?;

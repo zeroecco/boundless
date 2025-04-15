@@ -40,12 +40,74 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
     };
     let parse_duration = parse_start.elapsed();
     tracing::info!("Task parsing completed in {:?}", parse_duration);
+    tracing::info!("Keccak request: claim_digest={}, po2={}, control_root={}",
+                  keccak_req.claim_digest, keccak_req.po2, keccak_req.control_root);
 
     let mut conn = agent.redis_conn.clone();
 
     // Get input data from Redis
     let keccak_input_path = format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
     tracing::info!("Fetching keccak input from Redis with key: {}", keccak_input_path);
+
+    // Check if key exists first
+    let exists_result: bool = redis::cmd("EXISTS")
+        .arg(&keccak_input_path)
+        .query_async(&mut conn)
+        .await
+        .with_context(|| format!("Failed to check if keccak input key exists: {}", keccak_input_path))?;
+
+    if !exists_result {
+        // Try to list similar keys to help debug
+        tracing::error!("Keccak input data not found in Redis with key: {}", keccak_input_path);
+
+        // Try to scan for similar keys
+        let pattern = format!("job:{}:{}:*", job_id, COPROC_CB_PATH);
+        tracing::info!("Scanning for similar keys with pattern: {}", pattern);
+
+        let scan_result: (i64, Vec<String>) = redis::cmd("SCAN")
+            .arg(0)
+            .arg("MATCH")
+            .arg(&pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(&mut conn)
+            .await
+            .with_context(|| format!("Failed to scan for keys with pattern: {}", pattern))?;
+
+        let (_cursor, keys) = scan_result;
+
+        if keys.is_empty() {
+            tracing::error!("No similar keys found with pattern: {}", pattern);
+
+            // Try more general pattern
+            let general_pattern = format!("job:{}:*", job_id);
+            tracing::info!("Scanning for any job keys with pattern: {}", general_pattern);
+
+            let general_scan: (i64, Vec<String>) = redis::cmd("SCAN")
+                .arg(0)
+                .arg("MATCH")
+                .arg(&general_pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+                .with_context(|| format!("Failed to scan for keys with pattern: {}", general_pattern))?;
+
+            let (_general_cursor, general_keys) = general_scan;
+
+            if general_keys.is_empty() {
+                tracing::error!("No job keys found at all for job_id: {}", job_id);
+            } else {
+                tracing::error!("Found {} job keys, but none with the coproc path. Available keys: {:?}",
+                              general_keys.len(), general_keys);
+            }
+        } else {
+            tracing::error!("Found {} similar keys, but not the exact one needed. Similar keys: {:?}",
+                          keys.len(), keys);
+        }
+
+        anyhow::bail!("Keccak input data not found for key: {}", keccak_input_path);
+    }
 
     let fetch_start = Instant::now();
     let keccak_input: Vec<u8> = conn

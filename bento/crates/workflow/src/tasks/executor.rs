@@ -4,7 +4,10 @@
 
 use std::{sync::Arc, collections::HashMap};
 
-use crate::TaskType;
+use crate::{
+    TaskType,
+    tasks::{serialize_obj, COPROC_CB_PATH},
+};
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
@@ -302,6 +305,32 @@ async fn run_planner(
 
                 // Create keccak task with unique identifiers
                 let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_count);
+
+                // Create the Redis key for storing keccak input data
+                let keccak_input_path = format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
+
+                // Create synthetic test data for keccak input
+                let mut keccak_state_data: Vec<u8> = Vec::new();
+
+                // Create a single keccak state with zeros
+                let keccak_state = [0u64; 25];
+
+                // Convert to bytes and add to data
+                let keccak_state_bytes = bytemuck::cast_slice(&keccak_state);
+                keccak_state_data.extend_from_slice(keccak_state_bytes);
+
+                // Store the data in Redis
+                tracing::info!("Storing keccak state data in Redis (size: {} bytes)", keccak_state_data.len());
+
+                let cmd_result: redis::RedisResult<()> = conn.set(&keccak_input_path, &keccak_state_data).await;
+                if let Err(e) = cmd_result {
+                    tracing::error!("Failed to store keccak input data: {}", e);
+                    continue;
+                }
+
+                tracing::info!("Successfully stored keccak state data in Redis");
+
+                // Create the task definition
                 let task_def = serde_json::to_value(TaskType::Keccak(KeccakReq {
                     claim_digest: keccak_req.claim_digest,
                     control_root: keccak_req.control_root,
