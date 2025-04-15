@@ -3,22 +3,24 @@
 // All rights reserved.
 
 use crate::{
-    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH, SEGMENTS_PATH},
+    tasks::{serialize_obj, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
-use redis::AsyncCommands;
-use std::path::Path;
 use task_queue::Task;
-use uuid::Uuid;
-use workflow_common::ProveReq;
 
 /// Run a prove request
 pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let job_id = task.job_id;
     let task_id = &task.task_id;
-    let request: ProveReq = serde_json::from_value(task.task_def.clone())?;
-    let index = request.index;
+
+    // Extract task data from the task object
+    let task_def = &task.task_def;
+    let index = match task_def.get("index") {
+        Some(idx) => idx.as_u64().context("Index is not a number")? as usize,
+        None => return Err(anyhow::anyhow!("Missing field 'index' in task definition")),
+    };
+
     let segment = bincode::deserialize(&task.data)?;
 
     let job_prefix = format!("job:{job_id}");

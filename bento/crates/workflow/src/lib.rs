@@ -257,9 +257,7 @@ impl Agent {
             }
             TaskType::Prove(req) => {
                 tracing::info!("Starting prove task for job_id={}", task_clone.job_id);
-                tasks::prove::prove(self, &task_clone)
-                    .await
-                    .context("Prove failed")?;
+                tasks::prove::prove(self, &task_clone).await.context("Prove failed")?;
                 tracing::info!("Prove task completed for job_id={}", task_clone.job_id);
             }
             TaskType::Join(req) => {
