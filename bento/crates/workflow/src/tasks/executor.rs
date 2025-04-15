@@ -36,11 +36,13 @@ use crate::tasks::join::join_task;
 use crate::tasks::union::union_task;
 use crate::tasks::finalize::finalize_task;
 use crate::tasks::keccak::keccak_task;
+use bincode;
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF"; // const V1_ ELF_MAGIC: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 const TASK_QUEUE_SIZE: usize = 100; // TODO: could be bigger, but requires testing IRL
 const CONCURRENT_SEGMENTS: usize = 50; // This peaks around ~4GB
 
+#[derive(serde::Serialize)]
 struct SessionData {
     segment_count: usize,
     user_cycles: u64,
@@ -83,7 +85,6 @@ pub async fn executor(
     task: Task,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let job_id = task.job_id;
-    let task_id = task.task_id;
     let task_type: TaskType = serde_json::from_value(task.task_def)?;
 
     // Get ELF binary from Redis
@@ -94,34 +95,42 @@ pub async fn executor(
     let input_key = format!("input:{}", job_id);
     let input_data: Vec<u8> = conn.get(&input_key).await?;
 
-    // Create temporary directory for ELF and input files
-    let temp_dir = tempfile::tempdir()?;
-    let elf_path = temp_dir.path().join("program.elf");
-    let input_path = temp_dir.path().join("input.bin");
-
-    // Write ELF and input data to files
-    tokio::fs::write(&elf_path, elf_data).await?;
-    tokio::fs::write(&input_path, input_data).await?;
-
     // Execute task based on type
     match task_type {
-        TaskType::Prove(_) => prove_task(&elf_path, &input_path).await?,
-        TaskType::Join(_) => join_task(&elf_path, &input_path).await?,
-        TaskType::Union(_) => union_task(&elf_path, &input_path).await?,
-        TaskType::Finalize(_) => finalize_task(&elf_path, &input_path).await?,
-        TaskType::Keccak(_) => keccak_task(&elf_path, &input_path).await?,
         TaskType::Executor(_) => {
-            // TODO: Implement executor task logic
-            ()
+            // Create executor environment
+            let mut env_builder = ExecutorEnv::builder();
+            env_builder.write_slice(&input_data);
+            let env = env_builder.build()?;
+
+            // Execute the program
+            let mut exec = ExecutorImpl::from_elf(env, &elf_data)?;
+            let session = exec.run()?;
+
+            // Store segments in Redis
+            for (i, segment_ref) in session.segments.iter().enumerate() {
+                let segment_key = format!("{}:segment:{}", job_id, i);
+                let segment_data = segment_ref.resolve()?;
+                let segment_bytes = bincode::serialize(&segment_data)?;
+                conn.set_ex(&segment_key, segment_bytes, 60 * 60 * 2).await?;
+            }
+
+            // Store session info
+            let session_key = format!("session:{}", job_id);
+            let session_data = SessionData {
+                segment_count: session.segments.len(),
+                user_cycles: session.user_cycles,
+                total_cycles: session.total_cycles,
+                journal: session.journal,
+            };
+            let session_bytes = bincode::serialize(&session_data)?;
+            conn.set(&session_key, &session_bytes).await?;
+            tracing::info!("Stored session info for job {}", job_id);
         },
-        TaskType::Resolve(_) => {
-            // TODO: Implement resolve task logic
-            ()
-        },
-        TaskType::Snark(_) => {
-            // TODO: Implement snark task logic
-            ()
-        },
+        _ => {
+            // Handle other task types...
+            tracing::info!("Skipping non-executor task type");
+        }
     }
 
     Ok(())

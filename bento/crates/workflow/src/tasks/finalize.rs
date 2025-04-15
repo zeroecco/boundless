@@ -12,6 +12,7 @@ use risc0_zkvm::{InnerReceipt, Receipt, ReceiptClaim, SuccinctReceipt};
 use uuid::Uuid;
 use workflow_common::s3::{RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR};
 use std::path::Path;
+use bincode;
 
 /// Run finalize tasks / cleanup
 ///
@@ -51,7 +52,7 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
 
     // Store the final receipt in Redis
     let receipt_key = format!("{job_prefix}:final_receipt");
-    let receipt_bytes = serialize_obj(&rollup_receipt)?;
+    let receipt_bytes = bincode::serialize(&rollup_receipt)?;
     tracing::info!("Storing rollup receipt in Redis: {}", receipt_key);
     agent
         .set_in_redis(&receipt_key, &receipt_bytes, Some(agent.args.redis_ttl))
