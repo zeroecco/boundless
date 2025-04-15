@@ -471,7 +471,7 @@ async fn prove_stark(
         task_def,
         prereqs: vec![],
         max_retries: 3,
-        segment: vec![],
+        data: vec![],
     };
     tracing::info!("Created task with job_id: {}", job_id);
 
@@ -594,7 +594,7 @@ async fn prove_groth16(
         task_def,
         prereqs: vec![],
         max_retries: 3,
-        segment: vec![],
+        data: vec![],
     };
     tracing::info!("Created task with job_id: {}", job_id);
 

@@ -11,7 +11,6 @@ use bincode;
 use risc0_zkvm::{InnerReceipt, Receipt, ReceiptClaim, SuccinctReceipt};
 use std::path::Path;
 use uuid::Uuid;
-use workflow_common::s3::{RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR};
 use workflow_common::FinalizeReq;
 
 /// Run finalize tasks / cleanup
