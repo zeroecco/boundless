@@ -63,9 +63,8 @@ impl CoprocessorCallback for PlannerCoprocessor {
 }
 
 enum SenderType {
-    Segment(usize),
+    Segment(()),
     Keccak(KeccakReq),
-    Fault,
 }
 
 pub async fn executor(
@@ -137,7 +136,7 @@ pub async fn executor(
                     println!("Segment send error: {}", e);
                 }
                 // Notify planner about a new segment
-                if let Err(e) = planner_tx_clone.blocking_send(SenderType::Segment(segment_idx)) {
+                if let Err(e) = planner_tx_clone.blocking_send(SenderType::Segment(())) {
                     println!("Planner notification error: {}", e);
                 }
                 segment_idx += 1;
@@ -155,9 +154,11 @@ pub async fn executor(
                 segment_count += 1;
                 tracing::info!("Received segment {} in real-time", idx);
                 segment_map.lock().await.insert(idx, segment.clone());
+                let segment_bytes = bincode::serialize(&segment)
+                    .with_context(|| format!("Failed to serialize segment {}", idx)).unwrap();
 
                 // Enqueue prove task for the segment
-                if let Err(e) = enqueue_prove_task(&mut conn, job_id_clone, idx, segment).await {
+                if let Err(e) = enqueue_task(&mut conn, job_id_clone, idx, segment_bytes, workflow_common::TaskType::Prove(ProveReq { index: idx })).await {
                     tracing::error!("Prove task enqueue failed for segment {}: {}", idx, e);
                 } else {
                     tracing::info!("Enqueued prove task for segment {}", idx);
@@ -195,17 +196,13 @@ pub async fn executor(
         // Enqueue finalize task for the executor run
         let finalize_req = FinalizeReq { max_idx: segment_count };
         let finalize_task_id = format!("finalize:{}", job_id);
-        let finalize_task_def = serde_json::to_value(workflow_common::TaskType::Finalize(finalize_req))
+
+        // Create task_def directly with a new FinalizeReq to avoid cloning
+        let task_def = serde_json::to_value(workflow_common::TaskType::Finalize(FinalizeReq { max_idx: segment_count }))
             .context("Failed to serialize finalize task def")?;
-        let finalize_task = Task {
-            job_id,
-            task_id: finalize_task_id,
-            task_def: finalize_task_def,
-            data: vec![],
-            prereqs: vec![],
-            max_retries: 3,
-        };
-        task_queue::enqueue_task(&mut conn, "finalize", finalize_task).await
+
+        // Use the original finalize_req here
+        enqueue_task(&mut conn, job_id, 0, vec![], workflow_common::TaskType::Finalize(finalize_req)).await
             .with_context(|| "Failed to enqueue finalize task")?;
         tracing::info!("Final finalize task enqueued");
     } else {
@@ -231,11 +228,7 @@ async fn run_planner(
             }
             SenderType::Keccak(keccak_req) => {
                 keccak_count += 1;
-                process_keccak_task(&mut conn, job_id, keccak_req, keccak_count).await?;
-            }
-            SenderType::Fault => {
-                tracing::error!("Fault event detected");
-                break;
+                enqueue_keccak_task(&mut conn, job_id, keccak_req, keccak_count).await?;
             }
         }
     }
@@ -247,7 +240,7 @@ async fn run_planner(
 ///  - Stores synthetic keccak state data in Redis
 ///  - Enqueues the keccak task
 ///  - Enqueues a corresponding finalize task for the keccak work
-async fn process_keccak_task(
+async fn enqueue_keccak_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
     keccak_req: KeccakReq,
@@ -261,28 +254,18 @@ async fn process_keccak_task(
 
     // Create a unique task ID and Redis key for keccak input
     let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_idx);
-    let keccak_input_path = format!("job:{}:{}:{}", job_id, "COPROC_CB_PATH", keccak_req.claim_digest);
 
     // Build synthetic keccak state data (25 u64 zeros)
     let keccak_state = [0u64; 25];
     let keccak_state_bytes = bytemuck::cast_slice(&keccak_state);
 
-    // Store keccak state data in Redis
-    store_redis_data(conn, &keccak_input_path, keccak_state_bytes, 3600).await?;
-    tracing::info!("Keccak state data stored in Redis");
-
     // Create and enqueue the keccak task
-    let keccak_task_def = serde_json::to_value(workflow_common::TaskType::Keccak(keccak_req))
-        .context("Failed to serialize keccak task definition")?;
-    let keccak_task = Task {
-        job_id,
-        task_id: task_id.clone(),
-        task_def: keccak_task_def,
-        data: vec![],
-        prereqs: vec![],
-        max_retries: 3,
+    let task_keccak_req = KeccakReq {
+        claim_digest: keccak_req.claim_digest,
+        po2: keccak_req.po2,
+        control_root: keccak_req.control_root,
     };
-    task_queue::enqueue_task(conn, "keccak", keccak_task).await
+    enqueue_task(conn, job_id, 0, keccak_state_bytes.to_vec(), workflow_common::TaskType::Keccak(task_keccak_req)).await
         .with_context(|| format!("Failed to enqueue keccak task: {}", task_id))?;
     tracing::info!("Enqueued keccak task: {}", task_id);
 
@@ -306,23 +289,22 @@ async fn process_keccak_task(
     Ok(())
 }
 
-/// Helper to enqueue prove tasks for a given segment.
-async fn enqueue_prove_task(
+/// Helper to enqueue tasks into redis
+async fn enqueue_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
     segment_idx: usize,
-    segment: Segment,
+    segment: Vec<u8>,
+    task_type: workflow_common::TaskType,
 ) -> Result<()> {
     let task_id = format!("prove:{}:{}", job_id, segment_idx);
-    let segment_bytes = bincode::serialize(&segment)
-        .with_context(|| format!("Failed to serialize segment {}", segment_idx))?;
-    let task_def = serde_json::to_value(workflow_common::TaskType::Prove(ProveReq { index: segment_idx }))
+    let task_def = serde_json::to_value(task_type)
         .with_context(|| "Failed to serialize prove task definition")?;
     let prove_task = Task {
         job_id,
         task_id,
         task_def,
-        data: segment_bytes,
+        data: segment,
         prereqs: vec![],
         max_retries: 3,
     };
