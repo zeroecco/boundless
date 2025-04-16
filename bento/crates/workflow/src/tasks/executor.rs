@@ -520,7 +520,12 @@ async fn enqueue_paired_segments(
     // Generate a task ID that includes both segment indices
     let task_id = format!("prove_pair:{}:{}:{}", job_id, idx1, idx2);
 
-    tracing::debug!("Serializing segment pair [{}, {}]", idx1, idx2);
+    tracing::debug!(
+        "Creating paired task for job_id: {}, segment indices: [{}, {}]",
+        job_id,
+        idx1,
+        idx2
+    );
 
     // Create a structure to hold both segments
     let paired_segments = (segment1.clone(), segment2.clone());
@@ -540,13 +545,6 @@ async fn enqueue_paired_segments(
     ))
     .map_err(|e| e.to_string())?;
 
-    tracing::debug!(
-        "Creating paired task for job_id: {}, segment indices: [{}, {}]",
-        job_id,
-        idx1,
-        idx2
-    );
-
     // Create Task with embedded segment pair data
     let task = Task {
         job_id,
@@ -558,5 +556,7 @@ async fn enqueue_paired_segments(
     };
 
     tracing::info!("Enqueuing prove task for segment pair [{}, {}] with embedded data", idx1, idx2);
-    task_queue::enqueue_task(conn, "prove_pair", task).await.map_err(|e| e.to_string().into())
+
+    // Make sure to use the prove queue to ensure it goes to an agent with prover capability
+    task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
 }
