@@ -19,11 +19,11 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let mut conn = agent.redis_conn.clone();
 
     // Build the redis keys for the right and left joins
-    let job_prefix = format!("job:{job_id}");
+    let job_prefix = format!("join:{job_id}");
     let recur_receipts_prefix = format!("{job_prefix}:{RECUR_RECEIPT_PATH}");
 
-    let left_path_key = format!("{recur_receipts_prefix}:prove:{}:{}", job_id, request.left);
-    let right_path_key = format!("{recur_receipts_prefix}:prove:{}:{}", job_id, request.right);
+    let left_path_key = format!("{recur_receipts_prefix}:{}", request.left);
+    let right_path_key = format!("{recur_receipts_prefix}:{}", request.right);
 
     tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
 
@@ -35,6 +35,9 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .with_context(|| format!("Failed to access queue: {left_path_key}"))?;
 
     if let Some((_, data)) = left_receipt_result {
+        if data.is_empty() {
+            return Err(anyhow::anyhow!("Received empty data from queue: {}", left_path_key));
+        }
         left_receipt_data = data;
     } else {
         // Fallback to GET if queue is empty
@@ -43,8 +46,20 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             .get::<_, Vec<u8>>(&left_path_key)
             .await
             .with_context(|| format!("Failed to get data with GET: {left_path_key}"))?;
+
+        if left_receipt_data.is_empty() {
+            return Err(anyhow::anyhow!("Received empty data from GET: {}", left_path_key));
+        }
     }
-    let left_receipt = deserialize_obj(&left_receipt_data).context("Failed to deserialize left receipt")?;
+
+    // Try to deserialize with more detailed error messages
+    let left_receipt = match deserialize_obj(&left_receipt_data) {
+        Ok(receipt) => receipt,
+        Err(e) => {
+            tracing::error!("Failed to deserialize left receipt from {} bytes of data", left_receipt_data.len());
+            return Err(anyhow::anyhow!("Failed to deserialize left receipt: {}", e));
+        }
+    };
 
     // Get right receipt - use brpop with timeout
     let right_receipt_data: Vec<u8>;
@@ -54,6 +69,9 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .with_context(|| format!("Failed to access queue: {right_path_key}"))?;
 
     if let Some((_, data)) = right_receipt_result {
+        if data.is_empty() {
+            return Err(anyhow::anyhow!("Received empty data from queue: {}", right_path_key));
+        }
         right_receipt_data = data;
     } else {
         // Fallback to GET if queue is empty
@@ -62,8 +80,20 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             .get::<_, Vec<u8>>(&right_path_key)
             .await
             .with_context(|| format!("Failed to get data with GET: {right_path_key}"))?;
+
+        if right_receipt_data.is_empty() {
+            return Err(anyhow::anyhow!("Received empty data from GET: {}", right_path_key));
+        }
     }
-    let right_receipt = deserialize_obj(&right_receipt_data).context("Failed to deserialize right receipt")?;
+
+    // Try to deserialize with more detailed error messages
+    let right_receipt = match deserialize_obj(&right_receipt_data) {
+        Ok(receipt) => receipt,
+        Err(e) => {
+            tracing::error!("Failed to deserialize right receipt from {} bytes of data", right_receipt_data.len());
+            return Err(anyhow::anyhow!("Failed to deserialize right receipt: {}", e));
+        }
+    };
 
     let join_start = Instant::now();
     let joined = agent

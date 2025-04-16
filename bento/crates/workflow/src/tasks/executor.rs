@@ -168,14 +168,49 @@ pub async fn executor(
                     // Add to buffer
                     segment_buffer.push((idx, segment));
 
-                    // For stability, avoid batching for now and process each segment individually
-                    // This fixes the "serialized page has wrong length" error by avoiding page size issues
+                    // When we have 2 segments, process them as a pair
+                    if segment_buffer.len() == 2 {
+                        // Check if segments are consecutive
+                        let first_idx = segment_buffer[0].0;
+                        let second_idx = segment_buffer[1].0;
+
+                        // Only pair segments if they are consecutive and the first one is even
+                        if first_idx % 2 == 0 && second_idx == first_idx + 1 {
+                            let segments = segment_buffer.clone();
+                            tracing::info!("Processing consecutive segment pair [{}, {}]", segments[0].0, segments[1].0);
+
+                            match enqueue_paired_segments(&mut conn.clone(), job_id_clone, &segments).await {
+                                Ok(_) => tracing::info!("Successfully enqueued segment pair [{}, {}] for proving",
+                                                      segments[0].0, segments[1].0),
+                                Err(e) => tracing::error!("Failed to enqueue segment pair [{}, {}]: {}",
+                                                        segments[0].0, segments[1].0, e),
+                            }
+                            segment_buffer.clear();
+                        } else {
+                            // Segments are not consecutive or not properly ordered, process the first one only
+                            tracing::info!("Segments [{}, {}] are not a proper consecutive pair, processing {} individually",
+                                         first_idx, second_idx, first_idx);
+
+                            let (idx, segment) = &segment_buffer[0];
+                            match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
+                                Ok(_) => tracing::info!("Successfully enqueued individual segment {} for proving", idx),
+                                Err(e) => tracing::error!("Failed to enqueue individual segment {}: {}", idx, e),
+                            }
+
+                            // Remove the first segment and keep the second one in the buffer
+                            segment_buffer.remove(0);
+                        }
+                    }
+                }
+
+                // Process any remaining segment (odd count case)
+                if !segment_buffer.is_empty() {
+                    tracing::info!("Processing final unpaired segment {}", segment_buffer[0].0);
                     let (idx, segment) = &segment_buffer[0];
                     match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
-                        Ok(_) => tracing::info!("Successfully enqueued segment {} for proving", idx),
-                        Err(e) => tracing::error!("Failed to enqueue segment {}: {}", idx, e),
+                        Ok(_) => tracing::info!("Successfully enqueued final segment {} for proving", idx),
+                        Err(e) => tracing::error!("Failed to enqueue final segment {}: {}", idx, e),
                     }
-                    segment_buffer.clear();
                 }
 
                 tracing::info!("Finished processing {} segments", segment_count);
@@ -424,4 +459,53 @@ async fn enqueue_prove_task(
 
     tracing::info!("Enqueuing prove task for segment {} with embedded data", segment_idx);
     task_queue::enqueue_task(conn, "prove", task).await.map_err(|e| e.to_string().into())
+}
+
+// Helper function to enqueue paired segments for joint proving
+async fn enqueue_paired_segments(
+    conn: &mut ConnectionManager,
+    job_id: Uuid,
+    segments: &[(usize, Segment)],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if segments.len() != 2 {
+        return Err("Expected exactly 2 segments for paired processing".into());
+    }
+
+    let (idx1, segment1) = &segments[0];
+    let (idx2, segment2) = &segments[1];
+
+    // Generate a task ID that includes both segment indices
+    let task_id = format!("prove_pair:{}:{}:{}", job_id, idx1, idx2);
+
+    tracing::debug!("Serializing segment pair [{}, {}]", idx1, idx2);
+
+    // Create a structure to hold both segments
+    let paired_segments = (segment1.clone(), segment2.clone());
+
+    let segment_bytes = match bincode::serialize(&paired_segments) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::error!("Failed to serialize segment pair [{}, {}]: {}", idx1, idx2, err);
+            return Err(err.to_string().into());
+        }
+    };
+
+    // Create ProveReq with both indices (using a tuple to indicate pair)
+    let task_def = serde_json::to_value(TaskType::ProvePair(ProveReq { index: *idx1 }, ProveReq { index: *idx2 }))
+        .map_err(|e| e.to_string())?;
+
+    tracing::debug!("Creating paired task for job_id: {}, segment indices: [{}, {}]", job_id, idx1, idx2);
+
+    // Create Task with embedded segment pair data
+    let task = Task {
+        job_id,
+        task_id: task_id.clone(),
+        task_def,
+        data: segment_bytes,
+        prereqs: vec![],
+        max_retries: 3,
+    };
+
+    tracing::info!("Enqueuing prove task for segment pair [{}, {}] with embedded data", idx1, idx2);
+    task_queue::enqueue_task(conn, "prove_pair", task).await.map_err(|e| e.to_string().into())
 }

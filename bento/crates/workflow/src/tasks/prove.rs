@@ -88,6 +88,85 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     Ok(())
 }
 
+/// Run a prove request for a pair of segments
+pub async fn prove_pair(
+    agent: &Agent,
+    task: &Task,
+    req1: workflow_common::ProveReq,
+    req2: workflow_common::ProveReq
+) -> Result<()> {
+    let start_time = Instant::now();
+    let job_id = task.job_id;
+    let task_id = &task.task_id;
+
+    let deserialize_start = Instant::now();
+    let (segment1, segment2): (risc0_zkvm::Segment, risc0_zkvm::Segment) = bincode::deserialize(&task.data)?;
+    let deserialize_duration = deserialize_start.elapsed();
+    tracing::debug!("Deserialized segment pair in {:?}", deserialize_duration);
+
+    let job_prefix = format!("job:{job_id}");
+
+    tracing::info!("Starting proof of segment pair: {job_id} - {task_id} (indices: {} and {})",
+                  req1.index, req2.index);
+
+    // Prove the first segment
+    let prove1_start = Instant::now();
+    let segment1_receipt = agent
+        .prover
+        .as_ref()
+        .context("Missing prover from prove task")?
+        .prove_segment(&agent.verifier_ctx, &segment1)
+        .context("Failed to prove first segment")?;
+    let prove1_duration = prove1_start.elapsed();
+
+    tracing::info!("Completed proof for first segment ({}): {job_id} in {:?}", req1.index, prove1_duration);
+
+    // Prove the second segment
+    let prove2_start = Instant::now();
+    let segment2_receipt = agent
+        .prover
+        .as_ref()
+        .context("Missing prover from prove task")?
+        .prove_segment(&agent.verifier_ctx, &segment2)
+        .context("Failed to prove second segment")?;
+    let prove2_duration = prove2_start.elapsed();
+
+    tracing::info!("Completed proof for second segment ({}): {job_id} in {:?}", req2.index, prove2_duration);
+
+    // Lift both segments
+    tracing::info!("Lifting segment pair {job_id} - {task_id}");
+
+    let lift1_start = Instant::now();
+    let lift1_receipt = agent
+        .prover
+        .as_ref()
+        .context("Missing prover from resolve task")?
+        .lift(&segment1_receipt)
+        .with_context(|| format!("Failed to lift segment {}", req1.index))?;
+    let lift1_duration = lift1_start.elapsed();
+
+    let lift2_start = Instant::now();
+    let lift2_receipt = agent
+        .prover
+        .as_ref()
+        .context("Missing prover from resolve task")?
+        .lift(&segment2_receipt)
+        .with_context(|| format!("Failed to lift segment {}", req2.index))?;
+    let lift2_duration = lift2_start.elapsed();
+
+    tracing::info!("Lifting complete for segment pair in {:?} and {:?}", lift1_duration, lift2_duration);
+    let joined = agent
+        .prover
+        .as_ref()
+        .context("Missing prover from join task")?
+        .join(&lift1_receipt, &lift2_receipt)?;
+    let serialize_start = Instant::now();
+    let join_result = serialize_obj(&joined).expect("Failed to serialize the joined receipt");
+    let serialize_duration = serialize_start.elapsed();
+
+    Ok(())
+}
+
 // Helper function to enqueue join task as part of binary tree
 async fn enqueue_join_leaf(
     conn: &mut ConnectionManager,
