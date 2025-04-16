@@ -30,8 +30,6 @@ pub enum TaskType {
     Executor(workflow_common::ExecutorReq),
     /// rv32im Prove + lift task
     Prove(workflow_common::ProveReq),
-    /// Prove a pair of segments together
-    ProvePair(workflow_common::ProveReq, workflow_common::ProveReq),
     /// Join task
     Join(workflow_common::JoinReq),
     /// Resolve task
@@ -53,7 +51,6 @@ impl TaskType {
         match &self {
             Self::Executor(_) => "executor".into(),
             Self::Prove(_) => "prove-lift".into(),
-            Self::ProvePair(_, _) => "prove-pair".into(),
             Self::Join(_) => "join".into(),
             Self::Resolve(_) => "resolve".into(),
             Self::Finalize(_) => "finalize".into(),
@@ -297,17 +294,10 @@ impl Agent {
                 })?;
                 tracing::info!("Executor task completed for job_id={}", task_clone.job_id);
             }
-            TaskType::Prove(req) => {
+            TaskType::Prove(_req) => {
                 tracing::info!("Starting prove task for job_id={}", task_clone.job_id);
                 tasks::prove::prove(self, &task_clone).await.context("Prove failed")?;
                 tracing::info!("Prove task completed for job_id={}", task_clone.job_id);
-            }
-            TaskType::ProvePair(req1, req2) => {
-                tracing::info!("Starting prove pair task for job_id={}", task_clone.job_id);
-                tasks::prove::prove_pair(self, &task_clone, req1, req2)
-                    .await
-                    .context("Prove pair failed")?;
-                tracing::info!("Prove pair task completed for job_id={}", task_clone.job_id);
             }
             TaskType::Join(req) => {
                 tracing::info!("Starting join task for job_id={}", task_clone.job_id);
