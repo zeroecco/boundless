@@ -30,7 +30,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     // Get left receipt - use brpop with timeout
     let left_receipt_data: Vec<u8>;
     let left_receipt_result: Option<(String, Vec<u8>)> = conn
-        .brpop(&left_path_key, 1.0)  // 1 second timeout - short since we'll try GET next
+        .brpop(&left_path_key, 1.0) // 1 second timeout - short since we'll try GET next
         .await
         .with_context(|| format!("Failed to access queue: {left_path_key}"))?;
 
@@ -56,7 +56,10 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let left_receipt = match deserialize_obj(&left_receipt_data) {
         Ok(receipt) => receipt,
         Err(e) => {
-            tracing::error!("Failed to deserialize left receipt from {} bytes of data", left_receipt_data.len());
+            tracing::error!(
+                "Failed to deserialize left receipt from {} bytes of data",
+                left_receipt_data.len()
+            );
             return Err(anyhow::anyhow!("Failed to deserialize left receipt: {}", e));
         }
     };
@@ -64,7 +67,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     // Get right receipt - use brpop with timeout
     let right_receipt_data: Vec<u8>;
     let right_receipt_result: Option<(String, Vec<u8>)> = conn
-        .brpop(&right_path_key, 1.0)  // 1 second timeout - short since we'll try GET next
+        .brpop(&right_path_key, 1.0) // 1 second timeout - short since we'll try GET next
         .await
         .with_context(|| format!("Failed to access queue: {right_path_key}"))?;
 
@@ -90,7 +93,10 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let right_receipt = match deserialize_obj(&right_receipt_data) {
         Ok(receipt) => receipt,
         Err(e) => {
-            tracing::error!("Failed to deserialize right receipt from {} bytes of data", right_receipt_data.len());
+            tracing::error!(
+                "Failed to deserialize right receipt from {} bytes of data",
+                right_receipt_data.len()
+            );
             return Err(anyhow::anyhow!("Failed to deserialize right receipt: {}", e));
         }
     };
@@ -111,15 +117,21 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 
     let store_start = Instant::now();
     // Push joined result to queue instead of setting key
-    conn.lpush::<_, _, ()>(&output_key, &join_result).await
+    conn.lpush::<_, _, ()>(&output_key, &join_result)
+        .await
         .context("Failed to push joined receipt to Redis queue")?;
     let store_duration = store_start.elapsed();
 
     let total_duration = start_time.elapsed();
     tracing::info!(
         "Join {} + {} -> {} completed in {:?} (join: {:?}, serialize: {:?}, store: {:?})",
-        request.left, request.right, request.idx,
-        total_duration, join_duration, serialize_duration, store_duration
+        request.left,
+        request.right,
+        request.idx,
+        total_duration,
+        join_duration,
+        serialize_duration,
+        store_duration
     );
 
     // Continue building the binary tree by scheduling the next level join if needed
@@ -131,14 +143,15 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         let left_idx = request.idx - 1;
         let parent_idx = request.idx / 2;
 
-        tracing::info!("Creating parent join task: {} + {} -> {}", left_idx, request.idx, parent_idx);
+        tracing::info!(
+            "Creating parent join task: {} + {} -> {}",
+            left_idx,
+            request.idx,
+            parent_idx
+        );
 
         // Create the join request with proper fields
-        let join_req = JoinReq {
-            idx: parent_idx,
-            left: left_idx,
-            right: request.idx,
-        };
+        let join_req = JoinReq { idx: parent_idx, left: left_idx, right: request.idx };
 
         // Create the task definition
         let join_task_def = TaskType::Join(join_req);

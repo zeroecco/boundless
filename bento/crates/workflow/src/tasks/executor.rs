@@ -2,11 +2,11 @@
 //
 // All rights reserved.
 
-use std::{sync::Arc, collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    TaskType,
     tasks::{serialize_obj, COPROC_CB_PATH},
+    TaskType,
 };
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
@@ -177,13 +177,30 @@ pub async fn executor(
                         // Only pair segments if they are consecutive and the first one is even
                         if first_idx % 2 == 0 && second_idx == first_idx + 1 {
                             let segments = segment_buffer.clone();
-                            tracing::info!("Processing consecutive segment pair [{}, {}]", segments[0].0, segments[1].0);
+                            tracing::info!(
+                                "Processing consecutive segment pair [{}, {}]",
+                                segments[0].0,
+                                segments[1].0
+                            );
 
-                            match enqueue_paired_segments(&mut conn.clone(), job_id_clone, &segments).await {
-                                Ok(_) => tracing::info!("Successfully enqueued segment pair [{}, {}] for proving",
-                                                      segments[0].0, segments[1].0),
-                                Err(e) => tracing::error!("Failed to enqueue segment pair [{}, {}]: {}",
-                                                        segments[0].0, segments[1].0, e),
+                            match enqueue_paired_segments(
+                                &mut conn.clone(),
+                                job_id_clone,
+                                &segments,
+                            )
+                            .await
+                            {
+                                Ok(_) => tracing::info!(
+                                    "Successfully enqueued segment pair [{}, {}] for proving",
+                                    segments[0].0,
+                                    segments[1].0
+                                ),
+                                Err(e) => tracing::error!(
+                                    "Failed to enqueue segment pair [{}, {}]: {}",
+                                    segments[0].0,
+                                    segments[1].0,
+                                    e
+                                ),
                             }
                             segment_buffer.clear();
                         } else {
@@ -192,9 +209,23 @@ pub async fn executor(
                                          first_idx, second_idx, first_idx);
 
                             let (idx, segment) = &segment_buffer[0];
-                            match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
-                                Ok(_) => tracing::info!("Successfully enqueued individual segment {} for proving", idx),
-                                Err(e) => tracing::error!("Failed to enqueue individual segment {}: {}", idx, e),
+                            match enqueue_prove_task(
+                                &mut conn.clone(),
+                                job_id_clone,
+                                *idx,
+                                segment.clone(),
+                            )
+                            .await
+                            {
+                                Ok(_) => tracing::info!(
+                                    "Successfully enqueued individual segment {} for proving",
+                                    idx
+                                ),
+                                Err(e) => tracing::error!(
+                                    "Failed to enqueue individual segment {}: {}",
+                                    idx,
+                                    e
+                                ),
                             }
 
                             // Remove the first segment and keep the second one in the buffer
@@ -207,8 +238,13 @@ pub async fn executor(
                 if !segment_buffer.is_empty() {
                     tracing::info!("Processing final unpaired segment {}", segment_buffer[0].0);
                     let (idx, segment) = &segment_buffer[0];
-                    match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone()).await {
-                        Ok(_) => tracing::info!("Successfully enqueued final segment {} for proving", idx),
+                    match enqueue_prove_task(&mut conn.clone(), job_id_clone, *idx, segment.clone())
+                        .await
+                    {
+                        Ok(_) => tracing::info!(
+                            "Successfully enqueued final segment {} for proving",
+                            idx
+                        ),
                         Err(e) => tracing::error!("Failed to enqueue final segment {}: {}", idx, e),
                     }
                 }
@@ -218,12 +254,8 @@ pub async fn executor(
             };
 
             // Start planner task to handle keccak tasks with independent indexing
-            let planner_task = tokio::spawn(run_planner(
-                task_rx,
-                conn_clone,
-                job_id_clone,
-                segment_map_clone
-            ));
+            let planner_task =
+                tokio::spawn(run_planner(task_rx, conn_clone, job_id_clone, segment_map_clone));
 
             // Wait for segment processing to complete
             let segment_count = process_segments.await;
@@ -255,12 +287,7 @@ pub async fn executor(
             // Store session info in Redis
             let session_key = format!("session:{}", job_id);
             tracing::info!("Creating session data with {} segments", segment_count);
-            let session_data = SessionData {
-                segment_count,
-                user_cycles,
-                total_cycles,
-                journal,
-            };
+            let session_data = SessionData { segment_count, user_cycles, total_cycles, journal };
 
             tracing::debug!("Serializing session data");
             let session_bytes = match bincode::serialize(&session_data) {
@@ -336,13 +363,19 @@ async fn run_planner(
                 keccak_count += 1;
 
                 // Process keccak task with its own counter
-                tracing::info!("Processing keccak request {:?} with keccak_idx {}", keccak_req, keccak_count);
+                tracing::info!(
+                    "Processing keccak request {:?} with keccak_idx {}",
+                    keccak_req,
+                    keccak_count
+                );
 
                 // Create keccak task with unique identifiers
-                let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_count);
+                let task_id =
+                    format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_count);
 
                 // Create the Redis key for storing keccak input data
-                let keccak_input_path = format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
+                let keccak_input_path =
+                    format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
 
                 // Create synthetic test data for keccak input
                 let mut keccak_state_data: Vec<u8> = Vec::new();
@@ -355,9 +388,13 @@ async fn run_planner(
                 keccak_state_data.extend_from_slice(keccak_state_bytes);
 
                 // Store the data in Redis
-                tracing::info!("Storing keccak state data in Redis (size: {} bytes)", keccak_state_data.len());
+                tracing::info!(
+                    "Storing keccak state data in Redis (size: {} bytes)",
+                    keccak_state_data.len()
+                );
 
-                let cmd_result: redis::RedisResult<()> = conn.set(&keccak_input_path, &keccak_state_data).await;
+                let cmd_result: redis::RedisResult<()> =
+                    conn.set(&keccak_input_path, &keccak_state_data).await;
                 if let Err(e) = cmd_result {
                     tracing::error!("Failed to store keccak input data: {}", e);
                     continue;
@@ -370,7 +407,8 @@ async fn run_planner(
                     claim_digest: keccak_req.claim_digest,
                     control_root: keccak_req.control_root,
                     po2: keccak_req.po2,
-                })).map_err(|e| format!("Failed to serialize keccak task def: {}", e))?;
+                }))
+                .map_err(|e| format!("Failed to serialize keccak task def: {}", e))?;
 
                 let keccak_task = Task {
                     job_id,
@@ -381,7 +419,8 @@ async fn run_planner(
                     max_retries: 3,
                 };
 
-                task_queue::enqueue_task(&mut conn, "keccak", keccak_task).await
+                task_queue::enqueue_task(&mut conn, "keccak", keccak_task)
+                    .await
                     .map_err(|e| format!("Failed to enqueue keccak task: {}", e))?;
 
                 tracing::info!("Successfully enqueued keccak task: {}", task_id);
@@ -389,13 +428,14 @@ async fn run_planner(
                 // Enqueue a finalize task for this keccak task
                 let finalize_keccak_req = FinalizeReq { max_idx: keccak_count };
                 let finalize_task_id = format!("finalize_keccak:{}:{}", job_id, keccak_count);
-                let finalize_task_def = match serde_json::to_value(TaskType::Finalize(finalize_keccak_req)) {
-                    Ok(def) => def,
-                    Err(e) => {
-                        tracing::error!("Failed to serialize finalize task for keccak: {}", e);
-                        continue;
-                    }
-                };
+                let finalize_task_def =
+                    match serde_json::to_value(TaskType::Finalize(finalize_keccak_req)) {
+                        Ok(def) => def,
+                        Err(e) => {
+                            tracing::error!("Failed to serialize finalize task for keccak: {}", e);
+                            continue;
+                        }
+                    };
 
                 let finalize_task = Task {
                     job_id,
@@ -407,7 +447,10 @@ async fn run_planner(
                 };
 
                 match task_queue::enqueue_task(&mut conn, "finalize", finalize_task).await {
-                    Ok(_) => tracing::info!("Successfully enqueued finalize task for keccak: {}", finalize_task_id),
+                    Ok(_) => tracing::info!(
+                        "Successfully enqueued finalize task for keccak: {}",
+                        finalize_task_id
+                    ),
                     Err(e) => tracing::error!("Failed to enqueue finalize task for keccak: {}", e),
                 }
             }
@@ -491,10 +534,18 @@ async fn enqueue_paired_segments(
     };
 
     // Create ProveReq with both indices (using a tuple to indicate pair)
-    let task_def = serde_json::to_value(TaskType::ProvePair(ProveReq { index: *idx1 }, ProveReq { index: *idx2 }))
-        .map_err(|e| e.to_string())?;
+    let task_def = serde_json::to_value(TaskType::ProvePair(
+        ProveReq { index: *idx1 },
+        ProveReq { index: *idx2 },
+    ))
+    .map_err(|e| e.to_string())?;
 
-    tracing::debug!("Creating paired task for job_id: {}, segment indices: [{}, {}]", job_id, idx1, idx2);
+    tracing::debug!(
+        "Creating paired task for job_id: {}, segment indices: [{}, {}]",
+        job_id,
+        idx1,
+        idx2
+    );
 
     // Create Task with embedded segment pair data
     let task = Task {

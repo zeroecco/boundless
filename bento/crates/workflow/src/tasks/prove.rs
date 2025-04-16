@@ -4,8 +4,7 @@
 
 use crate::{
     tasks::{serialize_obj, RECUR_RECEIPT_PATH},
-    TaskType,
-    Agent,
+    Agent, TaskType,
 };
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
@@ -64,7 +63,8 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let store_start = Instant::now();
     // Use Redis queue instead of setex
     let mut conn = agent.redis_conn.clone();
-    conn.lpush::<_, _, ()>(&output_key, &lift_asset).await
+    conn.lpush::<_, _, ()>(&output_key, &lift_asset)
+        .await
         .context("Failed to push receipt to Redis queue")?;
     let store_duration = store_start.elapsed();
     tracing::info!("Pushed lift receipt to Redis queue in {:?}", store_duration);
@@ -78,9 +78,17 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     if let Some(segment_idx_str) = task_id.split(':').last() {
         if let Ok(segment_idx) = segment_idx_str.parse::<usize>() {
             // Enqueue a join task for this segment
-            match enqueue_join_leaf(&mut agent.redis_conn.clone(), &job_id, task_id, segment_idx).await {
-                Ok(_) => tracing::info!("Successfully enqueued join task for segment {}", segment_idx),
-                Err(e) => tracing::error!("Failed to enqueue join task for segment {}: {}", segment_idx, e),
+            match enqueue_join_leaf(&mut agent.redis_conn.clone(), &job_id, task_id, segment_idx)
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("Successfully enqueued join task for segment {}", segment_idx)
+                }
+                Err(e) => tracing::error!(
+                    "Failed to enqueue join task for segment {}: {}",
+                    segment_idx,
+                    e
+                ),
             }
         }
     }
@@ -93,21 +101,25 @@ pub async fn prove_pair(
     agent: &Agent,
     task: &Task,
     req1: workflow_common::ProveReq,
-    req2: workflow_common::ProveReq
+    req2: workflow_common::ProveReq,
 ) -> Result<()> {
     let start_time = Instant::now();
     let job_id = task.job_id;
     let task_id = &task.task_id;
 
     let deserialize_start = Instant::now();
-    let (segment1, segment2): (risc0_zkvm::Segment, risc0_zkvm::Segment) = bincode::deserialize(&task.data)?;
+    let (segment1, segment2): (risc0_zkvm::Segment, risc0_zkvm::Segment) =
+        bincode::deserialize(&task.data)?;
     let deserialize_duration = deserialize_start.elapsed();
     tracing::debug!("Deserialized segment pair in {:?}", deserialize_duration);
 
     let job_prefix = format!("job:{job_id}");
 
-    tracing::info!("Starting proof of segment pair: {job_id} - {task_id} (indices: {} and {})",
-                  req1.index, req2.index);
+    tracing::info!(
+        "Starting proof of segment pair: {job_id} - {task_id} (indices: {} and {})",
+        req1.index,
+        req2.index
+    );
 
     // Prove the first segment
     let prove1_start = Instant::now();
@@ -119,7 +131,11 @@ pub async fn prove_pair(
         .context("Failed to prove first segment")?;
     let prove1_duration = prove1_start.elapsed();
 
-    tracing::info!("Completed proof for first segment ({}): {job_id} in {:?}", req1.index, prove1_duration);
+    tracing::info!(
+        "Completed proof for first segment ({}): {job_id} in {:?}",
+        req1.index,
+        prove1_duration
+    );
 
     // Prove the second segment
     let prove2_start = Instant::now();
@@ -131,7 +147,11 @@ pub async fn prove_pair(
         .context("Failed to prove second segment")?;
     let prove2_duration = prove2_start.elapsed();
 
-    tracing::info!("Completed proof for second segment ({}): {job_id} in {:?}", req2.index, prove2_duration);
+    tracing::info!(
+        "Completed proof for second segment ({}): {job_id} in {:?}",
+        req2.index,
+        prove2_duration
+    );
 
     // Lift both segments
     tracing::info!("Lifting segment pair {job_id} - {task_id}");
@@ -154,7 +174,11 @@ pub async fn prove_pair(
         .with_context(|| format!("Failed to lift segment {}", req2.index))?;
     let lift2_duration = lift2_start.elapsed();
 
-    tracing::info!("Lifting complete for segment pair in {:?} and {:?}", lift1_duration, lift2_duration);
+    tracing::info!(
+        "Lifting complete for segment pair in {:?} and {:?}",
+        lift1_duration,
+        lift2_duration
+    );
     let joined = agent
         .prover
         .as_ref()
@@ -172,7 +196,7 @@ async fn enqueue_join_leaf(
     conn: &mut ConnectionManager,
     job_id: &Uuid,
     task_id: &str,
-    segment_idx: usize
+    segment_idx: usize,
 ) -> Result<()> {
     // Calculate node's position in binary tree
     let is_even = segment_idx % 2 == 0;
@@ -186,9 +210,9 @@ async fn enqueue_join_leaf(
 
         // Create the join request with proper fields
         let join_req = JoinReq {
-            idx: parent_idx,      // Parent node index in the binary tree
-            left: left_idx,       // Left is previous even segment
-            right: segment_idx,   // Right is current odd segment
+            idx: parent_idx,    // Parent node index in the binary tree
+            left: left_idx,     // Left is previous even segment
+            right: segment_idx, // Right is current odd segment
         };
 
         // Create the task definition
@@ -218,14 +242,20 @@ async fn enqueue_join_leaf(
             .await
             .context("Failed to enqueue join task")?;
 
-        tracing::info!("Enqueued join task for parent {} with children {} and {}",
-                       parent_idx, left_idx, segment_idx);
+        tracing::info!(
+            "Enqueued join task for parent {} with children {} and {}",
+            parent_idx,
+            left_idx,
+            segment_idx
+        );
     } else {
         // We're the left child (even index)
         // No action needed yet - the right child will create the join task when it completes
-        tracing::info!("Segment {} is left child, waiting for right child to complete", segment_idx);
+        tracing::info!(
+            "Segment {} is left child, waiting for right child to complete",
+            segment_idx
+        );
     }
 
     Ok(())
 }
-

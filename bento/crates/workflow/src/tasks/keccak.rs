@@ -4,8 +4,7 @@
 
 use crate::{
     tasks::{serialize_obj, COPROC_CB_PATH},
-    TaskType,
-    Agent,
+    Agent, TaskType,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use redis::AsyncCommands;
@@ -40,21 +39,25 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
     };
     let parse_duration = parse_start.elapsed();
     tracing::info!("Task parsing completed in {:?}", parse_duration);
-    tracing::info!("Keccak request: claim_digest={}, po2={}, control_root={}",
-                  keccak_req.claim_digest, keccak_req.po2, keccak_req.control_root);
+    tracing::info!(
+        "Keccak request: claim_digest={}, po2={}, control_root={}",
+        keccak_req.claim_digest,
+        keccak_req.po2,
+        keccak_req.control_root
+    );
 
     let mut conn = agent.redis_conn.clone();
 
     // Get input data from Redis
-    let keccak_input_path = format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
+    let keccak_input_path =
+        format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
     tracing::info!("Fetching keccak input from Redis with key: {}", keccak_input_path);
 
     // Check if key exists first
-    let exists_result: bool = redis::cmd("EXISTS")
-        .arg(&keccak_input_path)
-        .query_async(&mut conn)
-        .await
-        .with_context(|| format!("Failed to check if keccak input key exists: {}", keccak_input_path))?;
+    let exists_result: bool =
+        redis::cmd("EXISTS").arg(&keccak_input_path).query_async(&mut conn).await.with_context(
+            || format!("Failed to check if keccak input key exists: {}", keccak_input_path),
+        )?;
 
     if !exists_result {
         // Try to list similar keys to help debug
@@ -91,19 +94,27 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
                 .arg(100)
                 .query_async(&mut conn)
                 .await
-                .with_context(|| format!("Failed to scan for keys with pattern: {}", general_pattern))?;
+                .with_context(|| {
+                    format!("Failed to scan for keys with pattern: {}", general_pattern)
+                })?;
 
             let (_general_cursor, general_keys) = general_scan;
 
             if general_keys.is_empty() {
                 tracing::error!("No job keys found at all for job_id: {}", job_id);
             } else {
-                tracing::error!("Found {} job keys, but none with the coproc path. Available keys: {:?}",
-                              general_keys.len(), general_keys);
+                tracing::error!(
+                    "Found {} job keys, but none with the coproc path. Available keys: {:?}",
+                    general_keys.len(),
+                    general_keys
+                );
             }
         } else {
-            tracing::error!("Found {} similar keys, but not the exact one needed. Similar keys: {:?}",
-                          keys.len(), keys);
+            tracing::error!(
+                "Found {} similar keys, but not the exact one needed. Similar keys: {:?}",
+                keys.len(),
+                keys
+            );
         }
 
         anyhow::bail!("Keccak input data not found for key: {}", keccak_input_path);
@@ -116,7 +127,11 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
         .with_context(|| format!("Keccak input data not found for key: {keccak_input_path}"))?;
     let fetch_duration = fetch_start.elapsed();
 
-    tracing::info!("Successfully retrieved keccak input of size: {} bytes in {:?}", keccak_input.len(), fetch_duration);
+    tracing::info!(
+        "Successfully retrieved keccak input of size: {} bytes in {:?}",
+        keccak_input.len(),
+        fetch_duration
+    );
 
     // Create ProveKeccakRequest
     let convert_start = Instant::now();
@@ -145,15 +160,19 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
         .context("Failed to prove keccak")?;
     let prove_duration = prove_start.elapsed();
 
-    tracing::info!("Completed keccak proof for digest: {} in {:?}", keccak_req.claim_digest, prove_duration);
+    tracing::info!(
+        "Completed keccak proof for digest: {} in {:?}",
+        keccak_req.claim_digest,
+        prove_duration
+    );
 
     // Store receipt in Redis
     let job_prefix = format!("job:{}", job_id);
     let receipt_key = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{task_id}");
 
     let serialize_start = Instant::now();
-    let receipt_bytes = serialize_obj(&keccak_receipt)
-        .context("Failed to serialize keccak receipt")?;
+    let receipt_bytes =
+        serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
     let serialize_duration = serialize_start.elapsed();
     tracing::info!("Serialized keccak receipt in {:?}", serialize_duration);
 
@@ -168,7 +187,11 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
     tracing::info!("Stored keccak receipt in Redis in {:?}", store_duration);
 
     let total_duration = start_time.elapsed();
-    tracing::info!("Successfully stored keccak receipt for task: {} in total time: {:?}", task_id, total_duration);
+    tracing::info!(
+        "Successfully stored keccak receipt for task: {} in total time: {:?}",
+        task_id,
+        total_duration
+    );
     tracing::info!("Performance breakdown: Parse: {:?}, Fetch: {:?}, Convert: {:?}, Prove: {:?}, Serialize: {:?}, Store: {:?}",
                  parse_duration, fetch_duration, convert_duration, prove_duration, serialize_duration, store_duration);
 

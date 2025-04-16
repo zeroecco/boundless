@@ -304,7 +304,9 @@ impl Agent {
             }
             TaskType::ProvePair(req1, req2) => {
                 tracing::info!("Starting prove pair task for job_id={}", task_clone.job_id);
-                tasks::prove::prove_pair(self, &task_clone, req1, req2).await.context("Prove pair failed")?;
+                tasks::prove::prove_pair(self, &task_clone, req1, req2)
+                    .await
+                    .context("Prove pair failed")?;
                 tracing::info!("Prove pair task completed for job_id={}", task_clone.job_id);
             }
             TaskType::Join(req) => {
