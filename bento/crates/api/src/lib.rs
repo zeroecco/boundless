@@ -54,7 +54,7 @@ impl std::fmt::Display for ErrMsg {
 const USER_ID: &str = "default_user";
 const MAX_UPLOAD_SIZE: usize = 250 * 1024 * 1024; // 250 mb
 
-const IMAGE_UPLOAD_PATH: &str = "/images/upload/:image_id";
+const IMAGE_UPLOAD_PATH: &str = "/images/upload/{image_id}";
 async fn image_upload(
     State(state): State<Arc<AppState>>,
     Path(image_id): Path<String>,
@@ -186,7 +186,7 @@ async fn input_upload(
     }))
 }
 
-const INPUT_UPLOAD_PUT_PATH: &str = "/inputs/upload/:input_id";
+const INPUT_UPLOAD_PUT_PATH: &str = "/inputs/upload/{input_id}";
 async fn input_upload_put(
     State(state): State<Arc<AppState>>,
     Path(input_id): Path<String>,
@@ -242,7 +242,7 @@ async fn receipt_upload(
     }))
 }
 
-const RECEIPT_UPLOAD_PUT_PATH: &str = "/receipts/upload/:receipt_id";
+const RECEIPT_UPLOAD_PUT_PATH: &str = "/receipts/upload/{receipt_id}";
 async fn receipt_upload_put(
     State(state): State<Arc<AppState>>,
     Path(receipt_id): Path<String>,
@@ -334,7 +334,7 @@ async fn prove_stark(
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
 
-const STARK_STATUS_PATH: &str = "/sessions/status/:job_id";
+const STARK_STATUS_PATH: &str = "/sessions/status/{job_id}";
 async fn stark_status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -357,7 +357,7 @@ async fn stark_status(
     }))
 }
 
-const GET_STARK_PATH: &str = "/receipts/stark/receipt/:job_id";
+const GET_STARK_PATH: &str = "/receipts/stark/receipt/{job_id}";
 
 async fn stark_download(
     State(state): State<Arc<AppState>>,
@@ -382,7 +382,7 @@ async fn stark_download(
     Ok(receipt)
 }
 
-const RECEIPT_DOWNLOAD_PATH: &str = "/receipts/:job_id";
+const RECEIPT_DOWNLOAD_PATH: &str = "/receipts/{job_id}";
 async fn receipt_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -406,7 +406,7 @@ async fn receipt_download(
     Ok(Json(ReceiptDownload { url: format!("http://{hostname}/receipts/stark/receipt/{job_id}") }))
 }
 
-const GET_JOURNAL_PATH: &str = "/sessions/exec_only_journal/:job_id";
+const GET_JOURNAL_PATH: &str = "/sessions/exec_only_journal/{job_id}";
 async fn preflight_journal(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -467,7 +467,7 @@ async fn prove_groth16(
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
 
-const SNARK_STATUS_PATH: &str = "/snark/status/:job_id";
+const SNARK_STATUS_PATH: &str = "/snark/status/{job_id}";
 async fn groth16_status(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -482,7 +482,7 @@ async fn groth16_status(
     Ok(Json(SnarkStatusRes { status: "".into(), error_msg, output }))
 }
 
-const GET_GROTH16_PATH: &str = "/receipts/groth16/receipt/:job_id";
+const GET_GROTH16_PATH: &str = "/receipts/groth16/receipt/{job_id}";
 async fn groth16_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
