@@ -12,7 +12,8 @@ release = false
 
 [dependencies]
 anyhow = { workspace = true }
-axum = { version = "0.7.9", features = ["multipart"] }
+async-trait = { workspace = true }
+axum = { version = "0.8.3", features = ["multipart"] }
 bonsai-sdk = { workspace = true }
 clap = { workspace = true, features = ["env", "derive"] }
 redis = { workspace = true }
@@ -22,7 +23,7 @@ serde_json = { workspace = true }
 task-queue = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }
-tower-http = { version = "0.5.0", features = ["cors"] }
+tower-http = { version = "0.6.2", features = ["cors"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 uuid = { workspace = true, features = ["serde"] }

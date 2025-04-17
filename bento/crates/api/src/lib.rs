@@ -3,7 +3,6 @@
 // All rights reserved.
 
 use anyhow::{Context, Error as AnyhowErr, Result};
-use async_trait::async_trait;
 use axum::{
     body::{to_bytes, Body},
     extract::{FromRequestParts, Host, Path, State},
@@ -28,11 +27,12 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use workflow_common::{
     s3::{
-        S3Client, ELF_BUCKET_DIR, GROTH16_BUCKET_DIR, INPUT_BUCKET_DIR,
+        S3Client, GROTH16_BUCKET_DIR,
         PREFLIGHT_JOURNALS_BUCKET_DIR, RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
     },
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
 };
+use async_trait::async_trait;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ErrMsg {
@@ -62,7 +62,6 @@ where
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let Some(api_key_header) = parts.headers.get("x-api-key") else {
             return Ok(ExtractApiKey(USER_ID.to_string()));
-            // return Err((StatusCode::UNAUTHORIZED, "Missing x-api-key header"));
         };
 
         let api_key_str = match api_key_header.to_str() {
@@ -257,7 +256,7 @@ async fn image_upload_put(
         return Err(AppError::ImageInvalid(format!(
             "ELF data is too small: {} bytes",
             body_bytes.len()
-        ));
+        )));
     }
 
     // Check magic bytes for standard ELF or RISC0 format
