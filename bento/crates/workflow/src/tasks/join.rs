@@ -33,17 +33,29 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 
     if let Some((_, data)) = left_receipt_result {
         if data.is_empty() {
-            return Err(anyhow::anyhow!("Received empty data from queue: {}", left_path_key));
+            tracing::info!("Received empty data from queue: {}, will requeue task", left_path_key);
+            // Requeue the task to try again later
+            return requeue_join_task(agent, job_id, request).await;
         }
         left_receipt_data = data;
     } else {
         tracing::info!("Queue empty for {}, trying GET instead", left_path_key);
-        left_receipt_data = conn
-            .get::<_, Vec<u8>>(&left_path_key)
+        let get_result = conn
+            .get::<_, Option<Vec<u8>>>(&left_path_key)
             .await
             .with_context(|| format!("Failed to get data with GET: {}", left_path_key))?;
-        if left_receipt_data.is_empty() {
-            return Err(anyhow::anyhow!("Received empty data from GET: {}", left_path_key));
+
+        if let Some(data) = get_result {
+            if data.is_empty() {
+                tracing::info!("Received empty data from GET: {}, will requeue task", left_path_key);
+                // Requeue the task to try again later
+                return requeue_join_task(agent, job_id, request).await;
+            }
+            left_receipt_data = data;
+        } else {
+            tracing::info!("No data found for {}, will requeue task", left_path_key);
+            // Requeue the task to try again later
+            return requeue_join_task(agent, job_id, request).await;
         }
     }
 
@@ -60,17 +72,29 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 
     if let Some((_, data)) = right_receipt_result {
         if data.is_empty() {
-            return Err(anyhow::anyhow!("Received empty data from queue: {}", right_path_key));
+            tracing::info!("Received empty data from queue: {}, will requeue task", right_path_key);
+            // Requeue the task to try again later
+            return requeue_join_task(agent, job_id, request).await;
         }
         right_receipt_data = data;
     } else {
         tracing::info!("Queue empty for {}, trying GET instead", right_path_key);
-        right_receipt_data = conn
-            .get::<_, Vec<u8>>(&right_path_key)
+        let get_result = conn
+            .get::<_, Option<Vec<u8>>>(&right_path_key)
             .await
             .with_context(|| format!("Failed to get data with GET: {}", right_path_key))?;
-        if right_receipt_data.is_empty() {
-            return Err(anyhow::anyhow!("Received empty data from GET: {}", right_path_key));
+
+        if let Some(data) = get_result {
+            if data.is_empty() {
+                tracing::info!("Received empty data from GET: {}, will requeue task", right_path_key);
+                // Requeue the task to try again later
+                return requeue_join_task(agent, job_id, request).await;
+            }
+            right_receipt_data = data;
+        } else {
+            tracing::info!("No data found for {}, will requeue task", right_path_key);
+            // Requeue the task to try again later
+            return requeue_join_task(agent, job_id, request).await;
         }
     }
 
@@ -143,12 +167,50 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             data: Vec::new(),
         };
 
-        task_queue::enqueue_task(&mut agent.redis_conn.clone(), "join", parent_join_task)
+        task_queue::enqueue_task(&mut agent.redis_conn.clone(), workflow_common::JOIN_WORK_TYPE, parent_join_task)
             .await
             .context("Failed to enqueue parent join task")?;
 
         tracing::info!("Enqueued parent join task for node {}", parent_idx);
     }
 
+    Ok(())
+}
+
+/// Helper function to requeue a join task with a delay
+async fn requeue_join_task(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()> {
+    tracing::info!("Requeuing join task for job {} segments {} + {} -> {} to retry later",
+                  job_id, request.left, request.right, request.idx);
+
+    let join_req = request.clone();
+    let serialized_task_def = serde_json::to_value(TaskType::Join(join_req))
+        .context("Failed to serialize requeued join task definition")?;
+
+    let task = Task {
+        job_id: *job_id,
+        task_id: format!("join:{}:{}", job_id, request.idx),
+        task_def: serialized_task_def,
+        prereqs: vec![],
+        max_retries: 3,  // Reset retry count for requeued tasks
+        data: Vec::new(),
+    };
+
+    // Spawn a task to enqueue after a delay
+    let clone_task = task.clone();
+    let conn_clone = agent.redis_conn.clone();
+    tokio::spawn(async move {
+        // Wait for the delay
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+        // Then enqueue to the main queue
+        let mut delayed_conn = conn_clone;
+        let _ = task_queue::enqueue_task(
+            &mut delayed_conn,
+            workflow_common::JOIN_WORK_TYPE,
+            clone_task
+        ).await;
+    });
+
+    // Return Ok to prevent the task from being marked as failed
     Ok(())
 }
