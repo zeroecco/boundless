@@ -278,7 +278,7 @@ async fn enqueue_keccak_task(
     tracing::info!("Created keccak state data of size: {} bytes", state_bytes.len());
 
     // Create the keccak task definition
-    let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(keccak_req.clone()))
+    let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(keccak_req))
         .context("Failed to serialize keccak task definition")?;
 
     // Build the Task with data payload

@@ -49,7 +49,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 
     // Deserialize left receipt
     let left_receipt = deserialize_obj(&left_receipt_data)
-        .with_context(|| format!("Failed to deserialize left receipt"))?;
+        .with_context(|| "Failed to deserialize left receipt".to_string())?;
 
     // Get right receipt - use brpop with timeout
     let right_receipt_data: Vec<u8>;
@@ -76,7 +76,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
 
     // Deserialize right receipt
     let right_receipt = deserialize_obj(&right_receipt_data)
-        .with_context(|| format!("Failed to deserialize right receipt"))?;
+        .with_context(|| "Failed to deserialize right receipt".to_string())?;
 
     // Perform the join
     let join_start = Instant::now();
