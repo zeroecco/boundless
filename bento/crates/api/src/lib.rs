@@ -3,8 +3,8 @@
 // All rights reserved.
 
 use anyhow::{Context, Error as AnyhowErr, Result};
+use async_trait::async_trait;
 use axum::{
-    async_trait,
     body::{to_bytes, Body},
     extract::{FromRequestParts, Host, Path, State},
     http::{request::Parts, StatusCode},
@@ -257,7 +257,7 @@ async fn image_upload_put(
         return Err(AppError::ImageInvalid(format!(
             "ELF data is too small: {} bytes",
             body_bytes.len()
-        )));
+        ));
     }
 
     // Check magic bytes for standard ELF or RISC0 format
@@ -698,3 +698,4 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 }
+

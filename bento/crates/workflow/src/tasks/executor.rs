@@ -1,3 +1,7 @@
+// Copyright (c) 2025 RISC Zero, Inc.
+//
+// All rights reserved.
+
 use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
@@ -7,7 +11,7 @@ use serde::Serialize;
 use task_queue::Task;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use workflow_common::{FinalizeReq, KeccakReq, ProveReq};
+use workflow_common::{FinalizeReq, KeccakReq, ProveReq, COPROC_WORK_TYPE};
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF";
 
@@ -50,6 +54,7 @@ impl CoprocessorCallback for PlannerCoprocessor {
     }
 
     fn prove_keccak(&mut self, req: ProveKeccakRequest) -> Result<()> {
+        // Send Keccak request to planner
         let keccak_req = KeccakReq {
             claim_digest: req.claim_digest,
             po2: req.po2,
@@ -67,6 +72,7 @@ enum SenderType {
     Keccak(KeccakReq),
 }
 
+/// Entry point for executor tasks
 pub async fn executor(
     mut conn: ConnectionManager,
     task: Task,
@@ -130,19 +136,20 @@ pub async fn executor(
             let mut exec = ExecutorImpl::from_elf(env, &elf_data_clone).map_err(|e| e.to_string())?;
             let mut segment_idx = 0;
 
-            let session = exec.run_with_callback(move |segment| {
-                // Send segment index and segment over the channel; on failure print error
-                if let Err(e) = seg_tx.blocking_send((segment_idx, segment)) {
-                    println!("Segment send error: {}", e);
-                }
-                // Notify planner about a new segment
-                if let Err(e) = planner_tx_clone.blocking_send(SenderType::Segment(())) {
-                    println!("Planner notification error: {}", e);
-                }
-                segment_idx += 1;
-                Ok(Box::new(NullSegmentRef {}))
-            })
-            .map_err(|e| e.to_string())?;
+            let session = exec
+                .run_with_callback(move |segment| {
+                    // Send segment index and segment over the channel; on failure print error
+                    if let Err(e) = seg_tx.blocking_send((segment_idx, segment)) {
+                        println!("Segment send error: {}", e);
+                    }
+                    // Notify planner about a new segment
+                    if let Err(e) = planner_tx_clone.blocking_send(SenderType::Segment(())) {
+                        println!("Planner notification error: {}", e);
+                    }
+                    segment_idx += 1;
+                    Ok(Box::new(NullSegmentRef {}))
+                })
+                .map_err(|e| e.to_string())?;
 
             Ok::<_, String>((session.user_cycles, session.total_cycles, session.journal))
         });
@@ -169,7 +176,6 @@ pub async fn executor(
         };
 
         // Start the planner task (handles keccak events and other notifications)
-        // Use a cloned Redis connection for the planner
         let planner_handle = tokio::spawn(run_planner(planner_rx, conn_planner, job_id_clone, segment_map.clone()));
 
         let segment_count = process_segments.await;
@@ -193,18 +199,6 @@ pub async fn executor(
         store_redis_data(&mut conn, &session_key, &session_bytes, 7200).await?;
         tracing::info!("Stored session info for job {}", job_id);
 
-        // Enqueue finalize task for the executor run
-        let finalize_req = FinalizeReq { max_idx: segment_count };
-        let finalize_task_id = format!("finalize:{}", job_id);
-
-        // Create task_def directly with a new FinalizeReq to avoid cloning
-        let task_def = serde_json::to_value(workflow_common::TaskType::Finalize(FinalizeReq { max_idx: segment_count }))
-            .context("Failed to serialize finalize task def")?;
-
-        // Use the original finalize_req here
-        enqueue_task(&mut conn, job_id, 0, vec![], workflow_common::TaskType::Finalize(finalize_req)).await
-            .with_context(|| "Failed to enqueue finalize task")?;
-        tracing::info!("Final finalize task enqueued");
     } else {
         tracing::info!("Skipping non-executor task type");
     }
@@ -236,10 +230,7 @@ async fn run_planner(
     Ok(())
 }
 
-/// Process an individual keccak task:
-///  - Stores synthetic keccak state data in Redis
-///  - Enqueues the keccak task
-///  - Enqueues a corresponding finalize task for the keccak work
+/// Enqueue a keccak proof task into the coprocessor queue
 async fn enqueue_keccak_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
@@ -247,49 +238,46 @@ async fn enqueue_keccak_task(
     keccak_idx: usize,
 ) -> Result<()> {
     tracing::info!(
-        "Processing keccak request with digest {:?} using keccak_idx {}",
+        "Processing keccak request for claim_digest: {} at index: {}",
         keccak_req.claim_digest,
         keccak_idx
     );
 
-    // Create a unique task ID and Redis key for keccak input
+    // Create a unique task ID for keccak task
     let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_idx);
 
     // Build synthetic keccak state data (25 u64 zeros)
-    let keccak_state = [0u64; 25];
-    let keccak_state_bytes = bytemuck::cast_slice(&keccak_state);
+    let keccak_state: [u64; 25] = [0u64; 25];
+    let state_bytes: Vec<u8> = bytemuck::cast_slice(&keccak_state).to_vec();
 
-    // Create and enqueue the keccak task
-    let task_keccak_req = KeccakReq {
+    // Create the keccak task definition
+    let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(KeccakReq {
         claim_digest: keccak_req.claim_digest,
         po2: keccak_req.po2,
         control_root: keccak_req.control_root,
-    };
-    enqueue_task(conn, job_id, 0, keccak_state_bytes.to_vec(), workflow_common::TaskType::Keccak(task_keccak_req)).await
-        .with_context(|| format!("Failed to enqueue keccak task: {}", task_id))?;
-    tracing::info!("Enqueued keccak task: {}", task_id);
+    }))
+    .context("Failed to serialize keccak task definition")?;
 
-    // Enqueue a finalize task for the keccak task
-    let finalize_keccak_req = FinalizeReq { max_idx: keccak_idx };
-    let finalize_task_id = format!("finalize_keccak:{}:{}", job_id, keccak_idx);
-    let finalize_task_def = serde_json::to_value(workflow_common::TaskType::Finalize(finalize_keccak_req))
-        .context("Failed to serialize finalize task for keccak")?;
-    let finalize_task = Task {
+    // Build the Task with data payload
+    let keccak_task = Task {
         job_id,
-        task_id: finalize_task_id.clone(),
-        task_def: finalize_task_def,
-        data: vec![],
-        prereqs: vec![task_id],
+        task_id: task_id.clone(),
+        task_def,
+        data: state_bytes,
+        prereqs: vec![],
         max_retries: 3,
     };
-    task_queue::enqueue_task(conn, "finalize", finalize_task).await
-        .with_context(|| format!("Failed to enqueue finalize task for keccak: {}", finalize_task_id))?;
-    tracing::info!("Enqueued finalize keccak task: {}", finalize_task_id);
+
+    // Enqueue the keccak task into coprocessor work stream
+    task_queue::enqueue_task(conn, COPROC_WORK_TYPE, keccak_task)
+        .await
+        .context("Failed to enqueue keccak task")?;
+    tracing::info!("Enqueued keccak task: {}", task_id);
 
     Ok(())
 }
 
-/// Helper to enqueue tasks into redis
+/// Helper to enqueue a generic task into Redis
 async fn enqueue_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
@@ -310,7 +298,8 @@ async fn enqueue_task(
     };
 
     tracing::info!("Enqueuing prove task for segment {}", segment_idx);
-    task_queue::enqueue_task(conn, "prove", prove_task).await
+    task_queue::enqueue_task(conn, "prove", prove_task)
+        .await
         .with_context(|| format!("Failed to enqueue prove task for segment {}", segment_idx))?;
     Ok(())
 }

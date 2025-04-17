@@ -2,25 +2,24 @@
 //
 // All rights reserved.
 
-use crate::{
-    tasks::{serialize_obj, COPROC_CB_PATH},
-    Agent, TaskType,
-};
+use crate::{tasks::serialize_obj, Agent, TaskType};
 use anyhow::{anyhow, bail, Context, Result};
-use redis::AsyncCommands;
 use risc0_zkvm::ProveKeccakRequest;
-use std::time::Instant;
+use bytemuck::try_pod_read_unaligned;
+use serde_json;
 use task_queue::Task;
+use std::time::Instant;
 use workflow_common::{KeccakReq, KECCAK_RECEIPT_PATH};
 
+/// Converts a byte buffer into a vector of Keccak state arrays
 fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
     let chunks = input.chunks_exact(std::mem::size_of::<[u64; 25]>());
     if !chunks.remainder().is_empty() {
         bail!("Input length must be a multiple of KeccakState size");
     }
     chunks
-        .map(bytemuck::try_pod_read_unaligned)
-        .collect::<Result<_, _>>()
+        .map(try_pod_read_unaligned)
+        .collect::<std::result::Result<_, _>>()
         .map_err(|e| anyhow!("Failed to convert input bytes to KeccakState: {}", e))
 }
 
@@ -46,111 +45,29 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
         keccak_req.control_root
     );
 
-    let mut conn = agent.redis_conn.clone();
-
-    // Get input data from Redis
-    let keccak_input_path =
-        format!("job:{}:{}:{}", job_id, COPROC_CB_PATH, keccak_req.claim_digest);
-    tracing::info!("Fetching keccak input from Redis with key: {}", keccak_input_path);
-
-    // Check if key exists first
-    let exists_result: bool =
-        redis::cmd("EXISTS").arg(&keccak_input_path).query_async(&mut conn).await.with_context(
-            || format!("Failed to check if keccak input key exists: {}", keccak_input_path),
-        )?;
-
-    if !exists_result {
-        // Try to list similar keys to help debug
-        tracing::error!("Keccak input data not found in Redis with key: {}", keccak_input_path);
-
-        // Try to scan for similar keys
-        let pattern = format!("job:{}:{}:*", job_id, COPROC_CB_PATH);
-        tracing::info!("Scanning for similar keys with pattern: {}", pattern);
-
-        let scan_result: (i64, Vec<String>) = redis::cmd("SCAN")
-            .arg(0)
-            .arg("MATCH")
-            .arg(&pattern)
-            .arg("COUNT")
-            .arg(100)
-            .query_async(&mut conn)
-            .await
-            .with_context(|| format!("Failed to scan for keys with pattern: {}", pattern))?;
-
-        let (_cursor, keys) = scan_result;
-
-        if keys.is_empty() {
-            tracing::error!("No similar keys found with pattern: {}", pattern);
-
-            // Try more general pattern
-            let general_pattern = format!("job:{}:*", job_id);
-            tracing::info!("Scanning for any job keys with pattern: {}", general_pattern);
-
-            let general_scan: (i64, Vec<String>) = redis::cmd("SCAN")
-                .arg(0)
-                .arg("MATCH")
-                .arg(&general_pattern)
-                .arg("COUNT")
-                .arg(100)
-                .query_async(&mut conn)
-                .await
-                .with_context(|| {
-                    format!("Failed to scan for keys with pattern: {}", general_pattern)
-                })?;
-
-            let (_general_cursor, general_keys) = general_scan;
-
-            if general_keys.is_empty() {
-                tracing::error!("No job keys found at all for job_id: {}", job_id);
-            } else {
-                tracing::error!(
-                    "Found {} job keys, but none with the coproc path. Available keys: {:?}",
-                    general_keys.len(),
-                    general_keys
-                );
-            }
-        } else {
-            tracing::error!(
-                "Found {} similar keys, but not the exact one needed. Similar keys: {:?}",
-                keys.len(),
-                keys
-            );
-        }
-
-        anyhow::bail!("Keccak input data not found for key: {}", keccak_input_path);
+    // Use the keccak state from task.data
+    let keccak_input = &task.data;
+    tracing::info!("Received keccak input of size: {} bytes", keccak_input.len());
+    if keccak_input.is_empty() {
+        bail!("Received empty keccak input for claim_digest: {}", keccak_req.claim_digest);
     }
 
-    let fetch_start = Instant::now();
-    let keccak_input: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&keccak_input_path)
-        .await
-        .with_context(|| format!("Keccak input data not found for key: {keccak_input_path}"))?;
-    let fetch_duration = fetch_start.elapsed();
-
-    tracing::info!(
-        "Successfully retrieved keccak input of size: {} bytes in {:?}",
-        keccak_input.len(),
-        fetch_duration
-    );
+    // Convert bytes to KeccakState vector
+    let convert_start = Instant::now();
+    let input_states = try_keccak_bytes_to_input(keccak_input)?;
+    let convert_duration = convert_start.elapsed();
+    tracing::info!("Converted keccak input to state vector in {:?}", convert_duration);
 
     // Create ProveKeccakRequest
-    let convert_start = Instant::now();
     let keccak_request = ProveKeccakRequest {
         claim_digest: keccak_req.claim_digest,
         po2: keccak_req.po2,
         control_root: keccak_req.control_root,
-        input: try_keccak_bytes_to_input(&keccak_input)?,
+        input: input_states,
     };
-    let convert_duration = convert_start.elapsed();
-    tracing::info!("Converted keccak input to request in {:?}", convert_duration);
-
-    if keccak_request.input.is_empty() {
-        anyhow::bail!("Received empty keccak input with claim_digest: {}", keccak_req.claim_digest);
-    }
-
-    tracing::info!("Starting keccak proof for digest: {}", keccak_req.claim_digest);
 
     // Prove keccak
+    tracing::info!("Starting keccak proof for digest: {}", keccak_req.claim_digest);
     let prove_start = Instant::now();
     let keccak_receipt = agent
         .prover
@@ -159,7 +76,6 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
         .prove_keccak(&keccak_request)
         .context("Failed to prove keccak")?;
     let prove_duration = prove_start.elapsed();
-
     tracing::info!(
         "Completed keccak proof for digest: {} in {:?}",
         keccak_req.claim_digest,
@@ -168,16 +84,14 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
 
     // Store receipt in Redis
     let job_prefix = format!("job:{}", job_id);
-    let receipt_key = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{task_id}");
+    let receipt_key = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{}", task_id);
 
     let serialize_start = Instant::now();
-    let receipt_bytes =
-        serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
+    let receipt_bytes = serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
     let serialize_duration = serialize_start.elapsed();
     tracing::info!("Serialized keccak receipt in {:?}", serialize_duration);
 
     tracing::info!("Storing keccak receipt in Redis with key: {}", receipt_key);
-
     let store_start = Instant::now();
     agent
         .set_in_redis(&receipt_key, &receipt_bytes, Some(agent.args.redis_ttl))
@@ -192,8 +106,10 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
         task_id,
         total_duration
     );
-    tracing::info!("Performance breakdown: Parse: {:?}, Fetch: {:?}, Convert: {:?}, Prove: {:?}, Serialize: {:?}, Store: {:?}",
-                 parse_duration, fetch_duration, convert_duration, prove_duration, serialize_duration, store_duration);
+    tracing::info!(
+        "Performance breakdown: Parse: {:?}, Convert: {:?}, Prove: {:?}, Serialize: {:?}, Store: {:?}",
+        parse_duration, convert_duration, prove_duration, serialize_duration, store_duration
+    );
 
     Ok(())
 }
