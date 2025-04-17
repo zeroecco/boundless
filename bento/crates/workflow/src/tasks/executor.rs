@@ -11,7 +11,7 @@ use serde::Serialize;
 use task_queue::Task;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use workflow_common::{FinalizeReq, KeccakReq, ProveReq, COPROC_WORK_TYPE};
+use workflow_common::{FinalizeReq, KeccakReq, ProveReq, JoinReq, COPROC_WORK_TYPE, JOIN_WORK_TYPE}; // import JoinReq and join queue constant
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF";
 
@@ -199,6 +199,29 @@ pub async fn executor(
         store_redis_data(&mut conn, &session_key, &session_bytes, 7200).await?;
         tracing::info!("Stored session info for job {}", job_id);
 
+        // Schedule initial join tasks for odd-indexed segment pairs
+        if segment_count > 1 {
+            let mut conn_join = conn.clone();
+            for i in 1..segment_count {
+                if i % 2 == 1 {
+                    let join_req = JoinReq { idx: i, left: i - 1, right: i };
+                    let task_def = serde_json::to_value(workflow_common::TaskType::Join(join_req.clone()))
+                        .context("Failed to serialize initial JoinReq")?;
+                    let join_task = Task {
+                        job_id,
+                        task_id: format!("join:{}:{}", job_id, i),
+                        task_def,
+                        prereqs: vec![],
+                        max_retries: 3,
+                        data: vec![],
+                    };
+                    task_queue::enqueue_task(&mut conn_join, JOIN_WORK_TYPE, join_task)
+                        .await
+                        .context("Failed to enqueue initial join task")?;
+                    tracing::info!("Enqueued initial join task for segments {} and {}", i - 1, i);
+                }
+            }
+        }
     } else {
         tracing::info!("Skipping non-executor task type");
     }
@@ -247,27 +270,21 @@ async fn enqueue_keccak_task(
     let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_idx);
 
     // Create a proper Keccak state (25 u64 values)
-    // We need at least one valid Keccak state for the keccak task to process
     let keccak_state: [u64; 25] = [0u64; 25];
 
     // Convert to bytes ensuring proper size and alignment
-    // The keccak.rs expects chunks of exactly std::mem::size_of::<[u64; 25]>() bytes
     let state_bytes = bytemuck::bytes_of(&keccak_state).to_vec();
 
     tracing::info!("Created keccak state data of size: {} bytes", state_bytes.len());
 
     // Create the keccak task definition
-    let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(KeccakReq {
-        claim_digest: keccak_req.claim_digest,
-        po2: keccak_req.po2,
-        control_root: keccak_req.control_root,
-    }))
-    .context("Failed to serialize keccak task definition")?;
+    let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(keccak_req.clone()))
+        .context("Failed to serialize keccak task definition")?;
 
     // Build the Task with data payload
     let keccak_task = Task {
         job_id,
-        task_id: task_id.clone(),
+        task_id,
         task_def,
         data: state_bytes,
         prereqs: vec![],
@@ -278,7 +295,7 @@ async fn enqueue_keccak_task(
     task_queue::enqueue_task(conn, COPROC_WORK_TYPE, keccak_task)
         .await
         .context("Failed to enqueue keccak task")?;
-    tracing::info!("Enqueued keccak task: {}", task_id);
+    tracing::info!("Enqueued keccak task");
 
     Ok(())
 }

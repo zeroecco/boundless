@@ -2,10 +2,7 @@
 //
 // All rights reserved.
 
-use crate::{
-    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH},
-    Agent, TaskType,
-};
+use crate::{tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH}, Agent, TaskType};
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use std::time::Instant;
@@ -19,20 +16,20 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
     let mut conn = agent.redis_conn.clone();
 
     // Build the redis keys for the right and left joins
-    let job_prefix = format!("join:{job_id}");
-    let recur_receipts_prefix = format!("{job_prefix}:{RECUR_RECEIPT_PATH}");
+    let job_prefix = format!("job:{}", job_id);
+    let recur_receipts_prefix = format!("{}:{}", job_prefix, RECUR_RECEIPT_PATH);
 
-    let left_path_key = format!("{recur_receipts_prefix}:{}", request.left);
-    let right_path_key = format!("{recur_receipts_prefix}:{}", request.right);
+    let left_path_key = format!("{}:{}", recur_receipts_prefix, request.left);
+    let right_path_key = format!("{}:{}", recur_receipts_prefix, request.right);
 
-    tracing::info!("Joining {job_id} - {} + {} -> {}", request.left, request.right, request.idx);
+    tracing::info!("Joining {} - {} + {} -> {}", job_id, request.left, request.right, request.idx);
 
     // Get left receipt - use brpop with timeout
     let left_receipt_data: Vec<u8>;
     let left_receipt_result: Option<(String, Vec<u8>)> = conn
-        .brpop(&left_path_key, 1.0) // 1 second timeout - short since we'll try GET next
+        .brpop(&left_path_key, 1.0)
         .await
-        .with_context(|| format!("Failed to access queue: {left_path_key}"))?;
+        .with_context(|| format!("Failed to access queue: {}", left_path_key))?;
 
     if let Some((_, data)) = left_receipt_result {
         if data.is_empty() {
@@ -40,36 +37,26 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         }
         left_receipt_data = data;
     } else {
-        // Fallback to GET if queue is empty
         tracing::info!("Queue empty for {}, trying GET instead", left_path_key);
         left_receipt_data = conn
             .get::<_, Vec<u8>>(&left_path_key)
             .await
-            .with_context(|| format!("Failed to get data with GET: {left_path_key}"))?;
-
+            .with_context(|| format!("Failed to get data with GET: {}", left_path_key))?;
         if left_receipt_data.is_empty() {
             return Err(anyhow::anyhow!("Received empty data from GET: {}", left_path_key));
         }
     }
 
-    // Try to deserialize with more detailed error messages
-    let left_receipt = match deserialize_obj(&left_receipt_data) {
-        Ok(receipt) => receipt,
-        Err(e) => {
-            tracing::error!(
-                "Failed to deserialize left receipt from {} bytes of data",
-                left_receipt_data.len()
-            );
-            return Err(anyhow::anyhow!("Failed to deserialize left receipt: {}", e));
-        }
-    };
+    // Deserialize left receipt
+    let left_receipt = deserialize_obj(&left_receipt_data)
+        .with_context(|| format!("Failed to deserialize left receipt"))?;
 
     // Get right receipt - use brpop with timeout
     let right_receipt_data: Vec<u8>;
     let right_receipt_result: Option<(String, Vec<u8>)> = conn
-        .brpop(&right_path_key, 1.0) // 1 second timeout - short since we'll try GET next
+        .brpop(&right_path_key, 1.0)
         .await
-        .with_context(|| format!("Failed to access queue: {right_path_key}"))?;
+        .with_context(|| format!("Failed to access queue: {}", right_path_key))?;
 
     if let Some((_, data)) = right_receipt_result {
         if data.is_empty() {
@@ -77,30 +64,21 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         }
         right_receipt_data = data;
     } else {
-        // Fallback to GET if queue is empty
         tracing::info!("Queue empty for {}, trying GET instead", right_path_key);
         right_receipt_data = conn
             .get::<_, Vec<u8>>(&right_path_key)
             .await
-            .with_context(|| format!("Failed to get data with GET: {right_path_key}"))?;
-
+            .with_context(|| format!("Failed to get data with GET: {}", right_path_key))?;
         if right_receipt_data.is_empty() {
             return Err(anyhow::anyhow!("Received empty data from GET: {}", right_path_key));
         }
     }
 
-    // Try to deserialize with more detailed error messages
-    let right_receipt = match deserialize_obj(&right_receipt_data) {
-        Ok(receipt) => receipt,
-        Err(e) => {
-            tracing::error!(
-                "Failed to deserialize right receipt from {} bytes of data",
-                right_receipt_data.len()
-            );
-            return Err(anyhow::anyhow!("Failed to deserialize right receipt: {}", e));
-        }
-    };
+    // Deserialize right receipt
+    let right_receipt = deserialize_obj(&right_receipt_data)
+        .with_context(|| format!("Failed to deserialize right receipt"))?;
 
+    // Perform the join
     let join_start = Instant::now();
     let joined = agent
         .prover
@@ -109,14 +87,14 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .join(&left_receipt, &right_receipt)?;
     let join_duration = join_start.elapsed();
 
+    // Serialize joined receipt
     let serialize_start = Instant::now();
     let join_result = serialize_obj(&joined).expect("Failed to serialize the joined receipt");
     let serialize_duration = serialize_start.elapsed();
 
-    let output_key = format!("{recur_receipts_prefix}:join:{}:{}", job_id, request.idx);
-
+    // Store joined result under the new index key
+    let output_key = format!("{}:{}", recur_receipts_prefix, request.idx);
     let store_start = Instant::now();
-    // Push joined result to queue instead of setting key
     conn.lpush::<_, _, ()>(&output_key, &join_result)
         .await
         .context("Failed to push joined receipt to Redis queue")?;
@@ -134,12 +112,10 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         store_duration
     );
 
-    // Continue building the binary tree by scheduling the next level join if needed
+    // Schedule parent join if this is an odd-indexed node
     if request.idx % 2 == 0 {
-        // This node is even-indexed, so we need to wait for odd-indexed sibling
         tracing::info!("Node {} is even-indexed, waiting for sibling", request.idx);
     } else {
-        // This node is odd-indexed, so we can schedule the parent join
         let left_idx = request.idx - 1;
         let parent_idx = request.idx / 2;
 
@@ -150,33 +126,23 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
             parent_idx
         );
 
-        // Create the join request with proper fields
         let join_req = JoinReq { idx: parent_idx, left: left_idx, right: request.idx };
-
-        // Create the task definition
-        let join_task_def = TaskType::Join(join_req);
-        let serialized_task_def = serde_json::to_value(join_task_def)
+        let serialized_task_def = serde_json::to_value(TaskType::Join(join_req.clone()))
             .context("Failed to serialize parent join task definition")?;
 
-        // Define prerequisites - parent join depends on both child joins
         let left_task_id = format!("join:{}:{}", job_id, left_idx);
         let right_task_id = format!("join:{}:{}", job_id, request.idx);
         let prereqs = vec![left_task_id, right_task_id];
 
-        // Create a deterministic join task ID for the parent
-        let parent_join_task_id = format!("join:{}:{}", job_id, parent_idx);
-
-        // Create the parent join task
         let parent_join_task = Task {
             job_id: *job_id,
-            task_id: parent_join_task_id,
+            task_id: format!("join:{}:{}", job_id, parent_idx),
             task_def: serialized_task_def,
             prereqs,
             max_retries: 3,
             data: Vec::new(),
         };
 
-        // Enqueue the parent join task
         task_queue::enqueue_task(&mut agent.redis_conn.clone(), "join", parent_join_task)
             .await
             .context("Failed to enqueue parent join task")?;
