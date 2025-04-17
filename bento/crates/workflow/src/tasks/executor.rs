@@ -246,9 +246,15 @@ async fn enqueue_keccak_task(
     // Create a unique task ID for keccak task
     let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_idx);
 
-    // Build synthetic keccak state data (25 u64 zeros)
+    // Create a proper Keccak state (25 u64 values)
+    // We need at least one valid Keccak state for the keccak task to process
     let keccak_state: [u64; 25] = [0u64; 25];
-    let state_bytes: Vec<u8> = bytemuck::cast_slice(&keccak_state).to_vec();
+
+    // Convert to bytes ensuring proper size and alignment
+    // The keccak.rs expects chunks of exactly std::mem::size_of::<[u64; 25]>() bytes
+    let state_bytes = bytemuck::bytes_of(&keccak_state).to_vec();
+
+    tracing::info!("Created keccak state data of size: {} bytes", state_bytes.len());
 
     // Create the keccak task definition
     let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(KeccakReq {
