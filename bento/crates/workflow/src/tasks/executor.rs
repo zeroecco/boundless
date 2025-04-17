@@ -157,18 +157,18 @@ pub async fn executor(
         // Process segments as they arrive asynchronously
         let process_segments = async {
             let mut segment_count = 0;
-            while let Some((idx, segment)) = seg_rx.recv().await {
+            while let Some((_idx, segment)) = seg_rx.recv().await {
                 segment_count += 1;
-                tracing::info!("Received segment {} in real-time", idx);
-                segment_map.lock().await.insert(idx, segment.clone());
+                tracing::info!("Received segment {} in real-time", segment_count);
+                segment_map.lock().await.insert(segment_count, segment.clone());
                 let segment_bytes = bincode::serialize(&segment)
-                    .with_context(|| format!("Failed to serialize segment {}", idx)).unwrap();
+                    .with_context(|| format!("Failed to serialize segment {}", segment_count)).unwrap();
 
                 // Enqueue prove task for the segment
-                if let Err(e) = enqueue_task(&mut conn, job_id_clone, idx, segment_bytes, workflow_common::TaskType::Prove(ProveReq { index: idx })).await {
-                    tracing::error!("Prove task enqueue failed for segment {}: {}", idx, e);
+                if let Err(e) = enqueue_task(&mut conn, job_id_clone, segment_count, segment_bytes, workflow_common::TaskType::Prove(ProveReq { index: segment_count })).await {
+                    tracing::error!("Prove task enqueue failed for segment {}: {}", segment_count, e);
                 } else {
-                    tracing::info!("Enqueued prove task for segment {}", idx);
+                    tracing::info!("Enqueued prove task for segment {}", segment_count);
                 }
             }
             tracing::info!("Finished processing {} segments", segment_count);
@@ -301,6 +301,7 @@ async fn enqueue_keccak_task(
 }
 
 /// Helper to enqueue a generic task into Redis
+
 async fn enqueue_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
