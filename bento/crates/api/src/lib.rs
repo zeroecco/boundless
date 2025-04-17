@@ -507,27 +507,29 @@ async fn groth16_download(
 }
 
 pub fn app(state: Arc<AppState>) -> Router {
-    // Build the router step by step
-    let mut router = Router::new();
-
-    // Add routes explicitly one by one
-    router = router.route(IMAGE_UPLOAD_PATH, get(image_upload));
-    router = router.route(IMAGE_UPLOAD_PATH, put(image_upload_put));
-    router = router.route(INPUT_UPLOAD_PATH, get(input_upload));
-    router = router.route(INPUT_UPLOAD_PUT_PATH, put(input_upload_put));
-    router = router.route(RECEIPT_UPLOAD_PATH, get(receipt_upload));
-    router = router.route(RECEIPT_UPLOAD_PUT_PATH, put(receipt_upload_put));
-    router = router.route(STARK_PROVING_START_PATH, post(prove_stark));
-    router = router.route(STARK_STATUS_PATH, get(stark_status));
-    router = router.route(GET_STARK_PATH, get(stark_download));
-    router = router.route(RECEIPT_DOWNLOAD_PATH, get(receipt_download));
-    router = router.route(GET_JOURNAL_PATH, get(preflight_journal));
-    router = router.route(SNARK_START_PATH, post(prove_groth16));
-    router = router.route(SNARK_STATUS_PATH, get(groth16_status));
-    router = router.route(GET_GROTH16_PATH, get(groth16_download));
-
-    // Add the state at the end
-    router.with_state(state)
+    Router::new()
+        // Image routes - combine GET and PUT handlers
+        .route(IMAGE_UPLOAD_PATH,
+               get(image_upload)
+               .put(image_upload_put))
+        // Input routes
+        .route(INPUT_UPLOAD_PATH, get(input_upload))
+        .route(INPUT_UPLOAD_PUT_PATH, put(input_upload_put))
+        // Receipt routes
+        .route(RECEIPT_UPLOAD_PATH, get(receipt_upload))
+        .route(RECEIPT_UPLOAD_PUT_PATH, put(receipt_upload_put))
+        // STARK routes
+        .route(STARK_PROVING_START_PATH, post(prove_stark))
+        .route(STARK_STATUS_PATH, get(stark_status))
+        .route(GET_STARK_PATH, get(stark_download))
+        // Other routes
+        .route(RECEIPT_DOWNLOAD_PATH, get(receipt_download))
+        .route(GET_JOURNAL_PATH, get(preflight_journal))
+        // SNARK routes
+        .route(SNARK_START_PATH, post(prove_groth16))
+        .route(SNARK_STATUS_PATH, get(groth16_status))
+        .route(GET_GROTH16_PATH, get(groth16_download))
+        .with_state(state)
 }
 
 pub async fn run(args: &Args) -> Result<()> {
