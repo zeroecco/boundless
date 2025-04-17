@@ -12,7 +12,7 @@ release = false
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = { workspace = true }
+async-trait = { version = "0.1.75" }
 axum = { version = "0.8.3", features = ["multipart"] }
 bonsai-sdk = { workspace = true }
 clap = { workspace = true, features = ["env", "derive"] }
