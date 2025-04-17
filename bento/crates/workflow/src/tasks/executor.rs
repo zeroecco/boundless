@@ -312,6 +312,10 @@ async fn enqueue_task(
     let task_id = format!("prove:{}:{}", job_id, segment_idx);
     let task_def = serde_json::to_value(task_type)
         .with_context(|| "Failed to serialize prove task definition")?;
+
+    // Add debug logging to see the actual task_def JSON
+    tracing::debug!("Task definition JSON for segment {}: {:?}", segment_idx, task_def);
+
     let prove_task = Task {
         job_id,
         task_id,
@@ -322,7 +326,7 @@ async fn enqueue_task(
     };
 
     tracing::info!("Enqueuing prove task for segment {}", segment_idx);
-    task_queue::enqueue_task(conn, "prove", prove_task)
+    task_queue::enqueue_task(conn, workflow_common::PROVE_WORK_TYPE, prove_task)
         .await
         .with_context(|| format!("Failed to enqueue prove task for segment {}", segment_idx))?;
     Ok(())

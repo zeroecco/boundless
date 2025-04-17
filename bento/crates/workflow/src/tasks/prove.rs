@@ -14,9 +14,19 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let start_time = Instant::now();
     let job_id = task.job_id;
 
-    // Parse the ProveReq to get the segment index
-    let req: ProveReq = serde_json::from_value(task.task_def.clone())
-        .context("Failed to parse ProveReq from task_def")?;
+    // Debug log the raw task_def to see what we're trying to deserialize
+    tracing::debug!("Raw task_def to deserialize: {:?}", task.task_def);
+
+    // First, deserialize the task_def as a TaskType
+    let task_type: workflow_common::TaskType = serde_json::from_value(task.task_def.clone())
+        .context("Failed to deserialize TaskType from task_def")?;
+
+    // Then, extract the ProveReq from the TaskType
+    let req = match task_type {
+        workflow_common::TaskType::Prove(req) => req,
+        _ => return Err(anyhow::anyhow!("Expected Prove task type, got {:?}", task_type)),
+    };
+
     let index = req.index;
 
     let deserialize_start = Instant::now();
