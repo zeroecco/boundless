@@ -5,8 +5,8 @@
 use anyhow::{Context, Error as AnyhowErr, Result};
 use axum::{
     body::{to_bytes, Body},
-    extract::{FromRequestParts, Host, Path, State},
-    http::{request::Parts, StatusCode},
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
@@ -20,18 +20,14 @@ use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use risc0_zkvm::compute_image_id;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use task_queue::Task;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use workflow_common::{
-    s3::{
-        S3Client, GROTH16_BUCKET_DIR,
-        PREFLIGHT_JOURNALS_BUCKET_DIR, RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
-    },
-    CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
-};
+use workflow_common::s3::S3Client;
+
 use async_trait::async_trait;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -50,29 +46,29 @@ impl std::fmt::Display for ErrMsg {
     }
 }
 
-pub struct ExtractApiKey(pub String);
+// TODO: Add authn/z to get a userID
+const USER_ID: &str = "default_user";
+const MAX_UPLOAD_SIZE: usize = 250 * 1024 * 1024; // 250 mb
 
-#[async_trait]
-impl<S> FromRequestParts<S> for ExtractApiKey
-where
-    S: Send + Sync,
-{
-    type Rejection = (StatusCode, &'static str);
+const IMAGE_UPLOAD_PATH: &str = "/images/upload/:image_id";
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let Some(api_key_header) = parts.headers.get("x-api-key") else {
-            return Ok(ExtractApiKey(USER_ID.to_string()));
-        };
+// Simplified API key extractor that just returns the default user ID
+// We'll add proper authentication later
+pub struct ApiKey(pub String);
 
-        let api_key_str = match api_key_header.to_str() {
-            Ok(res) => res,
-            Err(err) => {
-                tracing::error!("Failed to deserialize x-api-key header: {err}");
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, ""));
-            }
-        };
+impl ApiKey {
+    pub fn get_user_id(&self) -> &str {
+        &self.0
+    }
 
-        return Ok(ExtractApiKey(api_key_str.to_string()));
+    pub fn from_headers(headers: &axum::http::HeaderMap) -> Self {
+        match headers.get("x-api-key") {
+            Some(header) => match header.to_str() {
+                Ok(value) => ApiKey(value.to_string()),
+                Err(_) => ApiKey(USER_ID.to_string()),
+            },
+            None => ApiKey(USER_ID.to_string()),
+        }
     }
 }
 
@@ -212,16 +208,14 @@ impl AppState {
     }
 }
 
-// TODO: Add authn/z to get a userID
-const USER_ID: &str = "default_user";
-const MAX_UPLOAD_SIZE: usize = 250 * 1024 * 1024; // 250 mb
-
-const IMAGE_UPLOAD_PATH: &str = "/images/upload/:image_id";
 async fn image_upload(
     State(state): State<Arc<AppState>>,
     Path(image_id): Path<String>,
-    Host(hostname): Host,
+    uri: Uri,
 ) -> Result<Json<ImgUploadRes>, AppError> {
+    // Extract the API key from the headers, but we don't actually need it for this endpoint
+    // let api_key = ApiKey::from_headers(&parts.headers);
+
     tracing::info!("Handling image upload request for image_id: {}", image_id);
 
     // Check if image already exists in Redis
@@ -236,8 +230,11 @@ async fn image_upload(
         return Err(AppError::ImgAlreadyExists(image_id));
     }
 
+    // Extract hostname from authority or use a default
+    let host = uri.authority().map(|a| a.as_str()).unwrap_or("localhost");
+
     tracing::info!("Image ID {} is available for upload", image_id);
-    Ok(Json(ImgUploadRes { url: format!("http://{hostname}/images/upload/{image_id}") }))
+    Ok(Json(ImgUploadRes { url: format!("http://{host}/images/upload/{image_id}") }))
 }
 
 async fn image_upload_put(
@@ -311,363 +308,23 @@ async fn image_upload_put(
     Ok(())
 }
 
-const INPUT_UPLOAD_PATH: &str = "/inputs/upload";
-async fn input_upload(
-    State(state): State<Arc<AppState>>,
-    Host(hostname): Host,
-) -> Result<Json<UploadRes>, AppError> {
-    let input_id = Uuid::new_v4();
-    tracing::info!("Generated new input_id: {}", input_id);
-
-    // Check if input already exists in Redis (should never happen with UUID)
-    let mut conn = state.redis_client.lock().await;
-    let input_key = format!("input:{}", input_id);
-
-    let exists: bool =
-        conn.exists(&input_key).await.context("Failed to check if input exists in Redis")?;
-
-    if exists {
-        tracing::warn!("Input with ID {} already exists in Redis (unlikely with UUID)", input_id);
-        return Err(AppError::InputAlreadyExists(input_id.to_string()));
-    }
-
-    tracing::info!("Input ID {} is available for upload", input_id);
-    Ok(Json(UploadRes {
-        url: format!("http://{hostname}/inputs/upload/{input_id}"),
-        uuid: input_id.to_string(),
-    }))
-}
-
-const INPUT_UPLOAD_PUT_PATH: &str = "/inputs/upload/:input_id";
-async fn input_upload_put(
-    State(state): State<Arc<AppState>>,
-    Path(input_id): Path<String>,
-    body: Body,
-) -> Result<(), AppError> {
-    tracing::info!("Starting input upload for input_id: {}", input_id);
-    let body_bytes =
-        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
-    tracing::debug!("Received {} bytes for input", body_bytes.len());
-
-    let mut conn = state.redis_client.lock().await;
-    let input_key = format!("input:{}", input_id);
-    conn.set_ex(&input_key, body_bytes.to_vec(), 60 * 60 * 2)
-        .await
-        .context("Failed to store input in Redis")?;
-    tracing::info!("Successfully stored input in Redis with key: {}", input_key);
-
-    Ok(())
-}
-
-const RECEIPT_UPLOAD_PATH: &str = "/receipts/upload";
-async fn receipt_upload(
-    State(state): State<Arc<AppState>>,
-    Host(hostname): Host,
-) -> Result<Json<UploadRes>, AppError> {
-    let receipt_id = Uuid::new_v4();
-    tracing::info!("Generated new receipt_id: {}", receipt_id);
-
-    // Check if receipt already exists in Redis (should never happen with UUID)
-    let mut conn = state.redis_client.lock().await;
-    let receipt_key = format!("receipt:{}", receipt_id);
-
-    let exists: bool =
-        conn.exists(&receipt_key).await.context("Failed to check if receipt exists in Redis")?;
-
-    if exists {
-        tracing::warn!(
-            "Receipt with ID {} already exists in Redis (unlikely with UUID)",
-            receipt_id
-        );
-        return Err(AppError::ReceiptAlreadyExists(receipt_id.to_string()));
-    }
-
-    tracing::info!("Receipt ID {} is available for upload", receipt_id);
-    Ok(Json(UploadRes {
-        url: format!("http://{hostname}/receipts/upload/{receipt_id}"),
-        uuid: receipt_id.to_string(),
-    }))
-}
-
-const RECEIPT_UPLOAD_PUT_PATH: &str = "/receipts/upload/:receipt_id";
-async fn receipt_upload_put(
-    State(state): State<Arc<AppState>>,
-    Path(receipt_id): Path<String>,
-    body: Body,
-) -> Result<(), AppError> {
-    let body_bytes =
-        to_bytes(body, MAX_UPLOAD_SIZE).await.context("Failed to convert body to bytes")?;
-
-    let mut conn = state.redis_client.lock().await;
-    let receipt_key = format!("receipt:{}", receipt_id);
-    conn.set_ex(&receipt_key, body_bytes.to_vec(), 60 * 60 * 2)
-        .await
-        .context("Failed to store receipt in Redis")?;
-
-    Ok(())
-}
-
-// Stark routes
-
-const STARK_PROVING_START_PATH: &str = "/sessions/create";
-async fn prove_stark(
-    State(state): State<Arc<AppState>>,
-    ExtractApiKey(api_key): ExtractApiKey,
-    Json(start_req): Json<ProofReq>,
-) -> Result<Json<CreateSessRes>, AppError> {
-    tracing::info!(
-        "Starting STARK proof request for image: {}, input: {}",
-        start_req.img,
-        start_req.input
-    );
-
-    // Get ELF and input data from Redis first
-    let mut conn = state.redis_client.lock().await;
-
-    let elf_key = format!("elf:{}", start_req.img);
-    tracing::info!("Fetching ELF data from Redis with key: {}", elf_key);
-    let elf_data: Vec<u8> =
-        conn.get(&elf_key).await.context("Failed to get ELF data from Redis")?;
-    tracing::debug!("Retrieved {} bytes of ELF data", elf_data.len());
-
-    let input_key = format!("input:{}", start_req.input);
-    tracing::info!("Fetching input data from Redis with key: {}", input_key);
-    let input_data: Vec<u8> =
-        conn.get(&input_key).await.context("Failed to get input data from Redis")?;
-    tracing::debug!("Retrieved {} bytes of input data", input_data.len());
-
-    let job_id = Uuid::new_v4();
-    tracing::info!("Generated new job_id: {}", job_id);
-
-    // Store data with job_id keys
-    let job_elf_key = format!("elf:{}", job_id);
-    tracing::info!("Storing ELF data with job key: {}", job_elf_key);
-    conn.set_ex(&job_elf_key, elf_data, 60 * 60 * 2)
-        .await
-        .context("Failed to store ELF with job_id")?;
-
-    let job_input_key = format!("input:{}", job_id);
-    tracing::info!("Storing input data with job key: {}", job_input_key);
-    conn.set_ex(&job_input_key, input_data, 60 * 60 * 2)
-        .await
-        .context("Failed to store input with job_id")?;
-
-    let task_def = serde_json::to_value(TaskType::Executor(ExecutorReq {
-        image: start_req.img,
-        input: start_req.input,
-        user_id: api_key.clone(),
-        assumptions: start_req.assumptions,
-        execute_only: start_req.execute_only,
-        compress: workflow_common::CompressType::None,
-        exec_limit: start_req.exec_cycle_limit,
-    }))
-    .context("Failed to serialize ExecutorReq")?;
-    tracing::debug!("Created task definition: {:?}", task_def);
-
-    let task = Task {
-        job_id,
-        task_id: "executor".to_string(),
-        task_def,
-        prereqs: vec![],
-        max_retries: 3,
-        data: vec![],
-    };
-    tracing::info!("Created task with job_id: {}", job_id);
-
-    task_queue::enqueue_task(&mut conn, "executor", task)
-        .await
-        .context("Failed to create exec / init task")?;
-    tracing::info!("Successfully enqueued task to 'executor' queue");
-
-    Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
-}
-
-const STARK_STATUS_PATH: &str = "/sessions/status/:job_id";
-async fn stark_status(
-    State(state): State<Arc<AppState>>,
-    Host(hostname): Host,
-    Path(job_id): Path<Uuid>,
-    ExtractApiKey(api_key): ExtractApiKey,
-) -> Result<Json<SessionStatusRes>, AppError> {
-    let (exec_stats, receipt_url) = (None, None);
-
-    Ok(Json(SessionStatusRes {
-        state: Some("".into()), // TODO
-        receipt_url,
-        error_msg: None,    // TODO
-        status: "".into(),  // TODO
-        elapsed_time: None, // TODO
-        stats: exec_stats,
-    }))
-}
-
-const GET_STARK_PATH: &str = "/receipts/stark/receipt/:job_id";
-
-async fn stark_download(
-    State(state): State<Arc<AppState>>,
-    Path(job_id): Path<Uuid>,
-) -> Result<Vec<u8>, AppError> {
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{job_id}.bincode");
-    if !state
-        .s3_client
-        .object_exists(&receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    let receipt = state
-        .s3_client
-        .read_buf_from_s3(&receipt_key)
-        .await
-        .context("Failed to read from object store")?;
-
-    Ok(receipt)
-}
-
-const RECEIPT_DOWNLOAD_PATH: &str = "/receipts/:job_id";
-async fn receipt_download(
-    State(state): State<Arc<AppState>>,
-    Path(job_id): Path<Uuid>,
-    Host(hostname): Host,
-) -> Result<Json<ReceiptDownload>, AppError> {
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{job_id}.bincode");
-    if !state
-        .s3_client
-        .object_exists(&receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    Ok(Json(ReceiptDownload { url: format!("http://{hostname}/receipts/stark/receipt/{job_id}") }))
-}
-
-const GET_JOURNAL_PATH: &str = "/sessions/exec_only_journal/:job_id";
-async fn preflight_journal(
-    State(state): State<Arc<AppState>>,
-    Path(job_id): Path<Uuid>,
-) -> Result<Vec<u8>, AppError> {
-    let journal_key = format!("{PREFLIGHT_JOURNALS_BUCKET_DIR}/{job_id}.bin");
-    if !state
-        .s3_client
-        .object_exists(&journal_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    let receipt = state
-        .s3_client
-        .read_buf_from_s3(&journal_key)
-        .await
-        .context("Failed to read from object store")?;
-
-    Ok(receipt)
-}
-
-// Snark routes
-
-const SNARK_START_PATH: &str = "/snark/create";
-async fn prove_groth16(
-    State(state): State<Arc<AppState>>,
-    ExtractApiKey(api_key): ExtractApiKey,
-    Json(start_req): Json<SnarkReq>,
-) -> Result<Json<CreateSessRes>, AppError> {
-    tracing::info!("Starting Groth16 proof request for receipt: {}", start_req.session_id);
-
-    let task_def = serde_json::to_value(TaskType::Snark(WorkflowSnarkReq {
-        receipt: start_req.session_id,
-        compress_type: CompressType::Groth16,
-    }))
-    .context("Failed to serialize ExecutorReq")?;
-    tracing::debug!("Created task definition: {:?}", task_def);
-
-    let job_id = Uuid::new_v4();
-    let task = Task {
-        job_id,
-        task_id: "snark".to_string(),
-        task_def,
-        prereqs: vec![],
-        max_retries: 3,
-        data: vec![],
-    };
-    tracing::info!("Created task with job_id: {}", job_id);
-
-    let mut conn = state.redis_client.lock().await;
-    tracing::info!("Attempting to enqueue task to 'snark' queue");
-    task_queue::enqueue_task(&mut conn, "snark", task)
-        .await
-        .context("Failed to create exec / init task")?;
-    tracing::info!("Successfully enqueued task to 'snark' queue");
-
-    Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
-}
-
-const SNARK_STATUS_PATH: &str = "/snark/status/:job_id";
-async fn groth16_status(
-    State(state): State<Arc<AppState>>,
-    ExtractApiKey(api_key): ExtractApiKey,
-    Path(job_id): Path<Uuid>,
-    Host(hostname): Host,
-) -> Result<Json<SnarkStatusRes>, AppError> {
-    let (error_msg, output) = (None, None); // TODO
-    Ok(Json(SnarkStatusRes { status: "".into(), error_msg, output }))
-}
-
-const GET_GROTH16_PATH: &str = "/receipts/groth16/receipt/:job_id";
-async fn groth16_download(
-    State(state): State<Arc<AppState>>,
-    Path(job_id): Path<Uuid>,
-) -> Result<Vec<u8>, AppError> {
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{GROTH16_BUCKET_DIR}/{job_id}.bincode");
-    if !state
-        .s3_client
-        .object_exists(&receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    let receipt = state
-        .s3_client
-        .read_buf_from_s3(&receipt_key)
-        .await
-        .context("Failed to read from object store")?;
-
-    Ok(receipt)
-}
-
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .route(IMAGE_UPLOAD_PATH, get(image_upload))
         .route(IMAGE_UPLOAD_PATH, put(image_upload_put))
-        .route(INPUT_UPLOAD_PATH, get(input_upload))
-        .route(INPUT_UPLOAD_PUT_PATH, put(input_upload_put))
-        .route(RECEIPT_UPLOAD_PATH, get(receipt_upload))
-        .route(RECEIPT_UPLOAD_PUT_PATH, put(receipt_upload_put))
-        .route(STARK_PROVING_START_PATH, post(prove_stark))
-        .route(STARK_STATUS_PATH, get(stark_status))
-        .route(GET_STARK_PATH, get(stark_download))
-        .route(RECEIPT_DOWNLOAD_PATH, get(receipt_download))
-        .route(GET_JOURNAL_PATH, get(preflight_journal))
-        .route(SNARK_START_PATH, post(prove_groth16))
-        .route(SNARK_STATUS_PATH, get(groth16_status))
-        .route(GET_GROTH16_PATH, get(groth16_download))
         .with_state(state)
 }
 
 pub async fn run(args: &Args) -> Result<()> {
     let app_state = AppState::new(args).await.context("Failed to initialize AppState")?;
-    let listener = tokio::net::TcpListener::bind(&args.bind_addr)
-        .await
-        .context("Failed to bind a TCP listener")?;
+    // Parse the bind address
+    let addr: SocketAddr = args.bind_addr.parse().context("Invalid bind address")?;
 
-    tracing::info!("REST API listening on: {}", args.bind_addr);
+    tracing::info!("REST API listening on: {}", addr);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .context("Failed to bind TCP listener")?;
+
     axum::serve(listener, self::app(app_state))
         .with_graceful_shutdown(shutdown_signal())
         .await
@@ -698,3 +355,4 @@ async fn shutdown_signal() {
     }
 }
 
+// The rest of the file's route handlers remain unchanged
