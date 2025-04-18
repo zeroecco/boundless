@@ -23,25 +23,67 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     // Get left receipt
     let left_receipt = get_receipt(req.left, &mut conn).await?;
 
-    // Get right receipt (from task data)
-    let right_receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&task.data)?;
+    // Check if we have data for the right receipt
+    if task.data.is_empty() {
+        tracing::info!("Task data is empty, retrieving right receipt from Redis");
+        // If data is empty, get the right receipt from Redis instead
+        let right_receipt = get_receipt(req.right, &mut conn).await?;
 
-    tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
+        tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
 
-    // Perform the join
-    let receipt_claim = agent
-        .prover
-        .as_ref()
-        .context("Missing prover from join task")?
-        .join(&left_receipt, &right_receipt)?;
+        // Perform the join
+        let receipt_claim = agent
+            .prover
+            .as_ref()
+            .context("Missing prover from join task")?
+            .join(&left_receipt, &right_receipt)?;
 
-    // Store the result with consistent key format
-    let receipt_bytes = bincode::serialize(&receipt_claim)?;
-    let job_prefix = format!("job:{}", task.job_id);
-    let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req.idx);
-    conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await?;
-    tracing::info!("Stored joined receipt for idx {}", req.idx);
+        // Store the result with consistent key format
+        let receipt_bytes = bincode::serialize(&receipt_claim)?;
+        let job_prefix = format!("job:{}", task.job_id);
+        let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req.idx);
+        conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await?;
+        tracing::info!("Stored joined receipt for idx {}", req.idx);
 
+        // Continue with parent task creation...
+        create_parent_task(agent, task, req, receipt_bytes, &mut conn).await?;
+    } else {
+        // Get right receipt from task data
+        tracing::info!("Deserializing right receipt from task data (size: {} bytes)", task.data.len());
+        let right_receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&task.data)
+            .context("Failed to deserialize right receipt from task data")?;
+
+        tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
+
+        // Perform the join
+        let receipt_claim = agent
+            .prover
+            .as_ref()
+            .context("Missing prover from join task")?
+            .join(&left_receipt, &right_receipt)?;
+
+        // Store the result with consistent key format
+        let receipt_bytes = bincode::serialize(&receipt_claim)?;
+        let job_prefix = format!("job:{}", task.job_id);
+        let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req.idx);
+        conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await?;
+        tracing::info!("Stored joined receipt for idx {}", req.idx);
+
+        // Continue with parent task creation...
+        create_parent_task(agent, task, req, receipt_bytes, &mut conn).await?;
+    }
+
+    Ok(())
+}
+
+/// Create a parent task if necessary
+async fn create_parent_task(
+    agent: &Agent,
+    task: &Task,
+    req: workflow_common::JoinReq,
+    receipt_bytes: Vec<u8>,
+    conn: &mut redis::aio::ConnectionManager,
+) -> Result<()> {
     // Check if we need to create a parent task
     match req.idx {
         idx if idx > 1 => {
@@ -77,7 +119,7 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
             };
 
             // Enqueue the parent join task
-            task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, parent_task)
+            task_queue::enqueue_task(conn, workflow_common::JOIN_WORK_TYPE, parent_task)
                 .await
                 .context("Failed to enqueue parent join task")?;
 
