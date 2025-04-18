@@ -54,13 +54,17 @@ impl CoprocessorCallback for PlannerCoprocessor {
     }
 
     fn prove_keccak(&mut self, req: ProveKeccakRequest) -> Result<()> {
-        // Send Keccak request to planner
+        // Send Keccak request to planner with input states
         let keccak_req = KeccakReq {
             claim_digest: req.claim_digest,
             po2: req.po2,
             control_root: req.control_root,
         };
-        if let Err(e) = self.tx.blocking_send(SenderType::Keccak(keccak_req)) {
+        // Convert input states to bytes and send them along with the request
+        let input_states_bytes = bincode::serialize(&req.input)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize keccak input states: {}", e))?;
+
+        if let Err(e) = self.tx.blocking_send(SenderType::Keccak((keccak_req, input_states_bytes))) {
             println!("Planner keccak send error: {}", e);
         }
         Ok(())
@@ -69,7 +73,7 @@ impl CoprocessorCallback for PlannerCoprocessor {
 
 enum SenderType {
     Segment(()),
-    Keccak(KeccakReq),
+    Keccak((KeccakReq, Vec<u8>)), // Now includes both request metadata and serialized input states
 }
 
 /// Entry point for executor tasks
@@ -220,9 +224,9 @@ async fn run_planner(
             SenderType::Segment(_) => {
                 // The segment events are handled directly in the executor branch.
             }
-            SenderType::Keccak(keccak_req) => {
+            SenderType::Keccak((keccak_req, input_states_bytes)) => {
                 keccak_count += 1;
-                enqueue_keccak_task(&mut conn, job_id, keccak_req, keccak_count).await?;
+                enqueue_keccak_task(&mut conn, job_id, keccak_req, input_states_bytes, keccak_count).await?;
             }
         }
     }
@@ -235,6 +239,7 @@ async fn enqueue_keccak_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,
     keccak_req: KeccakReq,
+    input_states_bytes: Vec<u8>,
     keccak_idx: usize,
 ) -> Result<()> {
     tracing::info!(
@@ -246,13 +251,7 @@ async fn enqueue_keccak_task(
     // Create a unique task ID for keccak task
     let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_idx);
 
-    // Create a proper Keccak state (25 u64 values)
-    let keccak_state: [u64; 25] = [0u64; 25];
-
-    // Convert to bytes ensuring proper size and alignment
-    let state_bytes = bytemuck::bytes_of(&keccak_state).to_vec();
-
-    tracing::info!("Created keccak state data of size: {} bytes", state_bytes.len());
+    tracing::info!("Using actual keccak input states of size: {} bytes", input_states_bytes.len());
 
     // Create the keccak task definition
     let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(keccak_req))
@@ -263,7 +262,7 @@ async fn enqueue_keccak_task(
         job_id,
         task_id,
         task_def,
-        data: state_bytes,
+        data: input_states_bytes,
         prereqs: vec![],
         max_retries: 3,
     };
