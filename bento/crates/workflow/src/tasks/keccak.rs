@@ -4,10 +4,11 @@
 
 use crate::{tasks::serialize_obj, Agent, TaskType};
 use anyhow::{anyhow, bail, Context, Result};
+use redis::AsyncCommands;
 use risc0_zkvm::ProveKeccakRequest;
 use bytemuck::try_pod_read_unaligned;
-use task_queue::Task;
 use std::time::Instant;
+use task_queue::Task;
 use workflow_common::KeccakReq;
 
 /// Converts a byte buffer into a vector of Keccak state arrays
@@ -83,7 +84,7 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
 
     // Store receipt in Redis
     let job_prefix = format!("job:{}", job_id);
-    let receipt_key = format!("{job_prefix}:keccak:{}", task_id);
+    let receipt_key = format!("{}:keccak_receipts:{}", job_prefix, task_id);
 
     let serialize_start = Instant::now();
     let receipt_bytes = serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
@@ -92,8 +93,8 @@ pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
 
     tracing::info!("Storing keccak receipt in Redis with key: {}", receipt_key);
     let store_start = Instant::now();
-    agent
-        .set_in_redis(&receipt_key, &receipt_bytes, Some(agent.args.redis_ttl))
+    let mut conn = agent.redis_conn.clone();
+    conn.set_ex::<_, _, ()>(&receipt_key, &receipt_bytes, agent.args.redis_ttl)
         .await
         .context("Failed to store keccak receipt in Redis")?;
     let store_duration = store_start.elapsed();
