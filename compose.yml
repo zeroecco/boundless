@@ -66,10 +66,8 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/agent.dockerfile
-      # NOTE: we build a single image for all agents so specify the GPU flags here
-      # TODO: can we clean this up / make it more logical?
       args:
-        NVCC_APPEND_FLAGS: "--gpu-architecture=compute_86 --gpu-code=compute_86,sm_86 --generate-code arch=compute_86,code=sm_86"
+        NVCC_APPEND_FLAGS: "${NVCC_APPEND_FLAGS}"
         CUDA_OPT_LEVEL: 1
 
     mem_limit: 4G

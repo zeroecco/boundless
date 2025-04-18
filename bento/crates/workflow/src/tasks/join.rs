@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt};
 use task_queue::Task;
+use uuid;
 
 /// Run the join operation
 pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
@@ -21,22 +22,43 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     };
 
     // Get left receipt
-    let left_receipt = get_receipt(req.left, &mut conn).await?;
+    tracing::info!("Fetching left receipt for index {} from job {}", req.left, task.job_id);
+    let left_receipt = get_receipt(req.left, &task.job_id, &mut conn).await?;
+    // Log info about left receipt
+    tracing::info!("Left receipt obtained for index {}", req.left);
+
+    let perform_join = |left_receipt: &SuccinctReceipt<ReceiptClaim>, right_receipt: &SuccinctReceipt<ReceiptClaim>| -> Result<SuccinctReceipt<ReceiptClaim>> {
+        // Additional validation before join
+        tracing::info!("Validating receipts before join operation");
+
+        // Perform the join
+        let result = agent
+            .prover
+            .as_ref()
+            .context("Missing prover from join task")?
+            .join(left_receipt, right_receipt);
+
+        if let Err(ref e) = result {
+            tracing::error!("Join operation failed: {}", e);
+            tracing::error!("This often indicates the receipts are from different computations or jobs");
+        }
+
+        result
+    };
 
     // Check if we have data for the right receipt
     if task.data.is_empty() {
         tracing::info!("Task data is empty, retrieving right receipt from Redis");
         // If data is empty, get the right receipt from Redis instead
-        let right_receipt = get_receipt(req.right, &mut conn).await?;
+        tracing::info!("Fetching right receipt for index {} from job {}", req.right, task.job_id);
+        let right_receipt = get_receipt(req.right, &task.job_id, &mut conn).await?;
+        // Log info about right receipt
+        tracing::info!("Right receipt obtained for index {}", req.right);
 
         tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
 
         // Perform the join
-        let receipt_claim = agent
-            .prover
-            .as_ref()
-            .context("Missing prover from join task")?
-            .join(&left_receipt, &right_receipt)?;
+        let receipt_claim = perform_join(&left_receipt, &right_receipt)?;
 
         // Store the result with consistent key format
         let receipt_bytes = bincode::serialize(&receipt_claim)?;
@@ -52,15 +74,13 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
         tracing::info!("Deserializing right receipt from task data (size: {} bytes)", task.data.len());
         let right_receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&task.data)
             .context("Failed to deserialize right receipt from task data")?;
+        // Log info about right receipt from task data
+        tracing::info!("Right receipt deserialized from task data for index {}", req.right);
 
         tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
 
         // Perform the join
-        let receipt_claim = agent
-            .prover
-            .as_ref()
-            .context("Missing prover from join task")?
-            .join(&left_receipt, &right_receipt)?;
+        let receipt_claim = perform_join(&left_receipt, &right_receipt)?;
 
         // Store the result with consistent key format
         let receipt_bytes = bincode::serialize(&receipt_claim)?;
@@ -144,17 +164,33 @@ async fn create_parent_task(
 }
 
 /// Get a receipt from Redis with retries
-async fn get_receipt(id: usize, conn: &mut redis::aio::ConnectionManager) -> Result<SuccinctReceipt<ReceiptClaim>> {
+async fn get_receipt(
+    id: usize,
+    job_id: &uuid::Uuid,
+    conn: &mut redis::aio::ConnectionManager,
+) -> Result<SuccinctReceipt<ReceiptClaim>> {
     // Use consistent key format with job prefix
-    let prefix = format!("job:");  // We don't know job_id here, so we'll check all matching keys
-    let suffix = format!("{}:{}", RECUR_RECEIPT_PATH, id);
-    let pattern = format!("{}*:{}", prefix, suffix);
+    let job_prefix = format!("job:{}", job_id);
+    let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, id);
 
     let max_retries = 30; // Maximum 30 retries (30 seconds)
     let mut retry_count = 0;
 
     loop {
-        // First, try to find all keys matching our pattern
+        // Try to get the receipt directly with the known key
+        let result: Option<Vec<u8>> = conn.get(&store_key).await.context("Redis get error")?;
+
+        if let Some(data) = result {
+            if !data.is_empty() {
+                // Found valid data
+                tracing::info!("Successfully retrieved data for key: {}", store_key);
+                return bincode::deserialize(&data).context("Failed to deserialize receipt");
+            }
+        }
+
+        // Extra check: Verify if there are any keys that match the pattern for this specific id
+        // but potentially different job
+        let pattern = format!("job:*:{}:{}", RECUR_RECEIPT_PATH, id);
         let keys: Vec<String> = redis::cmd("KEYS")
             .arg(&pattern)
             .query_async(conn)
@@ -162,16 +198,27 @@ async fn get_receipt(id: usize, conn: &mut redis::aio::ConnectionManager) -> Res
             .context("Redis KEYS error")?;
 
         if !keys.is_empty() {
-            // Use the first matching key
-            let key = &keys[0];
-            let result: Option<Vec<u8>> = conn.get(key).await.context("Redis get error")?;
-
-            if let Some(data) = result {
-                if !data.is_empty() {
-                    // Found valid data
-                    tracing::info!("Successfully retrieved data for key: {}", key);
-                    return bincode::deserialize(&data).context("Failed to deserialize receipt");
+            tracing::info!("Found {} potential keys for receipt id {}", keys.len(), id);
+            for key in &keys {
+                // Extract job_id from the key for logging
+                if let Some(job_part) = key.split(':').nth(1) {
+                    tracing::info!("Found receipt for job {} with id {}", job_part, id);
                 }
+
+                // Only proceed if this key belongs to our job
+                if key == &store_key {
+                    let data: Option<Vec<u8>> = conn.get(key).await.context("Redis get error")?;
+                    if let Some(bytes) = data {
+                        if !bytes.is_empty() {
+                            tracing::info!("Found valid data for key: {}", key);
+                            return bincode::deserialize(&bytes).context("Failed to deserialize receipt");
+                        }
+                    }
+                }
+            }
+
+            if keys.len() > 1 {
+                tracing::warn!("Multiple keys found for receipt id {}. Using only key for job {}", id, job_id);
             }
         }
 
