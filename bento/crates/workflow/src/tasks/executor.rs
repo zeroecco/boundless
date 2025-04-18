@@ -300,7 +300,7 @@ async fn enqueue_task(
         max_retries: 3,
     };
 
-    tracing::info!("Enqueuing prove task for segment {}", segment_idx);
+    tracing::debug!("Enqueuing prove task for segment {}", segment_idx);
     task_queue::enqueue_task(conn, workflow_common::PROVE_WORK_TYPE, prove_task)
         .await
         .with_context(|| format!("Failed to enqueue prove task for segment {}", segment_idx))?;
