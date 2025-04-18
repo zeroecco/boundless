@@ -301,7 +301,7 @@ impl Agent {
             }
             TaskType::Join(req) => {
                 tracing::info!("Starting join task for job_id={}", task_clone.job_id);
-                tasks::join::join(self, &task_clone.job_id, &req).await.context("Join failed")?;
+                tasks::join::join(self, &task_clone).await.context("Join failed")?;
                 tracing::info!("Join task completed for job_id={}", task_clone.job_id);
             }
             TaskType::Resolve(req) => {

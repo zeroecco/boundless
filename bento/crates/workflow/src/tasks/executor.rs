@@ -300,8 +300,6 @@ async fn enqueue_keccak_task(
     Ok(())
 }
 
-/// Helper to enqueue a generic task into Redis
-
 async fn enqueue_task(
     conn: &mut ConnectionManager,
     job_id: Uuid,

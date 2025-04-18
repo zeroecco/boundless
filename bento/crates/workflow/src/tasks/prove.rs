@@ -2,12 +2,11 @@
 //
 // All rights reserved.
 
-use crate::{tasks::{serialize_obj, RECUR_RECEIPT_PATH}, Agent};
+use crate::{tasks::serialize_obj, Agent};
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use std::time::Instant;
 use task_queue::Task;
-use workflow_common::ProveReq; // import request type
 
 /// Run a prove request
 pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
@@ -34,8 +33,6 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let deserialize_duration = deserialize_start.elapsed();
     tracing::debug!("Deserialized segment in {:?}", deserialize_duration);
 
-    let job_prefix = format!("job:{}", job_id);
-
     tracing::info!("Starting proof of job {} segment {}", job_id, index);
 
     let prove_start = Instant::now();
@@ -61,27 +58,61 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
 
     tracing::info!("lifting complete job {} segment {} in {:?}", job_id, index, lift_duration);
 
-    // Store receipt in a list keyed by segment index
-    let output_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, index);
-
     let serialize_start = Instant::now();
     let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
     let serialize_duration = serialize_start.elapsed();
     tracing::debug!("Serialized lift receipt in {:?}", serialize_duration);
 
-    let store_start = Instant::now();
+    // Special handling for index 0 - emit to Redis as a key-value pair
+    if index == 0 {
+        let mut conn = agent.redis_conn.clone();
+        let key = format!("join:recursion_receipts:{}", index);
+        conn.set_ex::<_, _, ()>(key, &lift_asset, 3600).await
+            .context("Failed to store index 0 receipt in Redis")?;
+        tracing::info!("Stored index 0 receipt in Redis as key-value");
+        return Ok(());
+    }
+
+    // Create join tasks if this is an odd-indexed segment
+    let left_idx = index - 1;  // Previous segment
+
+    tracing::info!("Creating join task {} + {} -> {}", left_idx, index, index);
+
+    // Create the join request
+    let join_req = workflow_common::JoinReq {
+        idx: index,
+        left: left_idx,
+        right: index,
+    };
+
+    // Create task definition
+    let task_def = serde_json::to_value(workflow_common::TaskType::Join(join_req))
+        .context("Failed to serialize join task definition")?;
+
+    // Create the join task
+    let join_task = Task {
+        job_id,
+        task_id: format!("join:{}:{}", job_id, index),
+        task_def,
+        prereqs: vec![],
+        max_retries: 3,
+        data: lift_asset,  // Include this segment's receipt data in the task
+    };
+
+    // Enqueue the join task
     let mut conn = agent.redis_conn.clone();
-    conn.lpush::<_, _, ()>(&output_key, &lift_asset)
+    task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
         .await
-        .context("Failed to push receipt to Redis queue")?;
-    let store_duration = store_start.elapsed();
-    tracing::info!("Pushed lift receipt to Redis queue in {:?}", store_duration);
+        .context("Failed to enqueue join task")?;
+
+    tracing::info!("Enqueued join task for segments {} + {}", left_idx, index);
+
 
     let total_duration = start_time.elapsed();
     tracing::info!("Total prove+lift task completed in {:?}", total_duration);
     tracing::info!(
-        "Performance breakdown: Deserialize: {:?}, Prove: {:?}, Lift: {:?}, Serialize: {:?}, Store: {:?}",
-        deserialize_duration, prove_duration, lift_duration, serialize_duration, store_duration
+        "Performance breakdown: Deserialize: {:?}, Prove: {:?}, Lift: {:?}, Serialize: {:?}",
+        deserialize_duration, prove_duration, lift_duration, serialize_duration
     );
 
     Ok(())
