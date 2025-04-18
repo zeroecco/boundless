@@ -2,7 +2,7 @@
 //
 // All rights reserved.
 
-use crate::{tasks::serialize_obj, Agent};
+use crate::{tasks::{serialize_obj, RECUR_RECEIPT_PATH}, Agent};
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use std::time::Instant;
@@ -63,50 +63,58 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let serialize_duration = serialize_start.elapsed();
     tracing::debug!("Serialized lift receipt in {:?}", serialize_duration);
 
-    // emit left leaf as a key-value pair
-    if index % 2 == 1 {
-        let mut conn = agent.redis_conn.clone();
-        let key = format!("join:recursion_receipts:{}", index);
-        conn.set_ex::<_, _, ()>(key, &lift_asset, 3600).await
-            .context("Failed to store index 0 receipt in Redis")?;
-        tracing::info!("Stored index 0 receipt in Redis as key-value");
-        return Ok(());
-    }
+    // Store receipt in Redis with consistent key format
+    let job_prefix = format!("job:{}", job_id);
+    let receipt_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, index);
 
-    // Create join tasks if this is an odd-indexed segment
-    let left_idx = index - 1;  // Previous segment
-
-    tracing::info!("Creating join task {} + {} -> {}", left_idx, index, index);
-
-    // Create the join request
-    let join_req = workflow_common::JoinReq {
-        idx: index,
-        left: left_idx,
-        right: index,
-    };
-
-    // Create task definition
-    let task_def = serde_json::to_value(workflow_common::TaskType::Join(join_req))
-        .context("Failed to serialize join task definition")?;
-
-    // Create the join task
-    let join_task = Task {
-        job_id,
-        task_id: format!("join:{}:{}", job_id, index),
-        task_def,
-        prereqs: vec![],
-        max_retries: 3,
-        data: lift_asset,  // Include this segment's receipt data in the task
-    };
-
-    // Enqueue the join task
+    // emit lift receipt as a key-value pair
     let mut conn = agent.redis_conn.clone();
-    task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
-        .await
-        .context("Failed to enqueue join task")?;
+    conn.set_ex::<_, _, ()>(receipt_key, &lift_asset, 3600).await
+        .context("Failed to store receipt in Redis")?;
+    tracing::info!("Stored receipt for segment {} in Redis", index);
 
-    tracing::info!("Enqueued join task for segments {} + {}", left_idx, index);
+    // Create join tasks for this segment
+    // Each segment participates in exactly one join
+    let is_right_child = index % 2 == 1;
 
+    if is_right_child {
+        // This is a right child, create a join task with its left sibling
+        let left_idx = index - 1;
+        let parent_idx = index / 2;
+
+        tracing::info!("Creating join task {} + {} -> {}", left_idx, index, parent_idx);
+
+        // Create the join request
+        let join_req = workflow_common::JoinReq {
+            idx: parent_idx,
+            left: left_idx,
+            right: index,
+        };
+
+        // Create task definition
+        let task_def = serde_json::to_value(workflow_common::TaskType::Join(join_req))
+            .context("Failed to serialize join task definition")?;
+
+        // Create the join task with this receipt as data
+        let join_task = Task {
+            job_id,
+            task_id: format!("join:{}:{}", job_id, parent_idx),
+            task_def,
+            prereqs: vec![],
+            max_retries: 3,
+            data: lift_asset,  // Right child provides its receipt data
+        };
+
+        // Enqueue the join task
+        task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
+            .await
+            .context("Failed to enqueue join task")?;
+
+        tracing::info!("Enqueued join task for segments {} + {}", left_idx, index);
+    } else {
+        // This is a left child, just wait for the right sibling
+        tracing::info!("Segment {} is left child, waiting for right sibling {}", index, index + 1);
+    }
 
     let total_duration = start_time.elapsed();
     tracing::info!("Total prove+lift task completed in {:?}", total_duration);

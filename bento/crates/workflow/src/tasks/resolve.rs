@@ -11,7 +11,7 @@ use redis::AsyncCommands;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt, Unknown};
 use uuid::Uuid;
-use workflow_common::{ResolveReq, KECCAK_RECEIPT_PATH};
+use workflow_common::ResolveReq;
 
 /// Run the resolve operation
 pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Result<Option<u64>> {
@@ -49,7 +49,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                 let mut union_claim = String::new();
                 if let Some(idx) = request.union_max_idx {
                     let union_root_receipt_key =
-                        format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{idx}");
+                        format!("{job_prefix}:keccak:{idx}");
                     tracing::info!(
                         "Deserializing union_root_receipt_key: {union_root_receipt_key}"
                     );

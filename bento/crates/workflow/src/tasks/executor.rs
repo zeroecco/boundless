@@ -11,7 +11,7 @@ use serde::Serialize;
 use task_queue::Task;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use workflow_common::{FinalizeReq, KeccakReq, ProveReq, JoinReq, COPROC_WORK_TYPE, JOIN_WORK_TYPE}; // import JoinReq and join queue constant
+use workflow_common::{FinalizeReq, KeccakReq, ProveReq, KECCAK_WORK_TYPE}; // import JoinReq and join queue constant
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF";
 
@@ -168,7 +168,7 @@ pub async fn executor(
                 if let Err(e) = enqueue_task(&mut conn, job_id_clone, segment_count, segment_bytes, workflow_common::TaskType::Prove(ProveReq { index: segment_count })).await {
                     tracing::error!("Prove task enqueue failed for segment {}: {}", segment_count, e);
                 } else {
-                    tracing::info!("Enqueued prove task for segment {}", segment_count);
+                    tracing::debug!("Enqueued prove task for segment {}", segment_count);
                 }
             }
             tracing::info!("Finished processing {} segments", segment_count);
@@ -269,7 +269,7 @@ async fn enqueue_keccak_task(
     };
 
     // Enqueue the keccak task into coprocessor work stream
-    task_queue::enqueue_task(conn, COPROC_WORK_TYPE, keccak_task)
+    task_queue::enqueue_task(conn, "keccak", keccak_task)
         .await
         .context("Failed to enqueue keccak task")?;
     tracing::info!("Enqueued keccak task");

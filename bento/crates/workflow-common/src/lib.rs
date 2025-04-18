@@ -17,10 +17,7 @@ pub const EXEC_WORK_TYPE: &str = "exec";
 pub const PROVE_WORK_TYPE: &str = "prove";
 
 /// keccak/coproc worker stream identifier
-pub const COPROC_WORK_TYPE: &str = "coproc";
-
-/// Keccak receipts directory for job dir
-pub const KECCAK_RECEIPT_PATH: &str = "keccak_receipts";
+pub const KECCAK_WORK_TYPE: &str = "keccak";
 
 /// join worker stream identifier
 pub const JOIN_WORK_TYPE: &str = "join";

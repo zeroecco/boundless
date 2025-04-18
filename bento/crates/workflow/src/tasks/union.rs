@@ -8,9 +8,8 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
-use std::path::Path;
 use uuid::Uuid;
-use workflow_common::{UnionReq, KECCAK_RECEIPT_PATH};
+use workflow_common::UnionReq;
 
 /// Run the union operation
 pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<()> {
@@ -18,7 +17,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
     let mut conn = agent.redis_conn.clone();
 
     // setup redis keys
-    let keccak_receipts_prefix = format!("job:{job_id}:{KECCAK_RECEIPT_PATH}");
+    let keccak_receipts_prefix = format!("job:{job_id}:keccak");
     let left_receipt_key = format!("{keccak_receipts_prefix}:{0}", request.left);
     let right_receipt_key = format!("{keccak_receipts_prefix}:{0}", request.right);
 
@@ -57,10 +56,5 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
 
     tracing::info!("Union complete {job_id} - {}", request.left);
 
-    Ok(())
-}
-
-pub async fn union_task(elf_path: &Path, input_path: &Path) -> Result<()> {
-    // TODO: Implement union task logic
     Ok(())
 }
