@@ -6,11 +6,24 @@ use crate::{tasks::RECUR_RECEIPT_PATH, Agent};
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt};
+use std::time::{Duration, Instant};
 use task_queue::Task;
-use uuid;
+
+/// Simple timing helper function
+async fn timed<F, T, E>(name: &str, f: F) -> (Result<T, E>, Duration)
+where
+    F: std::future::Future<Output = Result<T, E>>,
+{
+    let start = Instant::now();
+    let result = f.await;
+    let duration = start.elapsed();
+    tracing::info!("{} completed in {:?}", name, duration);
+    (result, duration)
+}
 
 /// Run the join operation
 pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
+    let start_time = Instant::now();
     let mut conn = agent.redis_conn.clone();
 
     let task_type: workflow_common::TaskType = serde_json::from_value(task.task_def.clone())
@@ -21,76 +34,171 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
         _ => return Err(anyhow::anyhow!("Expected Join task type, got {:?}", task_type)),
     };
 
+    // Store the index value we'll need for logging later
+    let req_idx = req.idx;
+
     // Get left receipt
     tracing::info!("Fetching left receipt for index {} from job {}", req.left, task.job_id);
-    let left_receipt = get_receipt(req.left, &task.job_id, &mut conn).await?;
-    // Log info about left receipt
-    tracing::info!("Left receipt obtained for index {}", req.left);
+    let (left_receipt, fetch_left_duration) = timed(
+        &format!("Fetching left receipt for index {}", req.left),
+        async { get_receipt(req.left, &task.job_id, &mut conn).await }
+    ).await;
+    let left_receipt = left_receipt?;
 
-    let perform_join = |left_receipt: &SuccinctReceipt<ReceiptClaim>, right_receipt: &SuccinctReceipt<ReceiptClaim>| -> Result<SuccinctReceipt<ReceiptClaim>> {
-        // Additional validation before join
-        tracing::info!("Validating receipts before join operation");
-
-        // Perform the join
-        let result = agent
-            .prover
-            .as_ref()
-            .context("Missing prover from join task")?
-            .join(left_receipt, right_receipt);
-
-        if let Err(ref e) = result {
-            tracing::error!("Join operation failed: {}", e);
-            tracing::error!("This often indicates the receipts are from different computations or jobs");
-        }
-
-        result
-    };
-
-    // Check if we have data for the right receipt
     if task.data.is_empty() {
+        // Get right receipt from Redis
         tracing::info!("Task data is empty, retrieving right receipt from Redis");
-        // If data is empty, get the right receipt from Redis instead
         tracing::info!("Fetching right receipt for index {} from job {}", req.right, task.job_id);
-        let right_receipt = get_receipt(req.right, &task.job_id, &mut conn).await?;
-        // Log info about right receipt
-        tracing::info!("Right receipt obtained for index {}", req.right);
+        let (right_receipt, fetch_right_duration) = timed(
+            &format!("Fetching right receipt for index {}", req.right),
+            async { get_receipt(req.right, &task.job_id, &mut conn).await }
+        ).await;
+        let right_receipt = right_receipt?;
 
-        tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
+        tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req_idx);
 
         // Perform the join
-        let receipt_claim = perform_join(&left_receipt, &right_receipt)?;
+        let (receipt_claim, join_duration) = timed(
+            "Join operation",
+            async {
+                agent.prover
+                    .as_ref()
+                    .context("Missing prover from join task")?
+                    .join(&left_receipt, &right_receipt)
+            }
+        ).await;
+        let receipt_claim = receipt_claim?;
 
-        // Store the result with consistent key format
-        let receipt_bytes = bincode::serialize(&receipt_claim)?;
+        // Serialize the result
+        let (receipt_bytes, serialize_duration) = timed(
+            "Serializing joined receipt",
+            async { Ok::<_, anyhow::Error>(bincode::serialize(&receipt_claim)?) }
+        ).await;
+        let receipt_bytes = receipt_bytes?;
+
+        // Store in Redis
         let job_prefix = format!("job:{}", task.job_id);
-        let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req.idx);
-        conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await?;
-        tracing::info!("Stored joined receipt for idx {}", req.idx);
+        let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req_idx);
+        let (_, store_duration) = timed(
+            &format!("Storing joined receipt for idx {}", req_idx),
+            async { conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await }
+        ).await;
 
-        // Continue with parent task creation...
-        create_parent_task(agent, task, req, receipt_bytes, &mut conn).await?;
+        // Create parent task
+        let (parent_result, parent_task_duration) = timed(
+            "Creating parent task",
+            async { create_parent_task(agent, task, req, receipt_bytes, &mut conn).await }
+        ).await;
+        parent_result?;
+
+        // Performance summary
+        let total_duration = start_time.elapsed();
+        tracing::info!("Total join task completed in {:?}", total_duration);
+
+        tracing::info!(
+            "Performance breakdown for join {}: Fetch left: {:?}, Fetch right: {:?}, Join: {:?}, Serialize: {:?}, Store: {:?}, Parent task: {:?}",
+            req_idx,
+            fetch_left_duration,
+            fetch_right_duration,
+            join_duration,
+            serialize_duration,
+            store_duration,
+            parent_task_duration
+        );
+
+        // Calculate percentages
+        let processing_time = fetch_left_duration + fetch_right_duration + join_duration + serialize_duration + store_duration + parent_task_duration;
+        if processing_time.as_millis() > 0 {
+            tracing::info!(
+                "Time distribution for join {}: Fetch left: {:.1}%, Fetch right: {:.1}%, Join: {:.1}%, Serialize: {:.1}%, Store: {:.1}%, Parent: {:.1}%",
+                req_idx,
+                (fetch_left_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (fetch_right_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (join_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (serialize_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (store_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (parent_task_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0
+            );
+        }
     } else {
         // Get right receipt from task data
         tracing::info!("Deserializing right receipt from task data (size: {} bytes)", task.data.len());
-        let right_receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&task.data)
-            .context("Failed to deserialize right receipt from task data")?;
-        // Log info about right receipt from task data
-        tracing::info!("Right receipt deserialized from task data for index {}", req.right);
+        let (right_receipt, deserialize_duration) = timed(
+            &format!("Deserializing right receipt for index {}", req.right),
+            async {
+                Ok::<_, anyhow::Error>(
+                    bincode::deserialize::<SuccinctReceipt<ReceiptClaim>>(&task.data)
+                        .context("Failed to deserialize right receipt from task data")?
+                )
+            }
+        ).await;
+        let right_receipt = right_receipt?;
 
-        tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req.idx);
+        tracing::info!("Joining {} - {} + {} -> {}", task.job_id, req.left, req.right, req_idx);
 
         // Perform the join
-        let receipt_claim = perform_join(&left_receipt, &right_receipt)?;
+        let (receipt_claim, join_duration) = timed(
+            "Join operation",
+            async {
+                agent.prover
+                    .as_ref()
+                    .context("Missing prover from join task")?
+                    .join(&left_receipt, &right_receipt)
+            }
+        ).await;
+        let receipt_claim = receipt_claim?;
 
-        // Store the result with consistent key format
-        let receipt_bytes = bincode::serialize(&receipt_claim)?;
+        // Serialize the result
+        let (receipt_bytes, serialize_duration) = timed(
+            "Serializing joined receipt",
+            async { Ok::<_, anyhow::Error>(bincode::serialize(&receipt_claim)?) }
+        ).await;
+        let receipt_bytes = receipt_bytes?;
+
+        // Store in Redis
         let job_prefix = format!("job:{}", task.job_id);
-        let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req.idx);
-        conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await?;
-        tracing::info!("Stored joined receipt for idx {}", req.idx);
+        let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, req_idx);
+        let (_, store_duration) = timed(
+            &format!("Storing joined receipt for idx {}", req_idx),
+            async { conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await }
+        ).await;
 
-        // Continue with parent task creation...
-        create_parent_task(agent, task, req, receipt_bytes, &mut conn).await?;
+        // Create parent task
+        let (parent_result, parent_task_duration) = timed(
+            "Creating parent task",
+            async { create_parent_task(agent, task, req, receipt_bytes, &mut conn).await }
+        ).await;
+        parent_result?;
+
+        // Performance summary
+        let total_duration = start_time.elapsed();
+        tracing::info!("Total join task completed in {:?}", total_duration);
+
+        tracing::info!(
+            "Performance breakdown for join {}: Fetch left: {:?}, Deserialize right: {:?}, Join: {:?}, Serialize: {:?}, Store: {:?}, Parent task: {:?}",
+            req_idx,
+            fetch_left_duration,
+            deserialize_duration,
+            join_duration,
+            serialize_duration,
+            store_duration,
+            parent_task_duration
+        );
+
+        // Calculate percentages
+        let processing_time = fetch_left_duration + deserialize_duration + join_duration + serialize_duration + store_duration + parent_task_duration;
+        if processing_time.as_millis() > 0 {
+            tracing::info!(
+                "Time distribution for join {}: Fetch left: {:.1}%, Deserialize right: {:.1}%, Join: {:.1}%, Serialize: {:.1}%, Store: {:.1}%, Parent: {:.1}%",
+                req_idx,
+                (fetch_left_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (deserialize_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (join_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (serialize_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (store_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0,
+                (parent_task_duration.as_millis() as f64 / processing_time.as_millis() as f64) * 100.0
+            );
+        }
     }
 
     Ok(())
