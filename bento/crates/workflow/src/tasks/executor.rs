@@ -199,29 +199,6 @@ pub async fn executor(
         store_redis_data(&mut conn, &session_key, &session_bytes, 7200).await?;
         tracing::info!("Stored session info for job {}", job_id);
 
-        // Schedule initial join tasks for odd-indexed segment pairs
-        if segment_count > 1 {
-            let mut conn_join = conn.clone();
-            for i in 1..segment_count {
-                if i % 2 == 1 {
-                    let join_req = JoinReq { idx: i, left: i - 1, right: i };
-                    let task_def = serde_json::to_value(workflow_common::TaskType::Join(join_req.clone()))
-                        .context("Failed to serialize initial JoinReq")?;
-                    let join_task = Task {
-                        job_id,
-                        task_id: format!("join:{}:{}", job_id, i),
-                        task_def,
-                        prereqs: vec![],
-                        max_retries: 3,
-                        data: vec![],
-                    };
-                    task_queue::enqueue_task(&mut conn_join, JOIN_WORK_TYPE, join_task)
-                        .await
-                        .context("Failed to enqueue initial join task")?;
-                    tracing::info!("Enqueued initial join task for segments {} and {}", i - 1, i);
-                }
-            }
-        }
     } else {
         tracing::info!("Skipping non-executor task type");
     }
