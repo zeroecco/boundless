@@ -63,8 +63,8 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
     let serialize_duration = serialize_start.elapsed();
     tracing::debug!("Serialized lift receipt in {:?}", serialize_duration);
 
-    // Special handling for index 0 - emit to Redis as a key-value pair
-    if index == 1 {
+    // emit left leaf as a key-value pair
+    if index % 2 == 1 {
         let mut conn = agent.redis_conn.clone();
         let key = format!("join:recursion_receipts:{}", index);
         conn.set_ex::<_, _, ()>(key, &lift_asset, 3600).await
