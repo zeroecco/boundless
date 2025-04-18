@@ -37,6 +37,14 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     // Store the index value we'll need for logging later
     let req_idx = req.idx;
 
+    // Validate join request indices
+    if req.left == 0 || req.right == 0 || req_idx == 0 {
+        return Err(anyhow::anyhow!(
+            "Invalid join request with zero indices: idx={}, left={}, right={}. Indices should start at 1",
+            req_idx, req.left, req.right
+        ));
+    }
+
     // Get left receipt
     tracing::info!("Fetching left receipt for index {} from job {}", req.left, task.job_id);
     let (left_receipt, fetch_left_duration) = timed(
@@ -277,6 +285,11 @@ async fn get_receipt(
     job_id: &uuid::Uuid,
     conn: &mut redis::aio::ConnectionManager,
 ) -> Result<SuccinctReceipt<ReceiptClaim>> {
+    // Validate receipt index - segments should start at index 1, not 0
+    if id == 0 {
+        return Err(anyhow::anyhow!("Invalid receipt id: 0. Receipt indices should start at 1"));
+    }
+
     // Use consistent key format with job prefix
     let job_prefix = format!("job:{}", job_id);
     let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, id);
