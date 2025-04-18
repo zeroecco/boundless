@@ -159,7 +159,7 @@ pub async fn executor(
             let mut segment_count = 0;
             while let Some((_idx, segment)) = seg_rx.recv().await {
                 segment_count += 1;
-                tracing::info!("Received segment {} in real-time", segment_count);
+                tracing::debug!("Received segment {} in real-time", segment_count);
                 segment_map.lock().await.insert(segment_count, segment.clone());
                 let segment_bytes = bincode::serialize(&segment)
                     .with_context(|| format!("Failed to serialize segment {}", segment_count)).unwrap();
