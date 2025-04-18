@@ -12,6 +12,7 @@ use task_queue::Task;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 use workflow_common::{FinalizeReq, KeccakReq, ProveReq, KECCAK_WORK_TYPE};
+use bytemuck;
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF";
 
@@ -60,9 +61,15 @@ impl CoprocessorCallback for PlannerCoprocessor {
             po2: req.po2,
             control_root: req.control_root,
         };
-        // Convert input states to bytes and send them along with the request
-        let input_states_bytes = bincode::serialize(&req.input)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize keccak input states: {}", e))?;
+
+        // Convert input states to flat raw bytes without any serialization metadata
+        // This ensures the bytes will be exactly KeccakState size multiples
+        let mut input_states_bytes = Vec::new();
+        for state in &req.input {
+            // Use bytemuck to safely convert each KeccakState to bytes
+            let state_bytes = bytemuck::bytes_of(state);
+            input_states_bytes.extend_from_slice(state_bytes);
+        }
 
         if let Err(e) = self.tx.blocking_send(SenderType::Keccak((keccak_req, input_states_bytes))) {
             println!("Planner keccak send error: {}", e);
@@ -251,7 +258,21 @@ async fn enqueue_keccak_task(
     // Create a unique task ID for keccak task
     let task_id = format!("keccak:{}:{}:{}", job_id, keccak_req.claim_digest, keccak_idx);
 
-    tracing::info!("Using actual keccak input states of size: {} bytes", input_states_bytes.len());
+    // Check if input size is correct (should be a multiple of KeccakState size: 25 u64s = 200 bytes)
+    let state_size = std::mem::size_of::<[u64; 25]>();
+    if input_states_bytes.len() % state_size != 0 {
+        tracing::warn!(
+            "Input bytes size {} is not a multiple of KeccakState size {}",
+            input_states_bytes.len(),
+            state_size
+        );
+    }
+    let state_count = input_states_bytes.len() / state_size;
+    tracing::info!(
+        "Using raw keccak input states: {} bytes for {} states",
+        input_states_bytes.len(),
+        state_count
+    );
 
     // Create the keccak task definition
     let task_def = serde_json::to_value(workflow_common::TaskType::Keccak(keccak_req))
