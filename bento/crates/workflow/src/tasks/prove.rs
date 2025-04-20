@@ -73,8 +73,8 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         .context("Failed to store receipt in Redis")?;
     tracing::info!("Stored receipt for segment {} in Redis", index);
 
-    if index == 2 {
-        tracing::info!("index is 2, enqueueing first join task");
+    if index % 2 == 0 {
+        tracing::info!("index is even, enqueueing join task");
         let mut conn = agent.redis_conn.clone();
         let join_task = Task {
             job_id,
@@ -91,6 +91,13 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
             .await
             .context("Failed to enqueue join task")?;
+    } else {
+        tracing::debug!("index is not even, skipping join task");
+        let mut conn = agent.redis_conn.clone();
+        let receipt_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, index);
+        conn.set_ex::<_, _, ()>(receipt_key, &lift_asset, 3600).await
+            .context("Failed to store receipt in Redis")?;
+        tracing::info!("Stored receipt for segment {} in Redis", index);
     }
 
     let total_duration = start_time.elapsed();

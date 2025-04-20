@@ -6,24 +6,10 @@ use crate::{tasks::RECUR_RECEIPT_PATH, Agent};
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt};
-use std::time::{Duration, Instant};
 use task_queue::Task;
-
-/// Simple timing helper function
-async fn timed<F, T, E>(name: &str, f: F) -> (Result<T, E>, Duration)
-where
-    F: std::future::Future<Output = Result<T, E>>,
-{
-    let start = Instant::now();
-    let result = f.await;
-    let duration = start.elapsed();
-    tracing::info!("{} completed in {:?}", name, duration);
-    (result, duration)
-}
 
 /// Run the join operation
 pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
-    let start_time = Instant::now();
     let mut conn = agent.redis_conn.clone();
 
     let task_type: workflow_common::TaskType = serde_json::from_value(task.task_def.clone())

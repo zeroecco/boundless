@@ -19,14 +19,8 @@ pub(crate) mod union;
 /// Recursion receipts key prefix
 pub(crate) const RECUR_RECEIPT_PATH: &str = "recursion_receipts";
 
-/// Segments key prefix for redis
-pub(crate) const SEGMENTS_PATH: &str = "segments";
-
 /// Receipts key prefix for redis
 pub(crate) const RECEIPT_PATH: &str = "receipts";
-
-/// Coprocessor callback prefix for redis
-pub(crate) const COPROC_CB_PATH: &str = "coproc";
 
 /// Reads the [`IMAGE_ID_FILE`] and returns a [Digest]
 pub(crate) fn read_image_id(image_id: &str) -> Result<Digest> {

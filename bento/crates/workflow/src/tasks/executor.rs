@@ -11,8 +11,7 @@ use serde::Serialize;
 use task_queue::Task;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use workflow_common::{FinalizeReq, KeccakReq, ProveReq, KECCAK_WORK_TYPE};
-use bytemuck;
+use workflow_common::{KeccakReq, ProveReq};
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF";
 
