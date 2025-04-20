@@ -20,11 +20,14 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
         _ => return Err(anyhow::anyhow!("Expected Join task type, got {:?}", task_type)),
     };
 
+    // Extract index from request
+    let current_idx = req.idx;
 
-    // Get left receipt
-    let left_leaf = req.idx - 1;
-    let right_leaf = req.idx;
-    let join_idx = req.idx + 1;
+    // Calculate indices for left and right children in binary tree
+    let left_leaf = current_idx * 2;
+    let right_leaf = left_leaf + 1;
+    let join_idx = current_idx / 2;
+
     tracing::info!("Fetching left receipt for index {} from job {}", left_leaf, task.job_id);
 
     let left_receipt = get_receipt(left_leaf, &task.job_id, &mut conn).await.context("Failed to fetch left receipt")?;
@@ -41,23 +44,71 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     // Serialize the result
     let receipt_bytes = bincode::serialize(&receipt_claim).context("Failed to serialize receipt")?;
 
-    // setup the next join task
-    let mut conn = agent.redis_conn.clone();
-        let join_task = Task {
-            job_id: task.job_id,
-            task_id: format!("join:{}", task.job_id),
-            task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
-                idx: join_idx,
-            })).unwrap(),
-            data: receipt_bytes,
-            prereqs: vec![],
-            max_retries: 3,
-        };
-        tracing::info!("Enqueuing join task: {}", join_idx);
+    // Store the joined receipt
+    let job_prefix = format!("job:{}", task.job_id);
+    let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, join_idx);
+    conn.set(&store_key, receipt_bytes.clone())
+        .await
+        .context("Failed to store joined receipt in Redis")?;
 
-        task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
-            .await
-            .context("Failed to enqueue join task")?;
+    // If we're at the root (idx = 1), we're done
+    if join_idx == 1 {
+        tracing::info!("Reached root receipt (idx=1) for job {}", task.job_id);
+        return Ok(());
+    }
+
+    // Calculate parent and sibling indices
+    let parent_idx = join_idx / 2;
+    let sibling_idx = if join_idx % 2 == 0 { join_idx + 1 } else { join_idx - 1 };
+
+    // Check if sibling receipt is already available
+    let sibling_receipt = match get_receipt(sibling_idx, &task.job_id, &mut conn).await {
+        Ok(receipt) => {
+            // Sibling is ready, proceed with join
+            tracing::info!("Sibling receipt {} already available, creating join task for parent {}", sibling_idx, parent_idx);
+            receipt
+        },
+        Err(_) => {
+            // Sibling not ready, re-enqueue the same task with backoff
+            tracing::info!("Sibling receipt {} not yet available, re-enqueueing current task", sibling_idx);
+
+            // Re-enqueue the same join task to check again later
+            let retry_task = Task {
+                job_id: task.job_id,
+                task_id: format!("join:{}", task.job_id),
+                task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
+                    idx: join_idx,
+                })).unwrap(),
+                data: receipt_bytes,
+                prereqs: vec![],
+                max_retries: task.max_retries - 1,
+            };
+
+            task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, retry_task)
+                .await
+                .context("Failed to re-enqueue join task")?;
+
+            return Ok(());
+        }
+    };
+
+    // Create a task for joining with the sibling
+    let join_task = Task {
+        job_id: task.job_id,
+        task_id: format!("join:{}", task.job_id),
+        task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
+            idx: parent_idx,
+        })).unwrap(),
+        data: bincode::serialize(&sibling_receipt).context("Failed to serialize sibling receipt")?,
+        prereqs: vec![],
+        max_retries: 3,
+    };
+
+    // Enqueue the task
+    task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
+        .await
+        .context("Failed to enqueue join task")?;
+
     Ok(())
 }
 
@@ -75,65 +126,14 @@ async fn get_receipt(
     // Use consistent key format with job prefix
     let job_prefix = format!("job:{}", job_id);
     let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, id);
+    let receipt = conn.get::<_, Vec<u8>>(&store_key)
+        .await
+        .context("Failed to fetch receipt from Redis")?;
 
-    let max_retries = 30; // Maximum 30 retries (30 seconds)
-    let mut retry_count = 0;
+    let receipt = bincode::deserialize(&receipt)
+        .context("Failed to deserialize receipt from Redis")?;
 
-    loop {
-        // Try to get the receipt directly with the known key
-        let result: Option<Vec<u8>> = conn.get(&store_key).await.context("Redis get error")?;
-
-        if let Some(data) = result {
-            if !data.is_empty() {
-                // Found valid data
-                tracing::info!("Successfully retrieved data for key: {}", store_key);
-                return bincode::deserialize(&data).context("Failed to deserialize receipt");
-            }
-        }
-
-        // Extra check: Verify if there are any keys that match the pattern for this specific id
-        // but potentially different job
-        let pattern = format!("job:*:{}:{}", RECUR_RECEIPT_PATH, id);
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(&pattern)
-            .query_async(conn)
-            .await
-            .context("Redis KEYS error")?;
-
-        if !keys.is_empty() {
-            tracing::info!("Found {} potential keys for receipt id {}", keys.len(), id);
-            for key in &keys {
-                // Extract job_id from the key for logging
-                if let Some(job_part) = key.split(':').nth(1) {
-                    tracing::info!("Found receipt for job {} with id {}", job_part, id);
-                }
-
-                // Only proceed if this key belongs to our job
-                if key == &store_key {
-                    let data: Option<Vec<u8>> = conn.get(key).await.context("Redis get error")?;
-                    if let Some(bytes) = data {
-                        if !bytes.is_empty() {
-                            tracing::info!("Found valid data for key: {}", key);
-                            return bincode::deserialize(&bytes).context("Failed to deserialize receipt");
-                        }
-                    }
-                }
-            }
-
-            if keys.len() > 1 {
-                tracing::warn!("Multiple keys found for receipt id {}. Using only key for job {}", id, job_id);
-            }
-        }
-
-        // Key not found or empty data, retry
-        retry_count += 1;
-        if retry_count >= max_retries {
-            return Err(anyhow::anyhow!("Maximum retries reached waiting for receipt with id: {}", id));
-        }
-
-        tracing::info!("Receipt for id {} not yet available, retrying ({}/{})", id, retry_count, max_retries);
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
+    Ok(receipt)
 }
 
 
