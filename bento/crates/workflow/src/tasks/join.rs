@@ -24,7 +24,7 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     // Continuous join loop
     loop {
         counter += 1;
-        tracing::info!("Attempting to join with receipt {}", counter);
+        tracing::debug!("Attempting to join with receipt {}", counter);
 
         // Try to get the next receipt with polling
         let right_receipt = match poll_for_receipt(counter, &task.job_id, &mut conn, 5, Duration::from_secs(5)).await {
@@ -36,6 +36,46 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
                 let bytes = bincode::serialize(&left_receipt).context("Failed to serialize partial join result")?;
                 conn.set_ex::<_, _, ()>(&receipt_key, &bytes, 3600).await
                     .context("Failed to store partial join result")?;
+
+                // Enqueue a Resolve task, followed by a Finalize task
+                if counter > 2 { // Only proceed if we've processed at least one receipt
+                    let max_idx = counter-1;
+
+                    // First, create and enqueue the Resolve task
+                    let resolve_task = Task {
+                        job_id: task.job_id,
+                        task_id: format!("resolve:{}", task.job_id),
+                        task_def: serde_json::to_value(workflow_common::TaskType::Resolve(workflow_common::ResolveReq {
+                            max_idx,
+                            union_max_idx: None, // No union dependency for standard join
+                        })).unwrap(),
+                        data: bytes.clone(),
+                        prereqs: vec![],
+                        max_retries: 3,
+                    };
+
+                    tracing::info!("Enqueuing resolve task with max_idx={}", max_idx);
+                    task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, resolve_task)
+                        .await
+                        .context("Failed to enqueue resolve task")?;
+
+                    // Now create and enqueue the Finalize task which depends on Resolve
+                    let finalize_task = Task {
+                        job_id: task.job_id,
+                        task_id: format!("finalize:{}", task.job_id),
+                        task_def: serde_json::to_value(workflow_common::TaskType::Finalize(workflow_common::FinalizeReq {
+                            max_idx,
+                        })).unwrap(),
+                        data: vec![],
+                        prereqs: vec![format!("resolve:{}", task.job_id)], // Depends on the resolve task
+                        max_retries: 3,
+                    };
+
+                    tracing::info!("Enqueuing finalize task with max_idx={}", max_idx);
+                    task_queue::enqueue_task(&mut conn, workflow_common::PROVE_WORK_TYPE, finalize_task)
+                        .await
+                        .context("Failed to enqueue finalize task")?;
+                }
 
                 tracing::info!("Receipt {} not available after polling, stored partial result and exiting", counter);
                 return Ok(());

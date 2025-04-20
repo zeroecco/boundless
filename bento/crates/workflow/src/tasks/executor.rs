@@ -209,6 +209,44 @@ pub async fn executor(
         store_redis_data(&mut conn, &session_key, &session_bytes, 7200).await?;
         tracing::info!("Stored session info for job {}", job_id);
 
+        // Enqueue the resolve and finalize tasks to wrap up the job
+        if segment_count > 0 {
+            // First, create and enqueue a Resolve task
+            let resolve_task = Task {
+                job_id,
+                task_id: format!("resolve:{}", job_id),
+                task_def: serde_json::to_value(workflow_common::TaskType::Resolve(workflow_common::ResolveReq {
+                    max_idx: segment_count,
+                    union_max_idx: None,  // No union dependency for standard workflow
+                })).unwrap(),
+                data: vec![],
+                prereqs: vec![],
+                max_retries: 3,
+            };
+
+            tracing::info!("Enqueuing resolve task for job {} with max_idx={}", job_id, segment_count);
+            task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, resolve_task)
+                .await
+                .context("Failed to enqueue resolve task")?;
+
+            // Then, create and enqueue a Finalize task that depends on the Resolve task
+            let finalize_task = Task {
+                job_id,
+                task_id: format!("finalize:{}", job_id),
+                task_def: serde_json::to_value(workflow_common::TaskType::Finalize(workflow_common::FinalizeReq {
+                    max_idx: segment_count,
+                })).unwrap(),
+                data: vec![],
+                prereqs: vec![format!("resolve:{}", job_id)],  // Depends on the resolve task
+                max_retries: 3,
+            };
+
+            tracing::info!("Enqueuing finalize task for job {} with max_idx={}", job_id, segment_count);
+            task_queue::enqueue_task(&mut conn, workflow_common::PROVE_WORK_TYPE, finalize_task)
+                .await
+                .context("Failed to enqueue finalize task")?;
+        }
+
     } else {
         tracing::info!("Skipping non-executor task type");
     }

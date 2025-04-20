@@ -332,7 +332,7 @@ impl Agent {
             }
             TaskType::Union(req) => {
                 tracing::info!("Starting union task for job_id={}", task_clone.job_id);
-                tasks::union::union(self, &task_clone.job_id, &req)
+                tasks::union::union(self, &task_clone)
                     .await
                     .context("Union failed")?;
                 tracing::info!("Union task completed for job_id={}", task_clone.job_id);

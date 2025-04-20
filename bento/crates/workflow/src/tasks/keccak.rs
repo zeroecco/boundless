@@ -2,113 +2,125 @@
 //
 // All rights reserved.
 
-use crate::{tasks::serialize_obj, Agent, TaskType};
-use anyhow::{anyhow, bail, Context, Result};
+use crate::{Agent, tasks::serialize_obj};
+use anyhow::{Context, Result};
+use bytemuck;
 use redis::AsyncCommands;
 use risc0_zkvm::ProveKeccakRequest;
-use bytemuck::try_pod_read_unaligned;
 use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use task_queue::Task;
-use workflow_common::KeccakReq;
 
-/// Converts a byte buffer into a vector of Keccak state arrays
-fn try_keccak_bytes_to_input(input: &[u8]) -> Result<Vec<[u64; 25]>> {
-    let chunks = input.chunks_exact(std::mem::size_of::<[u64; 25]>());
-    if !chunks.remainder().is_empty() {
-        bail!("Input length must be a multiple of KeccakState size");
-    }
-    chunks
-        .map(try_pod_read_unaligned)
-        .collect::<std::result::Result<_, _>>()
-        .map_err(|e| anyhow!("Failed to convert input bytes to KeccakState: {}", e))
-}
+// Static counter to track keccak segment indices
+static KECCAK_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-/// Run a keccak task
+/// Process a keccak request
 pub async fn keccak(agent: &Agent, task: &Task) -> Result<()> {
     let start_time = Instant::now();
     let job_id = task.job_id;
-    let task_id = &task.task_id;
 
-    // Parse task definition to get KeccakReq
-    let parse_start = Instant::now();
-    let keccak_req: KeccakReq = match serde_json::from_value(task.task_def.clone()) {
-        Ok(TaskType::Keccak(req)) => req,
-        Ok(_) => anyhow::bail!("Task is not a Keccak task"),
-        Err(e) => anyhow::bail!("Failed to parse task definition: {}", e),
+    // Debug log the raw task_def to see what we're trying to deserialize
+    tracing::debug!("Raw keccak task_def to deserialize: {:?}", task.task_def);
+
+    // First, deserialize the task_def as a TaskType
+    let task_type: workflow_common::TaskType = serde_json::from_value(task.task_def.clone())
+        .context("Failed to deserialize TaskType from task_def")?;
+
+    // Then, extract the KeccakReq from the TaskType
+    let req = match task_type {
+        workflow_common::TaskType::Keccak(req) => req,
+        _ => return Err(anyhow::anyhow!("Expected Keccak task type, got {:?}", task_type)),
     };
-    let parse_duration = parse_start.elapsed();
-    tracing::info!("Task parsing completed in {:?}", parse_duration);
-    tracing::info!(
-        "Keccak request: claim_digest={}, po2={}, control_root={}",
-        keccak_req.claim_digest,
-        keccak_req.po2,
-        keccak_req.control_root
-    );
 
-    // Use the keccak state from task.data
-    let keccak_input = &task.data;
-    tracing::info!("Received keccak input of size: {} bytes", keccak_input.len());
-    if keccak_input.is_empty() {
-        bail!("Received empty keccak input for claim_digest: {}", keccak_req.claim_digest);
-    }
+    // Use an incrementing counter for segment indices
+    let segment_idx = KECCAK_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+
+    let deserialize_start = Instant::now();
+    // Convert input bytes to keccak states
+    let keccak_states_bytes = &task.data;
+    let deserialize_duration = deserialize_start.elapsed();
+    tracing::debug!("Processing keccak input of size: {} bytes", keccak_states_bytes.len());
+
+    tracing::info!("Processing keccak for job {} segment {} with claim_digest {:?}",
+                  job_id, segment_idx, req.claim_digest);
 
     // Convert bytes to KeccakState vector
-    let convert_start = Instant::now();
-    let input_states = try_keccak_bytes_to_input(keccak_input)?;
-    let convert_duration = convert_start.elapsed();
-    tracing::info!("Converted keccak input to state vector in {:?}", convert_duration);
+    let state_size = std::mem::size_of::<[u64; 25]>();
+    let input_states = if keccak_states_bytes.len() % state_size == 0 {
+        let mut states = Vec::with_capacity(keccak_states_bytes.len() / state_size);
+        for chunk in keccak_states_bytes.chunks_exact(state_size) {
+            let state: [u64; 25] = bytemuck::pod_read_unaligned(chunk);
+            states.push(state);
+        }
+        states
+    } else {
+        return Err(anyhow::anyhow!("Invalid keccak state size: expected multiple of {} bytes", state_size));
+    };
 
-    // Create ProveKeccakRequest
+    // Create the keccak request
     let keccak_request = ProveKeccakRequest {
-        claim_digest: keccak_req.claim_digest,
-        po2: keccak_req.po2,
-        control_root: keccak_req.control_root,
+        claim_digest: req.claim_digest,
+        po2: req.po2,
+        control_root: req.control_root,
         input: input_states,
     };
 
-    // Prove keccak
-    tracing::info!("Starting keccak proof for digest: {}", keccak_req.claim_digest);
-    let prove_start = Instant::now();
-    let keccak_receipt = agent
+    // Process keccak work here
+    let process_start = Instant::now();
+    let keccak_result = agent
         .prover
         .as_ref()
         .context("Missing prover from keccak task")?
         .prove_keccak(&keccak_request)
-        .context("Failed to prove keccak")?;
-    let prove_duration = prove_start.elapsed();
-    tracing::info!(
-        "Completed keccak proof for digest: {} in {:?}",
-        keccak_req.claim_digest,
-        prove_duration
-    );
+        .context("Failed to prove keccak segment")?;
+    let process_duration = process_start.elapsed();
 
-    // Store receipt in Redis
-    let job_prefix = format!("job:{}", job_id);
-    let receipt_key = format!("{}:keccak_receipts:{}", job_prefix, task_id);
+    tracing::info!("Completed keccak: job {} segment {} in {:?}", job_id, segment_idx, process_duration);
 
     let serialize_start = Instant::now();
-    let receipt_bytes = serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
+    let keccak_asset = serialize_obj(&keccak_result).expect("Failed to serialize the keccak result");
     let serialize_duration = serialize_start.elapsed();
-    tracing::info!("Serialized keccak receipt in {:?}", serialize_duration);
+    tracing::debug!("Serialized keccak result in {:?}", serialize_duration);
 
-    tracing::info!("Storing keccak receipt in Redis with key: {}", receipt_key);
-    let store_start = Instant::now();
+    // Store result in Redis with consistent key format
+    let job_prefix = format!("job:{}", job_id);
+    let keccak_key = format!("{job_prefix}:keccak:{}", segment_idx);
+
+    // Store the receipt in Redis
     let mut conn = agent.redis_conn.clone();
-    conn.set_ex::<_, _, ()>(&receipt_key, &receipt_bytes, agent.args.redis_ttl)
-        .await
-        .context("Failed to store keccak receipt in Redis")?;
-    let store_duration = store_start.elapsed();
-    tracing::info!("Stored keccak receipt in Redis in {:?}", store_duration);
+    conn.set_ex::<_, _, ()>(&keccak_key, &keccak_asset, 3600).await
+        .context("Failed to store keccak result in Redis")?;
+    tracing::info!("Stored keccak result for segment {} in Redis", segment_idx);
+
+    // If this is the first segment, we need to create a union task that will start the union process
+    if segment_idx == 1 {
+        tracing::info!("First keccak segment completed, starting the union process");
+
+        // Create a union task that will poll for additional receipts as they become available
+        let union_task = Task {
+            job_id,
+            task_id: format!("union:{}", job_id),
+            task_def: serde_json::to_value(workflow_common::TaskType::Union(workflow_common::UnionReq {
+                idx: 1,  // Starting index doesn't matter for our polling approach
+                left: 0,  // These values aren't used in the new union implementation
+                right: 0,
+            })).unwrap(),
+            data: keccak_asset,  // Pass our keccak receipt as the starting point
+            prereqs: vec![],
+            max_retries: 3,
+        };
+
+        tracing::info!("Enqueuing union task to begin incremental unioning");
+        task_queue::enqueue_task(&mut conn, workflow_common::KECCAK_WORK_TYPE, union_task)
+            .await
+            .context("Failed to enqueue union task")?;
+    }
 
     let total_duration = start_time.elapsed();
+    tracing::info!("Total keccak task completed in {:?}", total_duration);
     tracing::info!(
-        "Successfully stored keccak receipt for task: {} in total time: {:?}",
-        task_id,
-        total_duration
-    );
-    tracing::info!(
-        "Performance breakdown: Parse: {:?}, Convert: {:?}, Prove: {:?}, Serialize: {:?}, Store: {:?}",
-        parse_duration, convert_duration, prove_duration, serialize_duration, store_duration
+        "Performance breakdown: Deserialize: {:?}, Process: {:?}, Serialize: {:?}",
+        deserialize_duration, process_duration, serialize_duration
     );
 
     Ok(())
