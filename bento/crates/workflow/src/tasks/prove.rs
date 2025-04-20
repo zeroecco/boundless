@@ -79,44 +79,26 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         .context("Failed to store receipt in Redis")?;
     tracing::info!("Stored receipt for segment {} at position {} in Redis", index, leaf_position);
 
-    // Check if we should initiate a join
-    let sibling_position = if leaf_position % 2 == 0 {
-        leaf_position + 1  // If even, the sibling is to the right
-    } else {
-        leaf_position - 1  // If odd, the sibling is to the left
-    };
+    // If this is the first segment, we need to create a join task that will start the join process
+    if index == 1 {
+        tracing::info!("First segment completed, starting the join process");
 
-    // Calculate parent position - in 1-based indexing, parent is at position/2,
-    // but we ensure it never goes below 1 (root)
-    let parent_position = if leaf_position > 2 { leaf_position / 2 } else { 1 };
-
-    // Check if our sibling receipt is available
-    let sibling_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, sibling_position);
-    let sibling_exists: bool = conn.exists(&sibling_key).await.unwrap_or(false);
-
-    if sibling_exists {
-        tracing::info!("Found sibling receipt at position {}, creating join task for parent {}",
-                      sibling_position, parent_position);
-
-        // Create a join task with empty data - it will fetch both receipts from Redis
+        // Create a join task that will poll for additional receipts as they become available
         let join_task = Task {
             job_id,
             task_id: format!("join:{}", job_id),
             task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
-                idx: parent_position,
+                idx: 1,  // Starting index doesn't matter for our polling approach
             })).unwrap(),
-            data: vec![],  // Empty data - both receipts will be fetched from Redis
+            data: lift_asset,  // Pass our receipt as the starting point
             prereqs: vec![],
             max_retries: 3,
         };
 
-        tracing::info!("Enqueuing join task for parent position {}", parent_position);
+        tracing::info!("Enqueuing join task to begin incremental joining");
         task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
             .await
             .context("Failed to enqueue join task")?;
-    } else {
-        tracing::info!("Sibling receipt at position {} not yet available, waiting for it", sibling_position);
-        // The sibling receipt will trigger the join when it arrives
     }
 
     let total_duration = start_time.elapsed();
