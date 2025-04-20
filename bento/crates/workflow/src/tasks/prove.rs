@@ -65,39 +65,60 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
 
     // Store receipt in Redis with consistent key format
     let job_prefix = format!("job:{}", job_id);
-    let receipt_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, index);
 
-    // emit lift receipt as a key-value pair
+    // Calculate the leaf position in the binary tree
+    // Segment indices should start at 1, so we need to compute appropriate leaf positions
+    // For a binary tree, leaves start at positions 2^h where h is the height
+    let leaf_position = index;
+
+    let receipt_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, leaf_position);
+
+    // Store the receipt in Redis
     let mut conn = agent.redis_conn.clone();
-    conn.set_ex::<_, _, ()>(receipt_key, &lift_asset, 3600).await
+    conn.set_ex::<_, _, ()>(&receipt_key, &lift_asset, 3600).await
         .context("Failed to store receipt in Redis")?;
-    tracing::info!("Stored receipt for segment {} in Redis", index);
+    tracing::info!("Stored receipt for segment {} at position {} in Redis", index, leaf_position);
 
-    if index % 2 == 0 {
-        tracing::info!("index is even, enqueueing join task");
-        let mut conn = agent.redis_conn.clone();
+    // Check if we should initiate a join
+    let sibling_position = if leaf_position % 2 == 0 {
+        leaf_position + 1  // If even, the sibling is to the right
+    } else {
+        leaf_position - 1  // If odd, the sibling is to the left
+    };
+
+    let parent_position = leaf_position / 2;
+
+    // Check if our sibling receipt is available
+    let sibling_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, sibling_position);
+    let sibling_exists: bool = conn.exists(&sibling_key).await.unwrap_or(false);
+
+    if sibling_exists {
+        tracing::info!("Found sibling receipt at position {}, creating join task for parent {}",
+                      sibling_position, parent_position);
+
+        // Get the sibling receipt
+        let sibling_receipt_bytes: Vec<u8> = conn.get(&sibling_key).await
+            .context("Failed to fetch sibling receipt from Redis")?;
+
+        // Create a join task
         let join_task = Task {
             job_id,
             task_id: format!("join:{}", job_id),
             task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
-                idx: 1,
+                idx: parent_position,
             })).unwrap(),
-            data: lift_asset,
+            data: sibling_receipt_bytes, // Pass the sibling receipt
             prereqs: vec![],
             max_retries: 3,
         };
-        tracing::info!("Enqueuing join task: 1");
 
+        tracing::info!("Enqueuing join task for parent position {}", parent_position);
         task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
             .await
             .context("Failed to enqueue join task")?;
     } else {
-        tracing::debug!("index is not even, skipping join task");
-        let mut conn = agent.redis_conn.clone();
-        let receipt_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, index);
-        conn.set_ex::<_, _, ()>(receipt_key, &lift_asset, 3600).await
-            .context("Failed to store receipt in Redis")?;
-        tracing::info!("Stored receipt for segment {} in Redis", index);
+        tracing::info!("Sibling receipt at position {} not yet available, waiting for it", sibling_position);
+        // The sibling receipt will trigger the join when it arrives
     }
 
     let total_duration = start_time.elapsed();
