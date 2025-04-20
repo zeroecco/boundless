@@ -86,7 +86,9 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         leaf_position - 1  // If odd, the sibling is to the left
     };
 
-    let parent_position = leaf_position / 2;
+    // Calculate parent position - in 1-based indexing, parent is at position/2,
+    // but we ensure it never goes below 1 (root)
+    let parent_position = if leaf_position > 2 { leaf_position / 2 } else { 1 };
 
     // Check if our sibling receipt is available
     let sibling_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, sibling_position);

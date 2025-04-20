@@ -24,9 +24,12 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     let current_idx = req.idx;
 
     // Calculate indices for left and right children in binary tree
+    // In 1-based indexing, children of node i are at 2i and 2i+1
     let left_leaf = current_idx * 2;
     let right_leaf = left_leaf + 1;
-    let join_idx = current_idx / 2;
+
+    // Calculate parent index, ensuring we never go below 1 (root)
+    let join_idx = if current_idx > 1 { current_idx / 2 } else { 1 };
 
     tracing::info!("Fetching left receipt for index {} from job {}", left_leaf, task.job_id);
 
