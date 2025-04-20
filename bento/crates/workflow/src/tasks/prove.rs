@@ -86,7 +86,7 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
             prereqs: vec![],
             max_retries: 3,
         };
-        tracing::info!("Enqueuing join task: {:?}", join_task);
+        tracing::info!("Enqueuing join task: 1");
 
         task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
             .await

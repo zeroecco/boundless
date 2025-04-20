@@ -55,11 +55,23 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
     // Serialize the result
     let receipt_bytes = bincode::serialize(&receipt_claim).context("Failed to serialize receipt")?;
 
-    // Store in Redis
-    let job_prefix = format!("job:{}", task.job_id);
-    let store_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, join_idx);
-    conn.set_ex::<_, _, ()>(store_key, &receipt_bytes, 3600).await.context("Failed to store receipt")?;
+    // setup the next join task
+    let mut conn = agent.redis_conn.clone();
+        let join_task = Task {
+            job_id: task.job_id,
+            task_id: format!("join:{}", task.job_id),
+            task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
+                idx: join_idx,
+            })).unwrap(),
+            data: receipt_bytes,
+            prereqs: vec![],
+            max_retries: 3,
+        };
+        tracing::info!("Enqueuing join task: {}", join_idx);
 
+        task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
+            .await
+            .context("Failed to enqueue join task")?;
     Ok(())
 }
 
