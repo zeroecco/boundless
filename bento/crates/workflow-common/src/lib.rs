@@ -86,10 +86,6 @@ pub struct ProveReq {
 pub struct JoinReq {
     /// Node index
     pub idx: usize,
-    /// index of the left branch
-    pub left: usize,
-    /// index of the right branch
-    pub right: usize,
 }
 
 /// Union Request

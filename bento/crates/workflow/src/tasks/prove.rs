@@ -73,47 +73,24 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         .context("Failed to store receipt in Redis")?;
     tracing::info!("Stored receipt for segment {} in Redis", index);
 
-    // Create join tasks for this segment
-    // Each segment participates in exactly one join
-    let is_right_child = index % 2 == 1;
-
-    if is_right_child {
-        // This is a right child, create a join task with its left sibling
-        let left_idx = index - 1;
-        let parent_idx = index / 2;
-
-        tracing::info!("Creating join task {} + {} -> {}", left_idx, index, parent_idx);
-
-        // Create the join request
-        let join_req = workflow_common::JoinReq {
-            idx: parent_idx,
-            left: left_idx,
-            right: index,
-        };
-
-        // Create task definition
-        let task_def = serde_json::to_value(workflow_common::TaskType::Join(join_req))
-            .context("Failed to serialize join task definition")?;
-
-        // Create the join task with this receipt as data
+    if index == 2 {
+        tracing::info!("index is 2, enqueueing first join task");
+        let mut conn = agent.redis_conn.clone();
         let join_task = Task {
             job_id,
-            task_id: format!("join:{}:{}", job_id, parent_idx),
-            task_def,
+            task_id: format!("join:{}", job_id),
+            task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
+                idx: 1,
+            })).unwrap(),
+            data: lift_asset,
             prereqs: vec![],
             max_retries: 3,
-            data: lift_asset,  // Right child provides its receipt data
         };
+        tracing::info!("Enqueuing join task: {:?}", join_task);
 
-        // Enqueue the join task
         task_queue::enqueue_task(&mut conn, workflow_common::JOIN_WORK_TYPE, join_task)
             .await
             .context("Failed to enqueue join task")?;
-
-        tracing::info!("Enqueued join task for segments {} + {}", left_idx, index);
-    } else {
-        // This is a left child, just wait for the right sibling
-        tracing::info!("Segment {} is left child, waiting for right sibling {}", index, index + 1);
     }
 
     let total_duration = start_time.elapsed();
