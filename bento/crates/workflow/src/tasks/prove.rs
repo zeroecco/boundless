@@ -98,18 +98,14 @@ pub async fn prove(agent: &Agent, task: &Task) -> Result<()> {
         tracing::info!("Found sibling receipt at position {}, creating join task for parent {}",
                       sibling_position, parent_position);
 
-        // Get the sibling receipt
-        let sibling_receipt_bytes: Vec<u8> = conn.get(&sibling_key).await
-            .context("Failed to fetch sibling receipt from Redis")?;
-
-        // Create a join task
+        // Create a join task with empty data - it will fetch both receipts from Redis
         let join_task = Task {
             job_id,
             task_id: format!("join:{}", job_id),
             task_def: serde_json::to_value(workflow_common::TaskType::Join(workflow_common::JoinReq {
                 idx: parent_position,
             })).unwrap(),
-            data: sibling_receipt_bytes, // Pass the sibling receipt
+            data: vec![],  // Empty data - both receipts will be fetched from Redis
             prereqs: vec![],
             max_retries: 3,
         };
