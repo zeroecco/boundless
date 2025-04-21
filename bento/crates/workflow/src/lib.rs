@@ -364,10 +364,10 @@ impl Agent {
         task_queue::enqueue_task(&mut conn, queue_name, task).await
     }
 
-    /// Helper to get and deserialize a value from Redis
+    /// Helper to get data from Redis
     pub async fn get_from_redis<T>(&self, key: &str) -> Result<T>
     where
-        T: serde::de::DeserializeOwned,
+        T: for<'de> serde::de::DeserializeOwned,
     {
         let mut conn = self.redis_conn.clone();
         let result: Option<Vec<u8>> = redis::cmd("GET")
@@ -377,7 +377,7 @@ impl Agent {
             .context("Failed to get value from Redis")?;
 
         match result {
-            Some(value) => Ok(serde_json::from_slice(&value).context("Failed to deserialize value")?),
+            Some(value) => Ok(bincode::deserialize(&value).context("Failed to deserialize value")?),
             None => anyhow::bail!("Key not found in Redis: {}", key),
         }
     }
