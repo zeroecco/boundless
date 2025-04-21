@@ -639,22 +639,6 @@ pub struct Args {
     #[clap(env)]
     redis_url: String,
 
-    /// S3 / Minio bucket
-    #[clap(env)]
-    s3_bucket: String,
-
-    /// S3 / Minio access key
-    #[clap(env)]
-    s3_access_key: String,
-
-    /// S3 / Minio secret key
-    #[clap(env)]
-    s3_secret_key: String,
-
-    /// S3 / Minio url
-    #[clap(env)]
-    s3_url: String,
-
     /// Executor timeout in seconds
     #[clap(long, default_value_t = 4 * 60 * 60)]
     exec_timeout: i32,
