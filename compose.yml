@@ -10,25 +10,6 @@ services:
     volumes:
       - redis-data:/data
 
-  minio:
-    hostname: ${MINIO_HOST}
-    image: ${MINIO_IMG}
-    ports:
-      - '9000:9000'
-      - '9001:9001'
-    volumes:
-      - minio-data:/data
-    command: server /data --console-address ":9001"
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASS}
-      - MINIO_DEFAULT_BUCKETS=${MINIO_BUCKET}
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   grafana:
     image: ${GRAFANA_IMG}
     restart: unless-stopped
@@ -38,20 +19,12 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_LOG_LEVEL=WARN
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_PORT=${POSTGRES_PORT}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASS=${POSTGRES_PASSWORD}
       - GF_INSTALL_PLUGINS=frser-sqlite-datasource
     volumes:
       - ./dockerfiles/grafana:/etc/grafana/provisioning/
       - grafana-data:/var/lib/grafana
-      - broker-data:/db
     depends_on:
-      - postgres
       - redis
-      - minio
 
 
   exec_agent:
@@ -59,15 +32,13 @@ services:
     runtime: nvidia
     restart: always
     depends_on:
-      - postgres
       - redis
-      - minio
 
     build:
       context: .
       dockerfile: dockerfiles/agent.dockerfile
       args:
-        NVCC_APPEND_FLAGS: "${NVCC_APPEND_FLAGS}"
+        NVCC_APPEND_FLAGS: '--gpu-architecture=compute_86 --gpu-code=compute_86,sm_86 --generate-code arch=compute_86,code=sm_86'
         CUDA_OPT_LEVEL: 1
 
     mem_limit: 4G
@@ -75,65 +46,29 @@ services:
 
     environment:
       REDIS_URL: redis://${REDIS_HOST}:6379
-      S3_URL: http://${MINIO_HOST}:9000
-      S3_BUCKET: ${MINIO_BUCKET}
-      # TODO: create a lower perm user on startup of minio to use for agents
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASS}
       RUST_LOG: ${RUST_LOG}
       RUST_BACKTRACE: 1
-      RISC0_KECCAK_PO2: ${RISC0_KECCAK_PO2}
+      RISC0_KECCAK_PO2: 17
       # Enable / disable along with gpu_*_agent*
       # JOIN_STREAM: 1
       # COPROC_STREAM: 1
 
-    entrypoint: /app/agent -t executor --segment-po2 ${SEGMENT_SIZE}
+    entrypoint: /app/agent -t executor --segment-po2 21
 
-  aux_agent:
-    image: agent
-    runtime: nvidia
-    pull_policy: never
-    restart: always
-    depends_on:
-      - postgres
-      - redis
-      - minio
-
-    mem_limit: 256M
-    cpus: 1
-
-    environment:
-      REDIS_URL: redis://${REDIS_HOST}:6379
-      S3_URL: http://${MINIO_HOST}:9000
-      S3_BUCKET: ${MINIO_BUCKET}
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASS}
-      RUST_LOG: ${RUST_LOG}
-      RUST_BACKTRACE: 1
-
-    # NOTE: if adding more aux workers, only one needs --monitor-requeue (for task reaping)
-    entrypoint: /app/agent -t aux
   gpu_prove_agent0: &gpu
     image: agent
     runtime: nvidia
     pull_policy: never
     restart: always
     depends_on:
-      - postgres
       - redis
-      - minio
 
     mem_limit: 4G
     cpus: 4
 
     environment:
       REDIS_URL: redis://${REDIS_HOST}:6379
-      S3_URL: http://${MINIO_HOST}:9000
-      S3_BUCKET: ${MINIO_BUCKET}
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASS}
       RUST_LOG: ${RUST_LOG}
-      RUST_BACKTRACE: 1
 
     entrypoint: /app/agent -t prove
 
@@ -147,23 +82,27 @@ services:
               device_ids: ['0']
               capabilities: [gpu]
 
-  # gpu_prove_agent1:
-  #   <<: *gpu
+  gpu_prove_agent2:
+    <<: *gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']
+              capabilities: [gpu]
 
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             device_ids: ['1']
-  #             capabilities: [gpu]
 
-
-  # gpu_join_agent0:
-  #   <<: *gpu
-  #   mem_limit: 2G
-  #   cpus: 2
-  #   entrypoint: /app/agent -t join
+  gpu_join_agent0:
+    <<: *gpu
+    entrypoint: /app/agent -t join
+    deploy:
+     resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
 
   # gpu_coproc_agent0:
   #   <<: *gpu
@@ -181,16 +120,10 @@ services:
     restart: always
 
     depends_on:
-      - postgres
       - redis
-      - minio
 
     environment:
       REDIS_URL: redis://${REDIS_HOST}:6379
-      S3_URL: http://${MINIO_HOST}:9000
-      S3_BUCKET: ${MINIO_BUCKET}
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASS}
       RUST_LOG: ${RUST_LOG}
       RUST_BACKTRACE: 1
 
@@ -202,7 +135,6 @@ services:
   rest_api:
     restart: always
     depends_on:
-      - postgres
       - minio
 
     build:
@@ -213,10 +145,6 @@ services:
     cpus: 1
 
     environment:
-      S3_URL: http://${MINIO_HOST}:9000
-      S3_BUCKET: ${MINIO_BUCKET}
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASS}
       RUST_LOG: ${RUST_LOG}
       RUST_BACKTRACE: 1
 
@@ -227,7 +155,4 @@ services:
 
 volumes:
   redis-data:
-  postgres-data:
-  minio-data:
   grafana-data:
-  broker-data:

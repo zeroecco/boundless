@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use redis::aio::ConnectionManager;
-use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext, ExecutorEnv};
+use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext};
 use std::{
     rc::Rc,
     sync::{
@@ -104,22 +104,6 @@ pub struct Args {
     /// Executor limit, in millions of cycles
     #[clap(short, long, default_value_t = 100_000)]
     pub exec_cycle_limit: u64,
-
-    /// S3 / Minio bucket
-    #[clap(env)]
-    pub s3_bucket: String,
-
-    /// S3 / Minio access key
-    #[clap(env)]
-    pub s3_access_key: String,
-
-    /// S3 / Minio secret key
-    #[clap(env)]
-    pub s3_secret_key: String,
-
-    /// S3 / Minio url
-    #[clap(env)]
-    pub s3_url: String,
 
     // Task flags
     /// How many times a prove+lift can fail before hard failure

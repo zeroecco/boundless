@@ -28,7 +28,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use workflow_common::{
     s3::{
-        S3Client, GROTH16_BUCKET_DIR, ELF_BUCKET_DIR, INPUT_BUCKET_DIR,
+        S3Client, GROTH16_BUCKET_DIR,
         PREFLIGHT_JOURNALS_BUCKET_DIR, RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
     },
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
@@ -340,11 +340,6 @@ async fn stark_status(
     headers: HeaderMap,
     Path(job_id): Path<Uuid>,
 ) -> Result<Json<SessionStatusRes>, AppError> {
-    // Get hostname from header
-    let hostname = headers.get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
-
     let (exec_stats, receipt_url) = (None, None);
 
     Ok(Json(SessionStatusRes {
@@ -473,11 +468,6 @@ async fn groth16_status(
     Path(job_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<SnarkStatusRes>, AppError> {
-    // Get hostname from header
-    let hostname = headers.get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
-
     let (error_msg, output) = (None, None); // TODO
     Ok(Json(SnarkStatusRes { status: "".into(), error_msg, output }))
 }
