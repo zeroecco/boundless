@@ -2,10 +2,7 @@
 //
 // All rights reserved.
 
-use crate::{
-    tasks::{deserialize_obj, serialize_obj},
-    Agent,
-};
+use crate::Agent;
 use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use task_queue::Task;
@@ -40,7 +37,8 @@ pub async fn union(agent: &Agent, task: &Task) -> Result<()> {
                 // If we've tried enough times and the receipt isn't available,
                 // store our current progress and exit
                 let receipt_key = format!("{keccak_receipts_prefix}:partial_{}", counter-1);
-                let bytes = serialize_obj(&left_receipt).context("Failed to serialize partial union result")?;
+                let bytes = bincode::serialize(&left_receipt)
+                    .context("Failed to serialize partial union result")?;
                 agent
                     .set_in_redis(&receipt_key, &bytes, Some(agent.args.redis_ttl))
                     .await
@@ -105,7 +103,8 @@ pub async fn union(agent: &Agent, task: &Task) -> Result<()> {
 
         // Store the intermediate union result
         let receipt_key = format!("{keccak_receipts_prefix}:joined_{}", counter);
-        let bytes = serialize_obj(&unioned).context("Failed to serialize unioned result")?;
+        let bytes = bincode::serialize(&unioned)
+            .context("Failed to serialize unioned result")?;
         agent
             .set_in_redis(&receipt_key, &bytes, Some(agent.args.redis_ttl))
             .await
@@ -137,13 +136,11 @@ async fn poll_for_receipt(
         let exists: bool = conn.exists(&store_key).await.unwrap_or(false);
 
         if exists {
-            // Get the receipt
             let receipt_bytes: Vec<u8> = conn.get(&store_key)
                 .await
                 .context("Failed to fetch keccak receipt from Redis")?;
 
-            return deserialize_obj(&receipt_bytes)
-                .context("Failed to deserialize keccak receipt from Redis");
+            return Ok(receipt_bytes);
         }
 
         // Wait before trying again
