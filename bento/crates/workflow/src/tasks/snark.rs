@@ -20,7 +20,6 @@ use std::{
 use tempfile::tempdir;
 use tokio::process::Command;
 use workflow_common::{
-    s3::{GROTH16_BUCKET_DIR, RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR},
     SnarkReq, SnarkResp,
 };
 

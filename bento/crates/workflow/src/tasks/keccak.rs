@@ -4,7 +4,6 @@
 
 use crate::{Agent, tasks::serialize_obj};
 use anyhow::{Context, Result};
-use bytemuck;
 use redis::AsyncCommands;
 use risc0_zkvm::ProveKeccakRequest;
 use std::time::Instant;

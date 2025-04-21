@@ -8,7 +8,6 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use risc0_zkvm::{InnerReceipt, Receipt, ReceiptClaim, SuccinctReceipt};
-use std::path::Path;
 use uuid::Uuid;
 use workflow_common::FinalizeReq;
 

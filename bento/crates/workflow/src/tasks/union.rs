@@ -11,7 +11,6 @@ use redis::AsyncCommands;
 use task_queue::Task;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-use workflow_common::UnionReq;
 
 /// Run the union operation
 pub async fn union(agent: &Agent, task: &Task) -> Result<()> {
