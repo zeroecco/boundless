@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use redis::aio::ConnectionManager;
-use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext};
+use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext, ExecutorEnv};
 use std::{
     rc::Rc,
     sync::{
@@ -174,6 +174,7 @@ impl Agent {
             || args.task_stream == JOIN_WORK_TYPE
             || args.task_stream == KECCAK_WORK_TYPE
         {
+            // apply segment_po2 from CLI flags
             let opts = ProverOpts::default();
             let prover = get_prover_server(&opts).context("Failed to initialize prover server")?;
             Some(prover)
