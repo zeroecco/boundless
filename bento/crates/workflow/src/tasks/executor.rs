@@ -11,7 +11,7 @@ use serde::Serialize;
 use task_queue::Task;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use workflow_common::{KeccakReq, ProveReq};
+use workflow_common::{KeccakReq, ProveReq, ResolveReq, FinalizeReq, TaskType};
 
 const V2_ELF_MAGIC: &[u8] = b"R0BF";
 
@@ -208,6 +208,36 @@ pub async fn executor(
             .context("Failed to serialize session data")?;
         store_redis_data(&mut conn, &session_key, &session_bytes, 7200).await?;
         tracing::info!("Stored session info for job {}", job_id);
+
+        // Enqueue resolve and finalize tasks with dependencies
+        {
+            // Resolve should run after the initial join task
+            let join_id = format!("join:{}", job_id);
+            let resolve_req = ResolveReq { max_idx: segment_count, union_max_idx: None };
+            let resolve_task = Task {
+                job_id,
+                task_id: format!("resolve:{}", job_id),
+                task_def: serde_json::to_value(TaskType::Resolve(resolve_req))?,
+                data: vec![],
+                prereqs: vec![join_id.clone()],
+                max_retries: 3,
+            };
+            tracing::info!("Enqueuing resolve task {}", resolve_task.task_id);
+            task_queue::enqueue_task(&mut conn, "resolve", resolve_task).await?;
+
+            // Finalize should run after resolve completes
+            let finalize_req = FinalizeReq { max_idx: segment_count };
+            let finalize_task = Task {
+                job_id,
+                task_id: format!("finalize:{}", job_id),
+                task_def: serde_json::to_value(TaskType::Finalize(finalize_req))?,
+                data: vec![],
+                prereqs: vec![format!("resolve:{}", job_id)],
+                max_retries: 0,
+            };
+            tracing::info!("Enqueuing finalize task {}", finalize_task.task_id);
+            task_queue::enqueue_task(&mut conn, "finalize", finalize_task).await?;
+        }
 
     } else {
         tracing::info!("Skipping non-executor task type");

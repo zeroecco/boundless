@@ -2,114 +2,80 @@
 //
 // All rights reserved.
 
-use crate::{
-    tasks::{RECEIPT_PATH, RECUR_RECEIPT_PATH},
-    Agent,
-};
+use crate::{tasks::{RECEIPT_PATH, RECUR_RECEIPT_PATH}, Agent};
 use anyhow::{Context, Result};
-use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt, Unknown};
 use uuid::Uuid;
-use workflow_common::ResolveReq;
+use workflow_common::{ResolveReq, KECCAK_WORK_TYPE as KECCAK_RECEIPT_PATH};
 
-/// Run the resolve operation
-pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Result<Option<u64>> {
-    let max_idx = &request.max_idx;
-    let job_prefix = format!("job:{job_id}");
-    let receipts_key = format!("{job_prefix}:{RECEIPT_PATH}");
-    let root_receipt_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{max_idx}");
+pub async fn resolver(
+    agent: &Agent,
+    job_id: &Uuid,
+    request: &ResolveReq,
+) -> Result<Option<u64>> {
+    let max_idx = request.max_idx;
+    let job_prefix = format!("job:{}", job_id);
+    let root_key = format!("{}:{}:{}", job_prefix, RECUR_RECEIPT_PATH, max_idx);
+    let receipts_prefix = format!("{}:{}", job_prefix, RECEIPT_PATH);
 
-    tracing::info!("Starting resolve for job_id: {job_id}, max_idx: {max_idx}");
+    tracing::info!("Resolving receipts for job={} at index={}", job_id, max_idx);
 
-    // Use agent.get_from_redis which now correctly deserializes binary data
-    let receipt_bytes: Vec<u8> = agent.get_from_redis(&root_receipt_key)
+    // 1) Fetch and deserialize the root receipt
+    let root_bytes: Vec<u8> = agent.get_from_redis(&root_key)
         .await
-        .with_context(|| format!("segment data not found for root receipt key: {root_receipt_key}"))?;
+        .context("Failed to fetch root receipt from Redis")?;
+    let mut receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&root_bytes)
+        .context("Failed to deserialize root receipt")?;
 
-    tracing::info!("Root receipt size: {} bytes", receipt_bytes.len());
-    let mut conditional_receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&receipt_bytes)
-        .context("could not deserialize the root receipt")?;
+    // 2) Optionally apply the union receipt (for keccak path)
+    if let Some(union_idx) = request.union_max_idx {
+        let union_key = format!("{}:{}:{}", job_prefix, KECCAK_RECEIPT_PATH, union_idx);
+        tracing::info!("Applying union receipt from key {}", union_key);
+        let union_bytes: Vec<u8> = agent.get_from_redis(&union_key)
+            .await
+            .context("Failed to fetch union receipt")?;
+        let union_receipt: SuccinctReceipt<Unknown> = bincode::deserialize(&union_bytes)
+            .context("Failed to deserialize union receipt")?;
+        receipt = agent.prover.as_ref()
+            .context("Missing prover in resolve task")?
+            .resolve(&receipt, &union_receipt)
+            .context("Failed to resolve union receipt")?;
+    }
 
-    let mut assumptions_len: Option<u64> = None;
-    if conditional_receipt.claim.clone().as_value()?.output.is_some() {
-        if let Some(guest_output) =
-            conditional_receipt.claim.clone().as_value()?.output.as_value()?
-        {
-            if !guest_output.assumptions.is_empty() {
-                let assumptions = guest_output
-                    .assumptions
-                    .as_value()
-                    .context("Failed unwrap the assumptions of the guest output")?
-                    .iter();
-
-                tracing::info!("Resolving {} assumption(s)", assumptions.len());
-                assumptions_len =
-                    Some(assumptions.len().try_into().context("Failed to convert to u64")?);
-
-                let mut union_claim = String::new();
-                if let Some(idx) = request.union_max_idx {
-                    let union_root_receipt_key =
-                        format!("{job_prefix}:keccak:{idx}");
-                    tracing::info!(
-                        "Deserializing union_root_receipt_key: {union_root_receipt_key}"
-                    );
-                    let union_receipt_bytes: Vec<u8> = agent.get_from_redis(&union_root_receipt_key).await?;
-                    let union_receipt: SuccinctReceipt<Unknown> =
-                        bincode::deserialize(&union_receipt_bytes)
-                            .context("Failed to deserialize to SuccinctReceipt<Unknown> type")?;
-                    union_claim = union_receipt.claim.digest().to_string();
-
-                    // Resolve union receipt
-                    tracing::info!("Resolving union claim digest: {union_claim}");
-                    conditional_receipt = agent
-                        .prover
-                        .as_ref()
-                        .context("Missing prover from resolve task")?
-                        .resolve(&conditional_receipt, &union_receipt)
-                        .context("Failed to resolve the union receipt")?;
-                }
-
-                for assumption in assumptions {
-                    let assumption_claim = assumption.as_value()?.claim.to_string();
-                    if assumption_claim.eq(&union_claim) {
-                        tracing::info!("Skipping already resolved union claim: {union_claim}");
-                        continue;
-                    }
-                    let assumption_key = format!("{receipts_key}:{assumption_claim}");
-                    tracing::info!("Deserializing assumption with key: {assumption_key}");
-                    let assumption_bytes: Vec<u8> = agent.get_from_redis(&assumption_key)
-                        .await
-                        .context("corroborating receipt not found: key {assumption_key}")?;
-
-                    let assumption_receipt: SuccinctReceipt<Unknown> =
-                        bincode::deserialize(&assumption_bytes).with_context(|| {
-                            format!("could not deserialize assumption receipt: {assumption_key}")
-                        })?;
-
-                    // Resolve
-                    conditional_receipt = agent
-                        .prover
-                        .as_ref()
-                        .context("Missing prover from resolve task")?
-                        .resolve(&conditional_receipt, &assumption_receipt)
-                        .context("Failed to resolve the conditional receipt")?;
-                }
-                tracing::info!("Resolve complete");
-            }
+    // 3) Collect and apply guest assumption receipts
+    let mut assumptions_len = None;
+    // Extract pruned assumptions into an owned Vec to avoid borrowing `receipt`
+    let assumptions: Vec<_> = match receipt.claim.as_value()?.output.as_value()? {
+        Some(output) => output.assumptions.as_value()?.to_vec(),
+        None => Vec::new(),
+    };
+    if !assumptions.is_empty() {
+        tracing::info!("Resolving {} guest assumption(s)", assumptions.len());
+        assumptions_len = Some(assumptions.len() as u64);
+        for pruned in assumptions {
+            // extract each assumption claim
+            let claim_str = pruned.as_value()?.claim.to_string();
+            let key = format!("{}:{}", receipts_prefix, claim_str);
+            tracing::info!("Resolving assumption receipt from key {}", key);
+            let data: Vec<u8> = agent.get_from_redis(&key)
+                .await
+                .context("Failed to fetch assumption receipt")?;
+            let assump_receipt: SuccinctReceipt<Unknown> = bincode::deserialize(&data)
+                .context("Failed to deserialize assumption receipt")?;
+            receipt = agent.prover.as_ref()
+                .context("Missing prover in resolve task")?
+                .resolve(&receipt, &assump_receipt)
+                .context("Failed to resolve assumption receipt")?;
         }
     }
 
-    // Write out the resolved receipt
-    tracing::info!("Serializing resolved receipt");
-    let serialized_asset =
-        bincode::serialize(&conditional_receipt).context("Failed to serialize resolved receipt")?;
-
-    tracing::info!("Writing resolved receipt to Redis key: {root_receipt_key}");
-    agent
-        .set_in_redis(&root_receipt_key, &serialized_asset, Some(agent.args.redis_ttl))
+    // 5) Serialize and store the final resolved receipt
+    let final_bytes = bincode::serialize(&receipt)
+        .context("Failed to serialize final resolved receipt")?;
+    agent.set_in_redis(&root_key, &final_bytes, Some(agent.args.redis_ttl))
         .await
-        .context("Failed to set root receipt key with expiry")?;
+        .context("Failed to store resolved receipt in Redis")?;
+    tracing::info!("Successfully stored resolved receipt at key {}", root_key);
 
-    tracing::info!("Resolve operation completed successfully");
     Ok(assumptions_len)
 }
