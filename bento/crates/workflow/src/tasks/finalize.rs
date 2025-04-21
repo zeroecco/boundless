@@ -21,22 +21,23 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
     let root_receipt_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{}", request.max_idx);
 
     // Retrieve and process the root receipt
-    let root_receipt: Vec<u8> = agent
+    let root_receipt_bytes: Vec<u8> = agent
         .get_from_redis(&root_receipt_key)
         .await
         .with_context(|| format!("failed to get the root receipt key: {root_receipt_key}"))?;
 
+    tracing::info!("Root receipt size: {} bytes", root_receipt_bytes.len());
     let root_receipt: SuccinctReceipt<ReceiptClaim> =
-        bincode::deserialize(&root_receipt).context("could not deserialize the root receipt")?;
+        bincode::deserialize(&root_receipt_bytes).context("could not deserialize the root receipt")?;
 
     // Retrieve and process the journal
     let journal_key = format!("{job_prefix}:journal");
-    let journal: Vec<u8> = agent
+    let journal_bytes: Vec<u8> = agent
         .get_from_redis(&journal_key)
         .await
         .with_context(|| format!("Journal data not found for key ID: {journal_key}"))?;
 
-    let journal = bincode::deserialize(&journal).context("could not deserialize the journal")?;
+    let journal = bincode::deserialize(&journal_bytes).context("could not deserialize the journal")?;
     let rollup_receipt = Receipt::new(InnerReceipt::Succinct(root_receipt), journal);
 
     // Verify the receipt

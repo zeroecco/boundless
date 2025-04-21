@@ -3,11 +3,10 @@
 // All rights reserved.
 
 use crate::{
-    tasks::{deserialize_obj, serialize_obj, RECEIPT_PATH, RECUR_RECEIPT_PATH},
+    tasks::{RECEIPT_PATH, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
-use redis::AsyncCommands;
 use risc0_zkvm::sha::Digestible;
 use risc0_zkvm::{ReceiptClaim, SuccinctReceipt, Unknown};
 use uuid::Uuid;
@@ -22,13 +21,14 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
 
     tracing::info!("Starting resolve for job_id: {job_id}, max_idx: {max_idx}");
 
-    let mut conn = agent.redis_conn.clone();
-    let receipt: Vec<u8> = conn.get::<_, Vec<u8>>(&root_receipt_key).await.with_context(|| {
-        format!("segment data not found for root receipt key: {root_receipt_key}")
-    })?;
+    // Use agent.get_from_redis which now correctly deserializes binary data
+    let receipt_bytes: Vec<u8> = agent.get_from_redis(&root_receipt_key)
+        .await
+        .with_context(|| format!("segment data not found for root receipt key: {root_receipt_key}"))?;
 
-    tracing::info!("Root receipt size: {} bytes", receipt.len());
-    let mut conditional_receipt: SuccinctReceipt<ReceiptClaim> = deserialize_obj(&receipt)?;
+    tracing::info!("Root receipt size: {} bytes", receipt_bytes.len());
+    let mut conditional_receipt: SuccinctReceipt<ReceiptClaim> = bincode::deserialize(&receipt_bytes)
+        .context("could not deserialize the root receipt")?;
 
     let mut assumptions_len: Option<u64> = None;
     if conditional_receipt.claim.clone().as_value()?.output.is_some() {
@@ -53,9 +53,9 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                     tracing::info!(
                         "Deserializing union_root_receipt_key: {union_root_receipt_key}"
                     );
-                    let union_receipt: Vec<u8> = conn.get(&union_root_receipt_key).await?;
+                    let union_receipt_bytes: Vec<u8> = agent.get_from_redis(&union_root_receipt_key).await?;
                     let union_receipt: SuccinctReceipt<Unknown> =
-                        deserialize_obj(&union_receipt)
+                        bincode::deserialize(&union_receipt_bytes)
                             .context("Failed to deserialize to SuccinctReceipt<Unknown> type")?;
                     union_claim = union_receipt.claim.digest().to_string();
 
@@ -77,13 +77,12 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
                     }
                     let assumption_key = format!("{receipts_key}:{assumption_claim}");
                     tracing::info!("Deserializing assumption with key: {assumption_key}");
-                    let assumption_bytes: Vec<u8> = conn
-                        .get(&assumption_key)
+                    let assumption_bytes: Vec<u8> = agent.get_from_redis(&assumption_key)
                         .await
                         .context("corroborating receipt not found: key {assumption_key}")?;
 
                     let assumption_receipt: SuccinctReceipt<Unknown> =
-                        deserialize_obj(&assumption_bytes).with_context(|| {
+                        bincode::deserialize(&assumption_bytes).with_context(|| {
                             format!("could not deserialize assumption receipt: {assumption_key}")
                         })?;
 
@@ -103,7 +102,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
     // Write out the resolved receipt
     tracing::info!("Serializing resolved receipt");
     let serialized_asset =
-        serialize_obj(&conditional_receipt).context("Failed to serialize resolved receipt")?;
+        bincode::serialize(&conditional_receipt).context("Failed to serialize resolved receipt")?;
 
     tracing::info!("Writing resolved receipt to Redis key: {root_receipt_key}");
     agent
