@@ -3,11 +3,10 @@
 // All rights reserved.
 
 use crate::{
-    tasks::{deserialize_obj, read_image_id, serialize_obj, RECUR_RECEIPT_PATH},
+    tasks::{read_image_id, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{bail, Context, Result};
-use bincode;
 use risc0_zkvm::{InnerReceipt, Receipt, ReceiptClaim, SuccinctReceipt};
 use std::path::Path;
 use uuid::Uuid;
@@ -29,7 +28,7 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
         .with_context(|| format!("failed to get the root receipt key: {root_receipt_key}"))?;
 
     let root_receipt: SuccinctReceipt<ReceiptClaim> =
-        deserialize_obj(&root_receipt).context("could not deserialize the root receipt")?;
+        bincode::deserialize(&root_receipt).context("could not deserialize the root receipt")?;
 
     // Retrieve and process the journal
     let journal_key = format!("{job_prefix}:journal");
@@ -38,7 +37,7 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
         .await
         .with_context(|| format!("Journal data not found for key ID: {journal_key}"))?;
 
-    let journal = deserialize_obj(&journal).context("could not deserialize the journal")?;
+    let journal = bincode::deserialize(&journal).context("could not deserialize the journal")?;
     let rollup_receipt = Receipt::new(InnerReceipt::Succinct(root_receipt), journal);
 
     // Verify the receipt
@@ -68,10 +67,5 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
     tracing::debug!("Deleting the keyspace {job_prefix}:*");
     agent.scan_and_delete(&job_prefix).await.context("Failed to delete all redis keys")?;
 
-    Ok(())
-}
-
-pub async fn finalize_task(elf_path: &Path, input_path: &Path) -> Result<()> {
-    // TODO: Implement finalize task logic
     Ok(())
 }

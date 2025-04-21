@@ -330,7 +330,7 @@ impl Agent {
                 tasks::keccak::keccak(self, &task_clone).await.context("Keccak failed")?;
                 tracing::info!("Keccak task completed for job_id={}", task_clone.job_id);
             }
-            TaskType::Union(req) => {
+            TaskType::Union(_req) => {
                 tracing::info!("Starting union task for job_id={}", task_clone.job_id);
                 tasks::union::union(self, &task_clone)
                     .await
@@ -365,16 +365,19 @@ impl Agent {
     }
 
     /// Helper to get and deserialize a value from Redis
-    pub async fn get_from_redis<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<T> {
+    pub async fn get_from_redis<T>(&self, key: &str) -> Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
         let mut conn = self.redis_conn.clone();
-        let result: Option<String> = redis::cmd("GET")
+        let result: Option<Vec<u8>> = redis::cmd("GET")
             .arg(key)
             .query_async(&mut conn)
             .await
             .context("Failed to get value from Redis")?;
 
         match result {
-            Some(value) => Ok(serde_json::from_str(&value).context("Failed to deserialize value")?),
+            Some(value) => Ok(serde_json::from_slice(&value).context("Failed to deserialize value")?),
             None => anyhow::bail!("Key not found in Redis: {}", key),
         }
     }
@@ -416,18 +419,13 @@ impl Agent {
     }
 
     /// Helper to set a value in Redis with optional expiry
-    pub async fn set_in_redis(
-        &self,
-        key: &str,
-        value: &[u8],
-        expiry_seconds: Option<u64>,
-    ) -> Result<()> {
+    pub async fn set_in_redis(&self, key: &str, value: &[u8], expiry: Option<u64>) -> Result<()> {
         let mut conn = self.redis_conn.clone();
 
-        if let Some(seconds) = expiry_seconds {
+        if let Some(exp) = expiry {
             let _: () = redis::cmd("SETEX")
                 .arg(key)
-                .arg(seconds)
+                .arg(exp)
                 .arg(value)
                 .query_async(&mut conn)
                 .await
