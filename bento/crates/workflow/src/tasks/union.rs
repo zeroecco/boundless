@@ -48,6 +48,51 @@ pub async fn union(agent: &Agent, task: &Task) -> Result<()> {
                 if counter > 2 { // Only proceed if we've processed at least one receipt
                     let max_idx = counter-1;
 
+                    // Collect all prerequisites for the resolve task
+                    // We need all prove task completions (which create segment outputs)
+                    let mut prereqs = Vec::new();
+
+                    // Find the highest segment index by scanning the Redis keys
+                    let job_prefix = format!("job:{job_id}");
+                    let receipt_pattern = format!("{}:recursion_receipts", job_prefix);
+                    let scan_pattern = format!("{}:*", receipt_pattern);
+
+                    let mut cursor = 0;
+                    loop {
+                        let (next_cursor, keys): (i64, Vec<String>) = redis::cmd("SCAN")
+                            .arg(cursor)
+                            .arg("MATCH")
+                            .arg(&scan_pattern)
+                            .arg("COUNT")
+                            .arg(100)
+                            .query_async(&mut conn)
+                            .await
+                            .context("Failed to scan Redis for segment receipts")?;
+
+                        cursor = next_cursor;
+
+                        // Add all segment task IDs as prerequisites
+                        for key in keys {
+                            if let Some(idx_str) = key.strip_prefix(&format!("{}:", receipt_pattern)) {
+                                if let Ok(idx) = idx_str.parse::<usize>() {
+                                    // Prefer specific task IDs based on the task type
+                                    prereqs.push(format!("prove:{}:{}", job_id, idx));
+                                }
+                            }
+                        }
+
+                        if cursor == 0 {
+                            break;
+                        }
+                    }
+
+                    // Add prerequisites for all keccak tasks up to this counter
+                    for i in 1..=max_idx {
+                        prereqs.push(format!("keccak:{}:{}", job_id, i));
+                    }
+
+                    tracing::info!("Collected {} prerequisites for resolve task", prereqs.len());
+
                     // First, create and enqueue the Resolve task with union dependency
                     let resolve_task = Task {
                         job_id,
@@ -57,7 +102,7 @@ pub async fn union(agent: &Agent, task: &Task) -> Result<()> {
                             union_max_idx: Some(max_idx), // Union dependency
                         })).unwrap(),
                         data: bytes.clone(),
-                        prereqs: vec![],
+                        prereqs, // All segment and keccak tasks must complete first
                         max_retries: 3,
                     };
 

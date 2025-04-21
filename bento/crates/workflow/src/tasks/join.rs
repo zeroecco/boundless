@@ -41,6 +41,17 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
                 if counter > 2 { // Only proceed if we've processed at least one receipt
                     let max_idx = counter-1;
 
+                    // Collect all prerequisites for the resolve task
+                    // We need all prove task completions (which create segment outputs)
+                    let mut prereqs = Vec::new();
+
+                    // Find all segment receipts by scanning Redis
+                    for i in 1..=max_idx {
+                        prereqs.push(format!("prove:{}:{}", task.job_id, i));
+                    }
+
+                    tracing::info!("Collected {} prerequisites for resolve task", prereqs.len());
+
                     // First, create and enqueue the Resolve task
                     let resolve_task = Task {
                         job_id: task.job_id,
@@ -50,7 +61,7 @@ pub async fn join(agent: &Agent, task: &Task) -> Result<()> {
                             union_max_idx: None, // No union dependency for standard join
                         })).unwrap(),
                         data: bytes.clone(),
-                        prereqs: vec![],
+                        prereqs, // All prove tasks must complete first
                         max_retries: 3,
                     };
 

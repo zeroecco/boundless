@@ -211,6 +211,14 @@ pub async fn executor(
 
         // Enqueue the resolve and finalize tasks to wrap up the job
         if segment_count > 0 {
+            // Collect prerequisites for all prove tasks
+            let mut prereqs = Vec::new();
+            for i in 1..=segment_count {
+                prereqs.push(format!("prove:{}:{}", job_id, i));
+            }
+
+            tracing::info!("Collected {} prerequisites for resolve task", prereqs.len());
+
             // First, create and enqueue a Resolve task
             let resolve_task = Task {
                 job_id,
@@ -220,7 +228,7 @@ pub async fn executor(
                     union_max_idx: None,  // No union dependency for standard workflow
                 })).unwrap(),
                 data: vec![],
-                prereqs: vec![],
+                prereqs, // All prove tasks must complete first
                 max_retries: 3,
             };
 
