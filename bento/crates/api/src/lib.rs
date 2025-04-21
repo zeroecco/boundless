@@ -27,10 +27,6 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use workflow_common::{
-    s3::{
-        S3Client, GROTH16_BUCKET_DIR,
-        PREFLIGHT_JOURNALS_BUCKET_DIR, RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
-    },
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
 };
 
@@ -358,23 +354,7 @@ async fn stark_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Vec<u8>, AppError> {
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{job_id}.bincode");
-    if !state
-        .s3_client
-        .object_exists(&receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    let receipt = state
-        .s3_client
-        .read_buf_from_s3(&receipt_key)
-        .await
-        .context("Failed to read from object store")?;
-
-    Ok(receipt)
+    Ok(vec![])
 }
 
 const RECEIPT_DOWNLOAD_PATH: &str = "/receipts/{job_id}";
@@ -383,22 +363,7 @@ async fn receipt_download(
     Path(job_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<ReceiptDownload>, AppError> {
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{STARK_BUCKET_DIR}/{job_id}.bincode");
-    if !state
-        .s3_client
-        .object_exists(&receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    // Get hostname from header
-    let hostname = headers.get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
-
-    Ok(Json(ReceiptDownload { url: format!("http://{hostname}/receipts/stark/receipt/{job_id}") }))
+    Ok(Json(ReceiptDownload { url: "".into() }))
 }
 
 const GET_JOURNAL_PATH: &str = "/sessions/exec_only_journal/{job_id}";
@@ -406,23 +371,7 @@ async fn preflight_journal(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Vec<u8>, AppError> {
-    let journal_key = format!("{PREFLIGHT_JOURNALS_BUCKET_DIR}/{job_id}.bin");
-    if !state
-        .s3_client
-        .object_exists(&journal_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    let receipt = state
-        .s3_client
-        .read_buf_from_s3(&journal_key)
-        .await
-        .context("Failed to read from object store")?;
-
-    Ok(receipt)
+    Ok(vec![])
 }
 
 // Snark routes
@@ -477,23 +426,7 @@ async fn groth16_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Vec<u8>, AppError> {
-    let receipt_key = format!("{RECEIPT_BUCKET_DIR}/{GROTH16_BUCKET_DIR}/{job_id}.bincode");
-    if !state
-        .s3_client
-        .object_exists(&receipt_key)
-        .await
-        .context("Failed to check if object exists")?
-    {
-        return Err(AppError::ReceiptMissing(job_id.to_string()));
-    }
-
-    let receipt = state
-        .s3_client
-        .read_buf_from_s3(&receipt_key)
-        .await
-        .context("Failed to read from object store")?;
-
-    Ok(receipt)
+    Ok(vec![])
 }
 
 pub fn app(state: Arc<AppState>) -> Router {
@@ -658,7 +591,6 @@ pub struct Args {
 
 pub struct AppState {
     redis_client: Arc<Mutex<ConnectionManager>>,
-    s3_client: S3Client,
 }
 
 impl AppState {
@@ -666,15 +598,6 @@ impl AppState {
         let redis_client =
             redis::Client::open(args.redis_url.clone())?.get_connection_manager().await?;
 
-        let s3_client = S3Client::from_minio(
-            &args.s3_url,
-            &args.s3_bucket,
-            &args.s3_access_key,
-            &args.s3_secret_key,
-        )
-        .await
-        .context("Failed to initialize s3 client / bucket")?;
-
-        Ok(Arc::new(Self { redis_client: Arc::new(Mutex::new(redis_client)), s3_client }))
+        Ok(Arc::new(Self { redis_client: Arc::new(Mutex::new(redis_client))}))
     }
 }
