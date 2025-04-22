@@ -359,13 +359,34 @@ async fn stark_status(
         None
     };
 
-    // If there's an error stored, retrieve it
-    let error_msg = if status == "failed" {
+    // Check for multiple possible error locations
+    let mut error_msg = None;
+    if status == "failed" {
+        // Check direct error key
         let error_key = format!("error:{}", job_id);
-        conn.get::<_, Option<String>>(&error_key).await.ok().flatten()
-    } else {
-        None
-    };
+        if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&error_key).await {
+            tracing::debug!("Found error message in error:{} key: {}", job_id, msg);
+            error_msg = Some(msg);
+        } else {
+            // Check workflow error key
+            let workflow_error_key = format!("workflow:error:{}", job_id);
+            if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&workflow_error_key).await {
+                tracing::debug!("Found error message in workflow:error:{} key: {}", job_id, msg);
+                error_msg = Some(msg);
+            } else {
+                // Check executor error key
+                let exec_error_key = format!("executor:error:{}", job_id);
+                if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&exec_error_key).await {
+                    tracing::debug!("Found error message in executor:error:{} key: {}", job_id, msg);
+                    error_msg = Some(msg);
+                } else {
+                    // Default error message if none found
+                    tracing::debug!("No specific error message found for job {}", job_id);
+                    error_msg = Some("Task failed with unknown error".to_string());
+                }
+            }
+        }
+    }
 
     // Get job statistics if available
     let exec_stats = if status == "completed" {
@@ -423,7 +444,11 @@ async fn stark_status(
     } else if status == "completed" {
         progress_info = "Job completed successfully".to_string();
     } else if status == "failed" {
-        progress_info = "Job failed".to_string();
+        if let Some(err) = &error_msg {
+            progress_info = format!("Job failed: {}", err);
+        } else {
+            progress_info = "Job failed with unknown error".to_string();
+        }
     } else {
         progress_info = "Job status unknown".to_string();
     }
@@ -484,7 +509,66 @@ async fn receipt_download(
     Path(job_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<ReceiptDownload>, AppError> {
-    Ok(Json(ReceiptDownload { url: "".into() }))
+    tracing::info!("Generating receipt download URL for job: {}", job_id);
+
+    let mut conn = state.redis_client.lock().await;
+
+    // Check job status
+    let status_key = format!("status:{}", job_id);
+    let status: Option<String> = conn.get(&status_key).await.ok();
+
+    // If job failed, return error with the error message
+    if status == Some("failed".to_string()) {
+        // Try to get the error message
+        let error_message = {
+            // Check multiple possible error locations
+            let error_key = format!("error:{}", job_id);
+            if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&error_key).await {
+                msg
+            } else {
+                let workflow_error_key = format!("workflow:error:{}", job_id);
+                if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&workflow_error_key).await {
+                    msg
+                } else {
+                    let exec_error_key = format!("executor:error:{}", job_id);
+                    if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&exec_error_key).await {
+                        msg
+                    } else {
+                        "Task failed with unknown error".to_string()
+                    }
+                }
+            }
+        };
+
+        tracing::error!("Cannot generate download URL for failed job {}: {}", job_id, error_message);
+        return Err(AppError::ReceiptMissing(format!("Job failed: {}", error_message)));
+    }
+
+    // If job is not completed yet, return error
+    if status != Some("completed".to_string()) {
+        tracing::error!("Cannot generate download URL for job {} with status {:?}", job_id, status);
+        return Err(AppError::ReceiptMissing(job_id.to_string()));
+    }
+
+    // Verify that result exists
+    let result_key = format!("result:{}", job_id);
+    let exists: bool = conn.exists(&result_key).await.unwrap_or(false);
+
+    if !exists {
+        tracing::error!("Receipt data not found for job {}", job_id);
+        return Err(AppError::ReceiptMissing(job_id.to_string()));
+    }
+
+    // Get hostname from header
+    let hostname = headers.get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+
+    // Generate download URL
+    let url = format!("http://{}/receipts/stark/receipt/{}", hostname, job_id);
+
+    tracing::info!("Generated receipt download URL: {}", url);
+    Ok(Json(ReceiptDownload { url }))
 }
 
 const GET_JOURNAL_PATH: &str = "/sessions/exec_only_journal/{job_id}";
@@ -492,7 +576,46 @@ async fn preflight_journal(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Vec<u8>, AppError> {
-    Ok(vec![])
+    tracing::info!("Retrieving execution journal for job: {}", job_id);
+
+    let mut conn = state.redis_client.lock().await;
+
+    // Check job status
+    let status_key = format!("status:{}", job_id);
+    let status: Option<String> = conn.get(&status_key).await.ok();
+
+    // For preflight, we may need journal data even if the job is still in progress or failed
+    // Try to get the journal data regardless of status
+
+    // Get journal data from Redis
+    let journal_key = format!("journal:{}", job_id);
+    let exists: bool = conn.exists(&journal_key).await.unwrap_or(false);
+
+    if !exists {
+        // If journal doesn't exist but we have an error, include error info in response
+        if status == Some("failed".to_string()) {
+            let error_key = format!("error:{}", job_id);
+            if let Ok(Some(error_msg)) = conn.get::<_, Option<String>>(&error_key).await {
+                tracing::warn!("Job failed with error: {}", error_msg);
+                // Return a special error format that includes the error message
+                return Err(AppError::JournalMissing(format!("Job failed: {}", error_msg)));
+            }
+        }
+
+        tracing::error!("Journal not found for job {} with status {:?}", job_id, status);
+        return Err(AppError::JournalMissing(job_id.to_string()));
+    }
+
+    match conn.get::<_, Vec<u8>>(&journal_key).await {
+        Ok(data) => {
+            tracing::info!("Successfully retrieved journal data ({} bytes)", data.len());
+            Ok(data)
+        },
+        Err(e) => {
+            tracing::error!("Failed to retrieve journal data for job {}: {}", job_id, e);
+            Err(AppError::InternalErr(anyhow::anyhow!("Failed to retrieve journal: {}", e)))
+        }
+    }
 }
 
 // Snark routes
@@ -549,13 +672,34 @@ async fn groth16_status(
     let status = status.unwrap_or_else(|| "unknown".to_string());
     tracing::debug!("SNARK job {} status: {}", job_id, status);
 
-    // If there's an error stored, retrieve it
-    let error_msg = if status == "failed" {
+    // Check for multiple possible error locations
+    let mut error_msg = None;
+    if status == "failed" {
+        // Check direct error key
         let error_key = format!("error:{}", job_id);
-        conn.get::<_, Option<String>>(&error_key).await.ok().flatten()
-    } else {
-        None
-    };
+        if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&error_key).await {
+            tracing::debug!("Found error message in error:{} key: {}", job_id, msg);
+            error_msg = Some(msg);
+        } else {
+            // Check workflow error key
+            let workflow_error_key = format!("workflow:error:{}", job_id);
+            if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&workflow_error_key).await {
+                tracing::debug!("Found error message in workflow:error:{} key: {}", job_id, msg);
+                error_msg = Some(msg);
+            } else {
+                // Check snark error key
+                let snark_error_key = format!("snark:error:{}", job_id);
+                if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&snark_error_key).await {
+                    tracing::debug!("Found error message in snark:error:{} key: {}", job_id, msg);
+                    error_msg = Some(msg);
+                } else {
+                    // Default error message if none found
+                    tracing::debug!("No specific error message found for SNARK job {}", job_id);
+                    error_msg = Some("SNARK task failed with unknown error".to_string());
+                }
+            }
+        }
+    }
 
     // Check if we have a result
     let output = if status == "completed" {
@@ -600,7 +744,11 @@ async fn groth16_status(
     } else if status == "completed" {
         status_with_progress = "completed - SNARK proof generation successful".to_string();
     } else if status == "failed" {
-        status_with_progress = "failed - SNARK proof generation failed".to_string();
+        if let Some(err) = &error_msg {
+            status_with_progress = format!("failed - SNARK proof generation failed: {}", err);
+        } else {
+            status_with_progress = "failed - SNARK proof generation failed with unknown error".to_string();
+        }
     }
 
     Ok(Json(SnarkStatusRes {
