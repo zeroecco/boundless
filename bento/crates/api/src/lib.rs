@@ -336,14 +336,104 @@ async fn stark_status(
     headers: HeaderMap,
     Path(job_id): Path<Uuid>,
 ) -> Result<Json<SessionStatusRes>, AppError> {
-    let (exec_stats, receipt_url) = (None, None);
+    tracing::info!("Checking status for STARK job: {}", job_id);
+
+    let mut conn = state.redis_client.lock().await;
+
+    // Get job status from Redis
+    let status_key = format!("status:{}", job_id);
+    let status: Option<String> = conn.get(&status_key).await.ok();
+
+    let status = status.unwrap_or_else(|| "unknown".to_string());
+    tracing::debug!("Job {} status: {}", job_id, status);
+
+    // Check if we have a result for completed jobs
+    let receipt_url = if status == "completed" {
+        // Generate download URL
+        let hostname = headers.get("host")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost");
+
+        Some(format!("http://{}/receipts/stark/receipt/{}", hostname, job_id))
+    } else {
+        None
+    };
+
+    // If there's an error stored, retrieve it
+    let error_msg = if status == "failed" {
+        let error_key = format!("error:{}", job_id);
+        conn.get::<_, Option<String>>(&error_key).await.ok().flatten()
+    } else {
+        None
+    };
+
+    // Get job statistics if available
+    let exec_stats = if status == "completed" {
+        let stats_key = format!("stats:{}", job_id);
+        match conn.get::<_, Option<String>>(&stats_key).await {
+            Ok(Some(stats_json)) => serde_json::from_str(&stats_json).ok(),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    // Calculate elapsed time
+    let elapsed_time = match conn.get::<_, Option<String>>(&format!("start_time:{}", job_id)).await {
+        Ok(Some(start_time)) => {
+            if let Ok(start) = start_time.parse::<u64>() {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                Some((now - start) as f64)
+            } else {
+                None
+            }
+        },
+        _ => None,
+    };
+
+    // Check queue for pending tasks related to this job
+    let mut progress_info = String::new();
+
+    if status == "pending" || status == "processing" {
+        // Check number of tasks in queues
+        for queue_name in &["executor", "prove", "join"] {
+            let queue_key = format!("queue:{}", queue_name);
+            if let Ok(len) = conn.llen::<_, i64>(&queue_key).await {
+                if len > 0 {
+                    progress_info.push_str(&format!("{} tasks in {} queue. ", len, queue_name));
+                }
+            }
+        }
+
+        // Get task-specific status
+        for task_type in &["executor", "prove", "join"] {
+            let task_status_key = format!("task_status:{}:{}", job_id, task_type);
+            if let Ok(Some(task_status)) = conn.get::<_, Option<String>>(&task_status_key).await {
+                progress_info.push_str(&format!("{} task status: {}. ", task_type, task_status));
+            }
+        }
+
+        if progress_info.is_empty() {
+            progress_info = format!("Job {} is {}", job_id, status);
+        }
+    } else if status == "completed" {
+        progress_info = "Job completed successfully".to_string();
+    } else if status == "failed" {
+        progress_info = "Job failed".to_string();
+    } else {
+        progress_info = "Job status unknown".to_string();
+    }
 
     Ok(Json(SessionStatusRes {
-        state: Some("".into()), // TODO
+        state: Some(status.clone()),
         receipt_url,
-        error_msg: None,    // TODO
-        status: "".into(),  // TODO
-        elapsed_time: None, // TODO
+        error_msg,
+        status: progress_info,
+        elapsed_time,
         stats: exec_stats,
     }))
 }
@@ -354,7 +444,38 @@ async fn stark_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Vec<u8>, AppError> {
-    Ok(vec![])
+    tracing::info!("Downloading STARK receipt for job: {}", job_id);
+
+    let mut conn = state.redis_client.lock().await;
+
+    // Check if job has completed
+    let status_key = format!("status:{}", job_id);
+    let status: Option<String> = conn.get(&status_key).await.ok();
+
+    if status != Some("completed".to_string()) {
+        tracing::error!("Cannot download receipt for job {} with status {:?}", job_id, status);
+        return Err(AppError::ReceiptMissing(job_id.to_string()));
+    }
+
+    // Get result data
+    let result_key = format!("result:{}", job_id);
+    let exists: bool = conn.exists(&result_key).await.unwrap_or(false);
+
+    if !exists {
+        tracing::error!("Receipt data not found for job {}", job_id);
+        return Err(AppError::ReceiptMissing(job_id.to_string()));
+    }
+
+    match conn.get::<_, Vec<u8>>(&result_key).await {
+        Ok(data) => {
+            tracing::info!("Successfully retrieved STARK receipt data ({} bytes)", data.len());
+            Ok(data)
+        },
+        Err(e) => {
+            tracing::error!("Failed to retrieve receipt data for job {}: {}", job_id, e);
+            Err(AppError::InternalErr(anyhow::anyhow!("Failed to retrieve receipt: {}", e)))
+        }
+    }
 }
 
 const RECEIPT_DOWNLOAD_PATH: &str = "/receipts/{job_id}";
@@ -417,8 +538,76 @@ async fn groth16_status(
     Path(job_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<SnarkStatusRes>, AppError> {
-    let (error_msg, output) = (None, None); // TODO
-    Ok(Json(SnarkStatusRes { status: "".into(), error_msg, output }))
+    tracing::info!("Checking status for SNARK job: {}", job_id);
+
+    let mut conn = state.redis_client.lock().await;
+
+    // Get job status from Redis
+    let status_key = format!("status:{}", job_id);
+    let status: Option<String> = conn.get(&status_key).await.ok();
+
+    let status = status.unwrap_or_else(|| "unknown".to_string());
+    tracing::debug!("SNARK job {} status: {}", job_id, status);
+
+    // If there's an error stored, retrieve it
+    let error_msg = if status == "failed" {
+        let error_key = format!("error:{}", job_id);
+        conn.get::<_, Option<String>>(&error_key).await.ok().flatten()
+    } else {
+        None
+    };
+
+    // Check if we have a result
+    let output = if status == "completed" {
+        // Generate download URL
+        let hostname = headers.get("host")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost");
+
+        Some(format!("http://{}/receipts/groth16/receipt/{}", hostname, job_id))
+    } else {
+        None
+    };
+
+    // Add progress information to status
+    let mut status_with_progress = status.clone();
+    if status == "pending" || status == "processing" {
+        // Check task-specific status
+        let task_status_key = format!("task_status:{}:snark", job_id);
+        if let Ok(Some(task_status)) = conn.get::<_, Option<String>>(&task_status_key).await {
+            status_with_progress = format!("{} - SNARK task: {}", status, task_status);
+        }
+
+        // Check queue length
+        let queue_key = "queue:snark";
+        if let Ok(len) = conn.llen::<_, i64>(queue_key).await {
+            if len > 0 {
+                status_with_progress.push_str(&format!(". {} tasks in queue", len));
+            }
+        }
+
+        // Add elapsed time if available
+        if let Ok(Some(start_time)) = conn.get::<_, Option<String>>(&format!("start_time:{}", job_id)).await {
+            if let Ok(start) = start_time.parse::<u64>() {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                status_with_progress.push_str(&format!(". Running for {} seconds", now - start));
+            }
+        }
+    } else if status == "completed" {
+        status_with_progress = "completed - SNARK proof generation successful".to_string();
+    } else if status == "failed" {
+        status_with_progress = "failed - SNARK proof generation failed".to_string();
+    }
+
+    Ok(Json(SnarkStatusRes {
+        status: status_with_progress,
+        error_msg,
+        output
+    }))
 }
 
 const GET_GROTH16_PATH: &str = "/receipts/groth16/receipt/{job_id}";
@@ -426,7 +615,38 @@ async fn groth16_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Vec<u8>, AppError> {
-    Ok(vec![])
+    tracing::info!("Downloading Groth16 proof for job: {}", job_id);
+
+    let mut conn = state.redis_client.lock().await;
+
+    // Check if job has completed
+    let status_key = format!("status:{}", job_id);
+    let status: Option<String> = conn.get(&status_key).await.ok();
+
+    if status != Some("completed".to_string()) {
+        tracing::error!("Cannot download Groth16 proof for job {} with status {:?}", job_id, status);
+        return Err(AppError::ReceiptMissing(job_id.to_string()));
+    }
+
+    // Get result data
+    let result_key = format!("result:{}", job_id);
+    let exists: bool = conn.exists(&result_key).await.unwrap_or(false);
+
+    if !exists {
+        tracing::error!("Groth16 proof data not found for job {}", job_id);
+        return Err(AppError::ReceiptMissing(job_id.to_string()));
+    }
+
+    match conn.get::<_, Vec<u8>>(&result_key).await {
+        Ok(data) => {
+            tracing::info!("Successfully retrieved Groth16 proof data ({} bytes)", data.len());
+            Ok(data)
+        },
+        Err(e) => {
+            tracing::error!("Failed to retrieve Groth16 proof data for job {}: {}", job_id, e);
+            Err(AppError::InternalErr(anyhow::anyhow!("Failed to retrieve Groth16 proof: {}", e)))
+        }
+    }
 }
 
 pub fn app(state: Arc<AppState>) -> Router {
