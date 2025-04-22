@@ -22,7 +22,6 @@ use redis::AsyncCommands;
 use risc0_zkvm::compute_image_id;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use task_queue::Task;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -30,9 +29,9 @@ use workflow_common::{
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
 };
 
-// TaskEntry is the format expected by the workflow crate's worker
+// Define the task structure for the Redis queue
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Task {
+struct TaskEntry {
     pub job_id: Uuid,
     pub task_id: String,
     pub task_def: serde_json::Value,
@@ -339,7 +338,7 @@ async fn prove_stark(
     .context("Failed to serialize ExecutorReq")?;
     tracing::debug!("Created task definition: {:?}", task_def);
 
-    let task = Task {
+    let task = TaskEntry {
         job_id,
         task_id: "executor".to_string(),
         task_def,
@@ -672,7 +671,7 @@ async fn prove_groth16(
     tracing::debug!("Created task definition: {:?}", task_def);
 
     let job_id = Uuid::new_v4();
-    let task = Task {
+    let task = TaskEntry {
         job_id,
         task_id: "snark".to_string(),
         task_def,
