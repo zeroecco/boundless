@@ -354,33 +354,15 @@ async fn prove_stark(
         .await
         .context("Failed to initialize task status")?;
 
-    // Enqueue the task - Use the workflow crate's expected queue format
-    // Try multiple formats to ensure compatibility
-
-    // Format 1: Standard Redis queue format with {stream}:{user_id}
-    let queue_key = format!("tasks:{}:{}", workflow_common::EXEC_WORK_TYPE, USER_ID);
+    // Enqueue the task - Using exact expected queue name from workflow crate
+    // The key format based on workflow implementation
+    let queue_key = workflow_common::EXEC_WORK_TYPE; // Direct stream name - "exec"
     let task_json = serde_json::to_string(&task)
         .context("Failed to serialize task to JSON")?;
-    conn.rpush(&queue_key, task_json.clone())
+    conn.rpush(queue_key, task_json)
         .await
-        .context("Failed to push task to Redis queue (format 1)")?;
-    tracing::debug!("Enqueued task to '{}'", queue_key);
-
-    // Format 2: queue:{stream} format (our current implementation)
-    let queue_key2 = format!("queue:{}", workflow_common::EXEC_WORK_TYPE);
-    conn.rpush(&queue_key2, task_json.clone())
-        .await
-        .context("Failed to push task to Redis queue (format 2)")?;
-    tracing::debug!("Enqueued task to '{}'", queue_key2);
-
-    // Format 3: Just the stream name
-    let queue_key3 = workflow_common::EXEC_WORK_TYPE.to_string();
-    conn.rpush(&queue_key3, task_json)
-        .await
-        .context("Failed to push task to Redis queue (format 3)")?;
-    tracing::debug!("Enqueued task to '{}'", queue_key3);
-
-    tracing::info!("Successfully enqueued task to multiple possible queue formats");
+        .context("Failed to push task to Redis queue")?;
+    tracing::info!("Successfully enqueued task to '{}' queue", queue_key);
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
@@ -399,11 +381,21 @@ async fn stark_status(
     let status_key = format!("status:{}", job_id);
     let status: Option<String> = conn.get(&status_key).await.ok();
 
-    let status = status.unwrap_or_else(|| "unknown".to_string());
-    tracing::debug!("Job {} status: {}", job_id, status);
+    let status_value = status.unwrap_or_else(|| "unknown".to_string());
+    tracing::debug!("Job {} status: {}", job_id, status_value);
+
+    // Map Redis status to bonsai-sdk status values
+    // Must use exact values the SDK expects
+    let bonsai_state = match status_value.as_str() {
+        "completed" => "SUCCEEDED",
+        "failed" => "FAILED",
+        "processing" => "RUNNING",
+        "pending" => "PENDING",
+        _ => "PENDING", // Default to PENDING for unknown states
+    };
 
     // Check if we have a result for completed jobs
-    let receipt_url = if status == "completed" {
+    let receipt_url = if status_value == "completed" {
         // Generate download URL
         let hostname = headers.get("host")
             .and_then(|h| h.to_str().ok())
@@ -414,37 +406,38 @@ async fn stark_status(
         None
     };
 
-    // Check for multiple possible error locations
-    let mut error_msg = None;
-    if status == "failed" {
+    // Check for multiple possible error locations, but only expose error for failed status
+    let error_msg = if status_value == "failed" {
         // Check direct error key
         let error_key = format!("error:{}", job_id);
         if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&error_key).await {
             tracing::debug!("Found error message in error:{} key: {}", job_id, msg);
-            error_msg = Some(msg);
+            Some(msg)
         } else {
             // Check workflow error key
             let workflow_error_key = format!("workflow:error:{}", job_id);
             if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&workflow_error_key).await {
                 tracing::debug!("Found error message in workflow:error:{} key: {}", job_id, msg);
-                error_msg = Some(msg);
+                Some(msg)
             } else {
                 // Check executor error key
                 let exec_error_key = format!("executor:error:{}", job_id);
                 if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&exec_error_key).await {
                     tracing::debug!("Found error message in executor:error:{} key: {}", job_id, msg);
-                    error_msg = Some(msg);
+                    Some(msg)
                 } else {
                     // Default error message if none found
                     tracing::debug!("No specific error message found for job {}", job_id);
-                    error_msg = Some("Task failed with unknown error".to_string());
+                    Some("Task failed with unknown error".to_string())
                 }
             }
         }
-    }
+    } else {
+        None
+    };
 
     // Get job statistics if available
-    let exec_stats = if status == "completed" {
+    let exec_stats = if status_value == "completed" {
         let stats_key = format!("stats:{}", job_id);
         match conn.get::<_, Option<String>>(&stats_key).await {
             Ok(Some(stats_json)) => serde_json::from_str(&stats_json).ok(),
@@ -471,20 +464,18 @@ async fn stark_status(
         _ => None,
     };
 
-    // Check queue for pending tasks related to this job
-    let mut progress_info = String::new();
+    // Build progress info for status field
+    let progress_info = if status_value == "pending" || status_value == "processing" {
+        // Count tasks in queues
+        let mut queue_info = String::new();
+        let mut total_queued = 0;
 
-    if status == "pending" || status == "processing" {
-        // Check number of tasks in multiple possible queue formats
-        for queue_format in &[
-            format!("tasks:{}:{}", workflow_common::EXEC_WORK_TYPE, USER_ID),
-            format!("queue:{}", workflow_common::EXEC_WORK_TYPE),
-            workflow_common::EXEC_WORK_TYPE.to_string()
-        ] {
-            if let Ok(len) = conn.llen::<_, i64>(queue_format).await {
-                if len > 0 {
-                    progress_info.push_str(&format!("{} tasks in {} queue. ", len, queue_format));
-                }
+        // Check correct queue format for executor tasks
+        let queue_key = workflow_common::EXEC_WORK_TYPE;
+        if let Ok(len) = conn.llen::<_, i64>(queue_key).await {
+            if len > 0 {
+                total_queued += len;
+                queue_info.push_str(&format!("{} tasks in {} queue. ", len, queue_key));
             }
         }
 
@@ -492,27 +483,33 @@ async fn stark_status(
         for task_type in &["executor", "prove", "join"] {
             let task_status_key = format!("task_status:{}:{}", job_id, task_type);
             if let Ok(Some(task_status)) = conn.get::<_, Option<String>>(&task_status_key).await {
-                progress_info.push_str(&format!("{} task status: {}. ", task_type, task_status));
+                queue_info.push_str(&format!("{} task status: {}. ", task_type, task_status));
             }
         }
 
-        if progress_info.is_empty() {
-            progress_info = format!("Job {} is {}", job_id, status);
-        }
-    } else if status == "completed" {
-        progress_info = "Job completed successfully".to_string();
-    } else if status == "failed" {
-        if let Some(err) = &error_msg {
-            progress_info = format!("Job failed: {}", err);
+        if total_queued > 0 {
+            // Format in a way bonsai-sdk recognizes as "still processing"
+            format!("Proof job in progress. {}", queue_info)
+        } else if queue_info.is_empty() {
+            format!("Job {} is {}", job_id, status_value)
         } else {
-            progress_info = "Job failed with unknown error".to_string();
+            format!("Processing. {}", queue_info)
+        }
+    } else if status_value == "completed" {
+        "Job completed successfully".to_string()
+    } else if status_value == "failed" {
+        if let Some(err) = &error_msg {
+            format!("Job failed: {}", err)
+        } else {
+            "Job failed with unknown error".to_string()
         }
     } else {
-        progress_info = "Job status unknown".to_string();
-    }
+        "Job status unknown".to_string()
+    };
 
     Ok(Json(SessionStatusRes {
-        state: Some(status.clone()),
+        // Use the standardized bonsai state values
+        state: Some(bonsai_state.to_string()),
         receipt_url,
         error_msg,
         status: progress_info,
@@ -727,34 +724,17 @@ async fn prove_groth16(
         .await
         .context("Failed to initialize task status")?;
 
-    // Enqueue the task - Use the workflow crate's expected queue format
-    // Try multiple formats to ensure compatibility
-    tracing::info!("Enqueueing SNARK task to multiple possible queue formats");
+    // Enqueue the task - Using exact expected queue name from workflow crate
+    tracing::info!("Enqueueing SNARK task to queue");
 
-    // Format 1: Standard Redis queue format with {stream}:{user_id}
-    let queue_key = format!("tasks:{}:{}", workflow_common::SNARK_WORK_TYPE, USER_ID);
+    // The key format based on workflow implementation
+    let queue_key = workflow_common::SNARK_WORK_TYPE; // Direct stream name - "snark"
     let task_json = serde_json::to_string(&task)
         .context("Failed to serialize task to JSON")?;
-    conn.rpush(&queue_key, task_json.clone())
+    conn.rpush(queue_key, task_json)
         .await
-        .context("Failed to push task to Redis queue (format 1)")?;
-    tracing::debug!("Enqueued task to '{}'", queue_key);
-
-    // Format 2: queue:{stream} format
-    let queue_key2 = format!("queue:{}", workflow_common::SNARK_WORK_TYPE);
-    conn.rpush(&queue_key2, task_json.clone())
-        .await
-        .context("Failed to push task to Redis queue (format 2)")?;
-    tracing::debug!("Enqueued task to '{}'", queue_key2);
-
-    // Format 3: Just the stream name
-    let queue_key3 = workflow_common::SNARK_WORK_TYPE.to_string();
-    conn.rpush(&queue_key3, task_json)
-        .await
-        .context("Failed to push task to Redis queue (format 3)")?;
-    tracing::debug!("Enqueued task to '{}'", queue_key3);
-
-    tracing::info!("Successfully enqueued SNARK task to multiple possible queue formats");
+        .context("Failed to push task to Redis queue")?;
+    tracing::info!("Successfully enqueued SNARK task to '{}' queue", queue_key);
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
@@ -773,40 +753,50 @@ async fn groth16_status(
     let status_key = format!("status:{}", job_id);
     let status: Option<String> = conn.get(&status_key).await.ok();
 
-    let status = status.unwrap_or_else(|| "unknown".to_string());
-    tracing::debug!("SNARK job {} status: {}", job_id, status);
+    let status_value = status.unwrap_or_else(|| "unknown".to_string());
+    tracing::debug!("SNARK job {} status: {}", job_id, status_value);
 
-    // Check for multiple possible error locations
-    let mut error_msg = None;
-    if status == "failed" {
+    // Map Redis status to bonsai-sdk status string values
+    let bonsai_status = match status_value.as_str() {
+        "completed" => "Success",
+        "failed" => "Failed",
+        "processing" => "Running",
+        "pending" => "Pending",
+        _ => "Pending", // Default to Pending for unknown states
+    };
+
+    // Check for multiple possible error locations, but only expose error for failed status
+    let error_msg = if status_value == "failed" {
         // Check direct error key
         let error_key = format!("error:{}", job_id);
         if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&error_key).await {
             tracing::debug!("Found error message in error:{} key: {}", job_id, msg);
-            error_msg = Some(msg);
+            Some(msg)
         } else {
             // Check workflow error key
             let workflow_error_key = format!("workflow:error:{}", job_id);
             if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&workflow_error_key).await {
                 tracing::debug!("Found error message in workflow:error:{} key: {}", job_id, msg);
-                error_msg = Some(msg);
+                Some(msg)
             } else {
                 // Check snark error key
                 let snark_error_key = format!("snark:error:{}", job_id);
                 if let Ok(Some(msg)) = conn.get::<_, Option<String>>(&snark_error_key).await {
                     tracing::debug!("Found error message in snark:error:{} key: {}", job_id, msg);
-                    error_msg = Some(msg);
+                    Some(msg)
                 } else {
                     // Default error message if none found
                     tracing::debug!("No specific error message found for SNARK job {}", job_id);
-                    error_msg = Some("SNARK task failed with unknown error".to_string());
+                    Some("SNARK task failed with unknown error".to_string())
                 }
             }
         }
-    }
+    } else {
+        None
+    };
 
     // Check if we have a result
-    let output = if status == "completed" {
+    let output = if status_value == "completed" {
         // Generate download URL
         let hostname = headers.get("host")
             .and_then(|h| h.to_str().ok())
@@ -817,46 +807,65 @@ async fn groth16_status(
         None
     };
 
-    // Add progress information to status
-    let mut status_with_progress = status.clone();
-    if status == "pending" || status == "processing" {
+    // Build progress info for status field that SDK will recognize
+    let status_with_progress = if status_value == "pending" || status_value == "processing" {
+        // Count tasks in queues
+        let mut queue_info = String::new();
+        let mut total_queued = 0;
+
         // Check task-specific status
         let task_status_key = format!("task_status:{}:snark", job_id);
         if let Ok(Some(task_status)) = conn.get::<_, Option<String>>(&task_status_key).await {
-            status_with_progress = format!("{} - SNARK task: {}", status, task_status);
+            queue_info.push_str(&format!("SNARK task: {}. ", task_status));
         }
 
-        // Check queue length
-        let queue_key = "queue:snark";
+        // Check correct queue format
+        let queue_key = workflow_common::SNARK_WORK_TYPE;
         if let Ok(len) = conn.llen::<_, i64>(queue_key).await {
             if len > 0 {
-                status_with_progress.push_str(&format!(". {} tasks in queue", len));
+                total_queued += len;
+                queue_info.push_str(&format!("{} tasks in {} queue. ", len, queue_key));
             }
         }
 
         // Add elapsed time if available
-        if let Ok(Some(start_time)) = conn.get::<_, Option<String>>(&format!("start_time:{}", job_id)).await {
+        let time_info = if let Ok(Some(start_time)) = conn.get::<_, Option<String>>(&format!("start_time:{}", job_id)).await {
             if let Ok(start) = start_time.parse::<u64>() {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
 
-                status_with_progress.push_str(&format!(". Running for {} seconds", now - start));
+                format!(". Running for {} seconds", now - start)
+            } else {
+                String::new()
             }
-        }
-    } else if status == "completed" {
-        status_with_progress = "completed - SNARK proof generation successful".to_string();
-    } else if status == "failed" {
-        if let Some(err) = &error_msg {
-            status_with_progress = format!("failed - SNARK proof generation failed: {}", err);
         } else {
-            status_with_progress = "failed - SNARK proof generation failed with unknown error".to_string();
+            String::new()
+        };
+
+        if total_queued > 0 {
+            // Use format that the SDK recognizes as "still processing"
+            format!("SNARK proof generation in progress{}", time_info)
+        } else if !queue_info.is_empty() {
+            format!("Processing. {}{}", queue_info, time_info)
+        } else {
+            format!("SNARK job {} is {}{}", job_id, bonsai_status, time_info)
         }
-    }
+    } else if status_value == "completed" {
+        "SNARK proof generation successful".to_string()
+    } else if status_value == "failed" {
+        if let Some(err) = &error_msg {
+            format!("SNARK proof generation failed: {}", err)
+        } else {
+            "SNARK proof generation failed with unknown error".to_string()
+        }
+    } else {
+        format!("SNARK job status: {}", bonsai_status)
+    };
 
     Ok(Json(SnarkStatusRes {
-        status: status_with_progress,
+        status: bonsai_status.to_string(),
         error_msg,
         output
     }))
