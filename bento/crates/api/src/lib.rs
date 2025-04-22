@@ -354,14 +354,33 @@ async fn prove_stark(
         .await
         .context("Failed to initialize task status")?;
 
-    // Enqueue the task
-    let queue_key = format!("queue:executor");
+    // Enqueue the task - Use the workflow crate's expected queue format
+    // Try multiple formats to ensure compatibility
+
+    // Format 1: Standard Redis queue format with {stream}:{user_id}
+    let queue_key = format!("tasks:{}:{}", workflow_common::EXEC_WORK_TYPE, USER_ID);
     let task_json = serde_json::to_string(&task)
         .context("Failed to serialize task to JSON")?;
-    conn.rpush(&queue_key, task_json)
+    conn.rpush(&queue_key, task_json.clone())
         .await
-        .context("Failed to push task to Redis queue")?;
-    tracing::info!("Successfully enqueued task to 'executor' queue");
+        .context("Failed to push task to Redis queue (format 1)")?;
+    tracing::debug!("Enqueued task to '{}'", queue_key);
+
+    // Format 2: queue:{stream} format (our current implementation)
+    let queue_key2 = format!("queue:{}", workflow_common::EXEC_WORK_TYPE);
+    conn.rpush(&queue_key2, task_json.clone())
+        .await
+        .context("Failed to push task to Redis queue (format 2)")?;
+    tracing::debug!("Enqueued task to '{}'", queue_key2);
+
+    // Format 3: Just the stream name
+    let queue_key3 = workflow_common::EXEC_WORK_TYPE.to_string();
+    conn.rpush(&queue_key3, task_json)
+        .await
+        .context("Failed to push task to Redis queue (format 3)")?;
+    tracing::debug!("Enqueued task to '{}'", queue_key3);
+
+    tracing::info!("Successfully enqueued task to multiple possible queue formats");
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
@@ -456,17 +475,20 @@ async fn stark_status(
     let mut progress_info = String::new();
 
     if status == "pending" || status == "processing" {
-        // Check number of tasks in queues
-        for queue_name in &["executor", "prove", "join"] {
-            let queue_key = format!("queue:{}", queue_name);
-            if let Ok(len) = conn.llen::<_, i64>(&queue_key).await {
+        // Check number of tasks in multiple possible queue formats
+        for queue_format in &[
+            format!("tasks:{}:{}", workflow_common::EXEC_WORK_TYPE, USER_ID),
+            format!("queue:{}", workflow_common::EXEC_WORK_TYPE),
+            workflow_common::EXEC_WORK_TYPE.to_string()
+        ] {
+            if let Ok(len) = conn.llen::<_, i64>(queue_format).await {
                 if len > 0 {
-                    progress_info.push_str(&format!("{} tasks in {} queue. ", len, queue_name));
+                    progress_info.push_str(&format!("{} tasks in {} queue. ", len, queue_format));
                 }
             }
         }
 
-        // Get task-specific status
+        // Check task-specific status
         for task_type in &["executor", "prove", "join"] {
             let task_status_key = format!("task_status:{}:{}", job_id, task_type);
             if let Ok(Some(task_status)) = conn.get::<_, Option<String>>(&task_status_key).await {
@@ -705,15 +727,34 @@ async fn prove_groth16(
         .await
         .context("Failed to initialize task status")?;
 
-    // Enqueue the task
-    tracing::info!("Attempting to enqueue task to 'snark' queue");
-    let queue_key = format!("queue:snark");
+    // Enqueue the task - Use the workflow crate's expected queue format
+    // Try multiple formats to ensure compatibility
+    tracing::info!("Enqueueing SNARK task to multiple possible queue formats");
+
+    // Format 1: Standard Redis queue format with {stream}:{user_id}
+    let queue_key = format!("tasks:{}:{}", workflow_common::SNARK_WORK_TYPE, USER_ID);
     let task_json = serde_json::to_string(&task)
         .context("Failed to serialize task to JSON")?;
-    conn.rpush(&queue_key, task_json)
+    conn.rpush(&queue_key, task_json.clone())
         .await
-        .context("Failed to push task to Redis queue")?;
-    tracing::info!("Successfully enqueued task to 'snark' queue");
+        .context("Failed to push task to Redis queue (format 1)")?;
+    tracing::debug!("Enqueued task to '{}'", queue_key);
+
+    // Format 2: queue:{stream} format
+    let queue_key2 = format!("queue:{}", workflow_common::SNARK_WORK_TYPE);
+    conn.rpush(&queue_key2, task_json.clone())
+        .await
+        .context("Failed to push task to Redis queue (format 2)")?;
+    tracing::debug!("Enqueued task to '{}'", queue_key2);
+
+    // Format 3: Just the stream name
+    let queue_key3 = workflow_common::SNARK_WORK_TYPE.to_string();
+    conn.rpush(&queue_key3, task_json)
+        .await
+        .context("Failed to push task to Redis queue (format 3)")?;
+    tracing::debug!("Enqueued task to '{}'", queue_key3);
+
+    tracing::info!("Successfully enqueued SNARK task to multiple possible queue formats");
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
 }
