@@ -30,6 +30,17 @@ use workflow_common::{
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
 };
 
+// TaskEntry is the format expected by the workflow crate's worker
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Task {
+    pub job_id: Uuid,
+    pub task_id: String,
+    pub task_def: serde_json::Value,
+    pub prereqs: Vec<String>,
+    pub max_retries: i32,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ErrMsg {
     pub r#type: String,
@@ -300,6 +311,22 @@ async fn prove_stark(
         .await
         .context("Failed to store input with job_id")?;
 
+    // Initialize job status in Redis
+    let status_key = format!("status:{}", job_id);
+    conn.set(&status_key, "pending")
+        .await
+        .context("Failed to initialize job status")?;
+
+    // Store start time
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let start_time_key = format!("start_time:{}", job_id);
+    conn.set(&start_time_key, start_time.to_string())
+        .await
+        .context("Failed to store job start time")?;
+
     let task_def = serde_json::to_value(TaskType::Executor(ExecutorReq {
         image: start_req.img,
         input: start_req.input,
@@ -322,9 +349,19 @@ async fn prove_stark(
     };
     tracing::info!("Created task with job_id: {}", job_id);
 
-    task_queue::enqueue_task(&mut conn, "executor", task)
+    // Initialize task status
+    let task_status_key = format!("task_status:{}:executor", job_id);
+    conn.set(&task_status_key, "pending")
         .await
-        .context("Failed to create exec / init task")?;
+        .context("Failed to initialize task status")?;
+
+    // Enqueue the task
+    let queue_key = format!("queue:executor");
+    let task_json = serde_json::to_string(&task)
+        .context("Failed to serialize task to JSON")?;
+    conn.rpush(&queue_key, task_json)
+        .await
+        .context("Failed to push task to Redis queue")?;
     tracing::info!("Successfully enqueued task to 'executor' queue");
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
@@ -646,10 +683,37 @@ async fn prove_groth16(
     tracing::info!("Created task with job_id: {}", job_id);
 
     let mut conn = state.redis_client.lock().await;
-    tracing::info!("Attempting to enqueue task to 'snark' queue");
-    task_queue::enqueue_task(&mut conn, "snark", task)
+
+    // Initialize job status in Redis
+    let status_key = format!("status:{}", job_id);
+    conn.set(&status_key, "pending")
         .await
-        .context("Failed to create exec / init task")?;
+        .context("Failed to initialize job status")?;
+
+    // Store start time
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let start_time_key = format!("start_time:{}", job_id);
+    conn.set(&start_time_key, start_time.to_string())
+        .await
+        .context("Failed to store job start time")?;
+
+    // Initialize task status
+    let task_status_key = format!("task_status:{}:snark", job_id);
+    conn.set(&task_status_key, "pending")
+        .await
+        .context("Failed to initialize task status")?;
+
+    // Enqueue the task
+    tracing::info!("Attempting to enqueue task to 'snark' queue");
+    let queue_key = format!("queue:snark");
+    let task_json = serde_json::to_string(&task)
+        .context("Failed to serialize task to JSON")?;
+    conn.rpush(&queue_key, task_json)
+        .await
+        .context("Failed to push task to Redis queue")?;
     tracing::info!("Successfully enqueued task to 'snark' queue");
 
     Ok(Json(CreateSessRes { uuid: job_id.to_string() }))
