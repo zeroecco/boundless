@@ -28,6 +28,7 @@ use uuid::Uuid;
 use workflow_common::{
     CompressType, ExecutorReq, SnarkReq as WorkflowSnarkReq, TaskType,
 };
+use serde_json::json;
 
 // Define the task structure for the Redis queue
 #[derive(Debug, Deserialize, Serialize)]
@@ -372,7 +373,7 @@ async fn stark_status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(job_id): Path<Uuid>,
-) -> Result<Json<SessionStatusRes>, AppError> {
+) -> Result<Response, AppError> {
     tracing::info!("Checking status for STARK job: {}", job_id);
 
     let mut conn = state.redis_client.lock().await;
@@ -440,7 +441,7 @@ async fn stark_status(
     let exec_stats = if status_value == "completed" {
         let stats_key = format!("stats:{}", job_id);
         match conn.get::<_, Option<String>>(&stats_key).await {
-            Ok(Some(stats_json)) => serde_json::from_str(&stats_json).ok(),
+            Ok(Some(stats_json)) => serde_json::from_str::<serde_json::Value>(&stats_json).ok(),
             _ => None,
         }
     } else {
@@ -507,15 +508,36 @@ async fn stark_status(
         "Job status unknown".to_string()
     };
 
-    Ok(Json(SessionStatusRes {
-        // Use the standardized bonsai state values
-        state: Some(bonsai_state.to_string()),
-        receipt_url,
-        error_msg,
-        status: progress_info,
-        elapsed_time,
-        stats: exec_stats,
-    }))
+    // Create response manually with serde_json to completely omit fields that are None
+    // This is critical to match bonsai-sdk expectations
+    let mut response = json!({
+        "state": bonsai_state.to_string(),
+        "status": progress_info,
+        "error_msg": null  // Always include error_msg field set to null for non-failed jobs
+    });
+
+    // Only add receipt_url if it exists
+    if let Some(url) = receipt_url {
+        response["receipt_url"] = json!(url);
+    }
+
+    // Set error_msg to the actual error for failed jobs
+    if let Some(err) = error_msg {
+        response["error_msg"] = json!(err);
+    }
+
+    // Only add elapsed_time if it exists
+    if let Some(time) = elapsed_time {
+        response["elapsed_time"] = json!(time);
+    }
+
+    // Only add stats if they exist
+    if let Some(stats) = exec_stats {
+        response["stats"] = serde_json::to_value(stats).unwrap_or(json!(null));
+    }
+
+    // Return the custom JSON response
+    Ok((StatusCode::OK, axum::Json(response)).into_response())
 }
 
 const GET_STARK_PATH: &str = "/receipts/stark/receipt/{job_id}";
@@ -744,7 +766,7 @@ async fn groth16_status(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<SnarkStatusRes>, AppError> {
+) -> Result<Response, AppError> {
     tracing::info!("Checking status for SNARK job: {}", job_id);
 
     let mut conn = state.redis_client.lock().await;
@@ -864,11 +886,26 @@ async fn groth16_status(
         format!("SNARK job status: {}", bonsai_status)
     };
 
-    Ok(Json(SnarkStatusRes {
-        status: bonsai_status.to_string(),
-        error_msg,
-        output
-    }))
+    // Create response manually with serde_json to completely omit fields that are None
+    // This is critical to match bonsai-sdk expectations
+    let mut response = json!({
+        "state": bonsai_status.to_string(),
+        "status": status_with_progress,
+        "error_msg": null  // Always include error_msg field set to null for non-failed jobs
+    });
+
+    // Only add output if it exists
+    if let Some(url) = output {
+        response["output"] = json!(url);
+    }
+
+    // Only add error_msg if it exists (for failed jobs)
+    if let Some(err) = error_msg {
+        response["error_msg"] = json!(err);
+    }
+
+    // Return the custom JSON response
+    Ok((StatusCode::OK, axum::Json(response)).into_response())
 }
 
 const GET_GROTH16_PATH: &str = "/receipts/groth16/receipt/{job_id}";
