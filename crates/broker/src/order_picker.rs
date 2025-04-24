@@ -719,13 +719,15 @@ where
 
         let gas_balance_reserved = self.gas_balance_reserved().await?;
 
+        let available = balance.saturating_sub(gas_balance_reserved);
         tracing::debug!(
-            "Available Balance = account_balance({}) - expected_future_gas({})",
+            "available gas balance: (account_balance) {} - (expected_future_gas) {} = {}",
             format_ether(balance),
-            format_ether(gas_balance_reserved)
+            format_ether(gas_balance_reserved),
+            format_ether(available)
         );
 
-        Ok(balance - gas_balance_reserved)
+        Ok(available)
     }
 
     /// Return available stake balance.
@@ -800,7 +802,7 @@ impl Capacity {
     fn increment_locked_order(&mut self) {
         match self {
             Capacity::Idle(capacity) | Capacity::PartiallyLocked(capacity) => {
-                *capacity = capacity.saturating_sub(1)
+                *self = Capacity::PartiallyLocked(capacity.saturating_sub(1))
             }
             Capacity::Unlimited => (),
         }
@@ -855,12 +857,15 @@ where
                             .get_pricing_order_capacity()
                             .await
                             .map_err(SupervisorErr::Recover)?;
+
+                        tracing::trace!("Updated capacity to {capacity:?}");
                     }
 
                     _ = pricing_check_timer.tick() => {
                         // Queue up orders that can be added to capacity.
                         let order_size = capacity.request_size(pricing_tasks.len());
 
+                        tracing::trace!("Spawing {} pricing tasks - {} tasks already running", order_size, pricing_tasks.len());
                         picker_copy
                             .spawn_pricing_tasks(&mut pricing_tasks, order_size)
                             .await
@@ -869,12 +874,13 @@ where
 
                     // Process completed pricing tasks
                     Some(result) = pricing_tasks.join_next() => {
+                        tracing::trace!("Pricing task completed with result: {result:?}");
                         match result {
                             Ok(true) => {
                                 capacity.increment_locked_order();
                             }
                             Ok(false) => {
-                                // Order was not successfully marked as locked
+                                // Order was not selected for locking.
                             }
                             Err(e) => {
                                 return Err(SupervisorErr::Recover(anyhow::anyhow!("Pricing task failed: {e}")));
