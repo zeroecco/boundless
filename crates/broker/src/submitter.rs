@@ -13,7 +13,7 @@ use alloy::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use boundless_market::{
     contracts::{
-        boundless_market::{BoundlessMarketService, MarketError},
+        boundless_market::{BoundlessMarketService, Fulfill, MarketError},
         encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, ProofRequest,
     },
     selector::is_groth16_selector,
@@ -285,52 +285,18 @@ where
             prover: self.prover_address,
             callbacks: assessor_journal.callbacks,
         };
+        let mut fulfill = Fulfill::new(self.market.clone(), fulfillments.clone(), assessor_receipt)
+            .with_submit_root(self.set_verifier_addr, root, batch_seal.into());
         if !requests_to_price.is_empty() {
             let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
                 requests_to_price.into_iter().unzip();
-            tracing::info!(
-                "Fulfilling {} requests, and pricing {} requests using priceAndFulfill",
-                fulfillments.len(),
-                requests.len()
-            );
-            if let Err(err) = self
-                .market
-                .submit_root_and_price_fulfill(
-                    self.set_verifier_addr,
-                    root,
-                    batch_seal.into(),
-                    requests,
-                    client_sigs,
-                    fulfillments.clone(),
-                    assessor_receipt,
-                )
-                .await
-            {
-                let order_ids: Vec<&str> = fulfillments
-                    .iter()
-                    .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
-                    .collect();
-                self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
-            }
-        } else {
-            tracing::info!("Fulfilling {} requests using fulfill", fulfillments.len());
-            if let Err(err) = self
-                .market
-                .submit_root_and_fulfill(
-                    self.set_verifier_addr,
-                    root,
-                    batch_seal.into(),
-                    fulfillments.clone(),
-                    assessor_receipt,
-                )
-                .await
-            {
-                let order_ids: Vec<&str> = fulfillments
-                    .iter()
-                    .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
-                    .collect();
-                self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
-            }
+            fulfill = fulfill.with_price(requests.clone(), client_sigs.clone());
+        }
+
+        if let Err(err) = fulfill.send().await {
+            let order_ids: Vec<&str> =
+                fulfillments.iter().map(|f| *fulfillment_to_order_id.get(&f.id).unwrap()).collect();
+            self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
         }
 
         for fulfillment in fulfillments.iter() {

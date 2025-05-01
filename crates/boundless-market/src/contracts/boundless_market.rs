@@ -539,7 +539,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// Fulfill a batch of requests by delivering the proof for each application.
     ///
     /// See [BoundlessMarketService::fulfill] for more details.
-    pub async fn fulfill(
+    async fn fulfill(
         &self,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
@@ -561,7 +561,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// Fulfill a batch of requests by delivering the proof for each application and withdraw from the prover balance.
     ///
     /// See [BoundlessMarketService::fulfill] for more details.
-    pub async fn fulfill_and_withdraw(
+    async fn fulfill_and_withdraw(
         &self,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
@@ -582,7 +582,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
     /// Combined function to submit a new merkle root to the set-verifier and call `fulfill`.
     /// Useful to reduce the transaction count for fulfillments
-    pub async fn submit_root_and_fulfill(
+    async fn submit_root_and_fulfill(
         &self,
         verifier_address: Address,
         root: B256,
@@ -609,7 +609,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
     /// Combined function to submit a new merkle root to the set-verifier and call `fulfillAndWithdraw`.
     /// Useful to reduce the transaction count for fulfillments
-    pub async fn submit_root_and_fulfill_and_withdraw(
+    async fn submit_root_and_fulfill_and_withdraw(
         &self,
         verifier_address: Address,
         root: B256,
@@ -641,7 +641,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// A combined call to `IBoundlessMarket.priceRequest` and `IBoundlessMarket.fulfill`.
     /// The caller should provide the signed request and signature for each unlocked request they
     /// want to fulfill. Payment for unlocked requests will go to the provided `prover` address.
-    pub async fn price_and_fulfill(
+    async fn price_and_fulfill(
         &self,
         requests: Vec<ProofRequest>,
         client_sigs: Vec<Bytes>,
@@ -683,7 +683,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// A combined call to `IBoundlessMarket.priceRequest` and `IBoundlessMarket.fulfillAndWithdraw`.
     /// The caller should provide the signed request and signature for each unlocked request they
     /// want to fulfill. Payment for unlocked requests will go to the provided `prover` address.
-    pub async fn price_and_fulfill_and_withdraw(
+    async fn price_and_fulfill_and_withdraw(
         &self,
         requests: Vec<ProofRequest>,
         client_sigs: Vec<Bytes>,
@@ -725,7 +725,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// Combined function to submit a new merkle root to the set-verifier and call `priceAndfulfill`.
     /// Useful to reduce the transaction count for fulfillments
     #[allow(clippy::too_many_arguments)]
-    pub async fn submit_root_and_price_fulfill(
+    async fn submit_root_and_price_fulfill(
         &self,
         verifier_address: Address,
         root: B256,
@@ -765,7 +765,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// Combined function to submit a new merkle root to the set-verifier and call `priceAndFulfillAndWithdraw`.
     /// Useful to reduce the transaction count for fulfillments
     #[allow(clippy::too_many_arguments)]
-    pub async fn submit_root_and_price_fulfill_and_withdraw(
+    async fn submit_root_and_price_fulfill_and_withdraw(
         &self,
         verifier_address: Address,
         root: B256,
@@ -1391,6 +1391,167 @@ pub fn decode_calldata(data: &Bytes) -> Result<(Vec<Fulfillment>, AssessorReceip
         "Failed to decode calldata with selector {} as any fulfillment call",
         hex::encode(&data[0..4])
     ))
+}
+
+#[derive(Debug, Clone)]
+/// Represents the parameters for submitting a Merkle Root.
+pub struct Root {
+    /// The address of the set verifier contract.
+    pub verifier_address: Address,
+    /// The Merkle root of the proof.
+    pub root: B256,
+    /// The seal of the proof.
+    pub seal: Bytes,
+}
+
+#[derive(Debug, Clone)]
+/// Represents the parameters for pricing a request.
+pub struct Price {
+    /// The list of requests to be priced.
+    pub requests: Vec<ProofRequest>,
+    /// The list of client signatures for the requests.
+    pub client_sigs: Vec<Bytes>,
+}
+
+#[derive(Clone)]
+/// Represents the parameters for a fulfillment.
+pub struct Fulfill<P> {
+    /// The Boundless market service instance.
+    pub boundless_market: BoundlessMarketService<P>,
+    /// The parameters for submitting a Merkle Root
+    pub root: Option<Root>,
+    /// The parameters for pricing a request
+    pub price: Option<Price>,
+    /// The fulfillments to be submitted
+    pub fulfillments: Vec<Fulfillment>,
+    /// The assessor receipt
+    pub assessor_receipt: AssessorReceipt,
+    /// Whether to withdraw the fee
+    pub withdraw: bool,
+}
+
+impl<P: Provider> Fulfill<P> {
+    /// Creates a new instance of the `Fulfill` struct.
+    pub fn new(
+        boundless_market: BoundlessMarketService<P>,
+        fulfillments: Vec<Fulfillment>,
+        assessor_receipt: AssessorReceipt,
+    ) -> Self {
+        Self {
+            boundless_market,
+            root: None,
+            price: None,
+            fulfillments,
+            assessor_receipt,
+            withdraw: false,
+        }
+    }
+
+    /// Sets the parameters for submitting a Merkle Root.
+    pub fn with_submit_root(self, verifier_address: Address, root: B256, seal: Bytes) -> Self {
+        Self { root: Some(Root { verifier_address, root, seal }), ..self }
+    }
+
+    /// Sets the parameters for pricing a request.
+    pub fn with_price(self, requests: Vec<ProofRequest>, client_sigs: Vec<Bytes>) -> Self {
+        Self { price: Some(Price { requests, client_sigs }), ..self }
+    }
+
+    /// Sets whether to withdraw the fee.
+    pub fn with_withdraw(self, withdraw: bool) -> Self {
+        Self { withdraw, ..self }
+    }
+
+    /// Fulfill a batch of requests by delivering the proof for each application.
+    ///
+    /// This function can be called with a `Fulfill` struct that contains the root, price, and
+    /// fulfillments. The root and price can be `None` if the caller does not want to submit a new
+    /// root or price. The `withdraw` field indicates whether the prover should withdraw their
+    /// balance after fulfilling the requests.
+    pub async fn send(&self) -> Result<(), MarketError> {
+        let root = self.root.clone();
+        let price = self.price.clone();
+        let fulfillments = self.fulfillments.clone();
+        let assessor_receipt = self.assessor_receipt.clone();
+        match (root, price, self.withdraw) {
+            (None, None, false) => {
+                self.boundless_market.fulfill(fulfillments, assessor_receipt).await
+            }
+            (None, None, true) => {
+                self.boundless_market.fulfill_and_withdraw(fulfillments, assessor_receipt).await
+            }
+            (None, Some(price), false) => {
+                self.boundless_market
+                    .price_and_fulfill(
+                        price.requests,
+                        price.client_sigs,
+                        fulfillments,
+                        assessor_receipt,
+                        None,
+                    )
+                    .await
+            }
+            (None, Some(price), true) => {
+                self.boundless_market
+                    .price_and_fulfill_and_withdraw(
+                        price.requests,
+                        price.client_sigs,
+                        fulfillments,
+                        assessor_receipt,
+                        None,
+                    )
+                    .await
+            }
+            (Some(root), None, false) => {
+                self.boundless_market
+                    .submit_root_and_fulfill(
+                        root.verifier_address,
+                        root.root,
+                        root.seal,
+                        fulfillments,
+                        assessor_receipt,
+                    )
+                    .await
+            }
+            (Some(root), None, true) => {
+                self.boundless_market
+                    .submit_root_and_fulfill_and_withdraw(
+                        root.verifier_address,
+                        root.root,
+                        root.seal,
+                        fulfillments,
+                        assessor_receipt,
+                    )
+                    .await
+            }
+            (Some(root), Some(price), false) => {
+                self.boundless_market
+                    .submit_root_and_price_fulfill(
+                        root.verifier_address,
+                        root.root,
+                        root.seal,
+                        price.requests,
+                        price.client_sigs,
+                        fulfillments,
+                        assessor_receipt,
+                    )
+                    .await
+            }
+            (Some(root), Some(price), true) => {
+                self.boundless_market
+                    .submit_root_and_price_fulfill_and_withdraw(
+                        root.verifier_address,
+                        root.root,
+                        root.seal,
+                        price.requests,
+                        price.client_sigs,
+                        fulfillments,
+                        assessor_receipt,
+                    )
+                    .await
+            }
+        }
+    }
 }
 
 #[cfg(test)]

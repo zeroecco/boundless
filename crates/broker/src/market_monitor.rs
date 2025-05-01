@@ -528,7 +528,8 @@ mod tests {
     };
     use boundless_market::{
         contracts::{
-            boundless_market::BoundlessMarketService, hit_points::default_allowance,
+            boundless_market::{BoundlessMarketService, Fulfill},
+            hit_points::default_allowance,
             AssessorReceipt, Input, InputType, Offer, Predicate, PredicateType, ProofRequest,
             Requirements,
         },
@@ -708,7 +709,10 @@ mod tests {
             callbacks: vec![],
         };
         // fulfill the request
-        ctx.prover_market.fulfill(vec![fulfillment.clone()], assessor_fill).await.unwrap();
+        Fulfill::new(ctx.prover_market.clone(), vec![fulfillment.clone()], assessor_fill.clone())
+            .send()
+            .await
+            .unwrap();
         assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
 
         // retrieve journal and seal from the fulfilled request

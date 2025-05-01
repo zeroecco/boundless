@@ -73,8 +73,9 @@ use url::Url;
 use boundless_market::{
     client::{Client, ClientBuilder},
     contracts::{
-        boundless_market::BoundlessMarketService, Callback, Input, InputType, Offer, Predicate,
-        PredicateType, ProofRequest, RequestId, Requirements, UNSPECIFIED_SELECTOR,
+        boundless_market::{BoundlessMarketService, Fulfill},
+        Callback, Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId,
+        Requirements, UNSPECIFIED_SELECTOR,
     },
     input::{GuestEnv, InputBuilder},
     selector::ProofType,
@@ -866,18 +867,20 @@ where
             let (fills, root_receipt, assessor_receipt) = prover.fulfill(&orders).await?;
             let order_fulfilled = OrderFulfilled::new(fills, root_receipt, assessor_receipt)?;
 
-            match boundless_market
-                .submit_root_and_price_fulfill(
-                    args.config.set_verifier_address,
-                    order_fulfilled.root,
-                    order_fulfilled.seal,
-                    requests_to_price,
-                    signatures,
-                    order_fulfilled.fills,
-                    order_fulfilled.assessorReceipt,
-                )
-                .await
-            {
+            let fulfill = Fulfill::new(
+                boundless_market,
+                order_fulfilled.fills,
+                order_fulfilled.assessorReceipt,
+            )
+            .with_submit_root(
+                args.config.set_verifier_address,
+                order_fulfilled.root,
+                order_fulfilled.seal,
+            )
+            .with_price(requests_to_price, signatures)
+            .send()
+            .await;
+            match fulfill {
                 Ok(_) => {
                     tracing::info!("Successfully fulfilled requests {}", request_ids_string);
                     Ok(())
