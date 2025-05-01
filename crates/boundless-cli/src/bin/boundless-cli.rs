@@ -816,6 +816,7 @@ where
                 .with_private_key(args.config.private_key.clone())
                 .with_rpc_url(args.config.rpc_url.clone())
                 .with_boundless_market_address(args.config.boundless_market_address)
+                .with_set_verifier_address(args.config.set_verifier_address)
                 .with_order_stream_url(order_stream_url.clone())
                 .with_timeout(args.config.tx_timeout)
                 .build()

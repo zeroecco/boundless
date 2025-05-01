@@ -254,7 +254,7 @@ async fn test_e2e() {
         callbacks: vec![],
     };
     // fulfill the request
-    ctx.prover_market.fulfill(&fulfillment, assessor_fill).await.unwrap();
+    ctx.prover_market.fulfill(vec![fulfillment.clone()], assessor_fill).await.unwrap();
     assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
 
     // retrieve journal and seal from the fulfilled request
@@ -414,7 +414,7 @@ async fn test_e2e_price_and_fulfill_batch() {
 
     // Price and fulfill the request
     ctx.prover_market
-        .price_and_fulfill_batch(
+        .price_and_fulfill(
             vec![request],
             vec![customer_sig],
             fulfillments.clone(),
@@ -509,7 +509,7 @@ async fn test_e2e_no_payment() {
 
         let balance_before = ctx.prover_market.balance_of(some_other_address).await.unwrap();
         // fulfill the request.
-        ctx.prover_market.fulfill(&fulfillment, assessor_fill.clone()).await.unwrap();
+        ctx.prover_market.fulfill(vec![fulfillment.clone()], assessor_fill.clone()).await.unwrap();
         assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
         let balance_after = ctx.prover_market.balance_of(some_other_address).await.unwrap();
         assert!(balance_before == balance_after);
@@ -537,7 +537,7 @@ async fn test_e2e_no_payment() {
     };
 
     // fulfill the request, this time getting paid.
-    ctx.prover_market.fulfill(&fulfillment, assessor_fill).await.unwrap();
+    ctx.prover_market.fulfill(vec![fulfillment], assessor_fill).await.unwrap();
     assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
 
     // retrieve journal and seal from the fulfilled request

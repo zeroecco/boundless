@@ -708,7 +708,7 @@ mod tests {
             callbacks: vec![],
         };
         // fulfill the request
-        ctx.prover_market.fulfill(&fulfillment, assessor_fill).await.unwrap();
+        ctx.prover_market.fulfill(vec![fulfillment.clone()], assessor_fill).await.unwrap();
         assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
 
         // retrieve journal and seal from the fulfilled request

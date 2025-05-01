@@ -279,45 +279,17 @@ where
         let assessor_seal =
             assessor_seal.abi_encode_seal().context("ABI encode assessor set inclusion receipt")?;
 
-        let mut single_txn_fulfill = {
-            let config = self.config.lock_all().context("Failed to read config")?;
-            config.batcher.single_txn_fulfill
-        };
-
-        if !requests_to_price.is_empty() && single_txn_fulfill {
-            tracing::warn!("Single txn fulfill is enabled but we are fulfilling requests that were not locked. Overriding single txn fulfill to false.");
-            single_txn_fulfill = false;
-        }
-
         let assessor_receipt = AssessorReceipt {
             seal: assessor_seal.into(),
             selectors: assessor_journal.selectors,
             prover: self.prover_address,
             callbacks: assessor_journal.callbacks,
         };
-        if single_txn_fulfill {
-            if let Err(err) = self
-                .market
-                .submit_root_and_fulfill(
-                    self.set_verifier_addr,
-                    root,
-                    batch_seal.into(),
-                    fulfillments.clone(),
-                    assessor_receipt,
-                )
-                .await
-            {
-                let order_ids: Vec<&str> = fulfillments
-                    .iter()
-                    .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
-                    .collect();
-                self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
-            }
-        } else if !requests_to_price.is_empty() {
+        if !requests_to_price.is_empty() {
             let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
                 requests_to_price.into_iter().unzip();
             tracing::info!(
-                "Fulfilling {} requests, and pricing {} requests using priceAndFulfillBatch",
+                "Fulfilling {} requests, and pricing {} requests using priceAndFulfill",
                 fulfillments.len(),
                 requests.len()
             );
@@ -341,7 +313,7 @@ where
                 self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
             }
         } else {
-            tracing::info!("Fulfilling {} requests using fulfillBatch", fulfillments.len());
+            tracing::info!("Fulfilling {} requests using fulfill", fulfillments.len());
             if let Err(err) = self
                 .market
                 .submit_root_and_fulfill(

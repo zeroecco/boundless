@@ -244,7 +244,7 @@ async fn test_slash_fulfilled() {
 
     // Fulfill the order
     ctx.customer_market
-        .price_and_fulfill_batch(
+        .price_and_fulfill(
             vec![request],
             vec![client_sig],
             order_fulfilled.fills,
