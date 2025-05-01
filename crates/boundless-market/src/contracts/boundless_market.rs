@@ -584,18 +584,24 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// Useful to reduce the transaction count for fulfillments
     async fn submit_root_and_fulfill(
         &self,
-        verifier_address: Address,
-        root: B256,
-        seal: Bytes,
+        root: Root,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
     ) -> Result<(), MarketError> {
         tracing::trace!(
-            "Calling submitRootAndFulfill({root:?}, {seal:x}, {fulfillments:?}, {assessor_fill:?})"
+            "Calling submitRootAndFulfill({:?}, {:x}, {fulfillments:?}, {assessor_fill:?})",
+            root.root,
+            root.seal
         );
         let call = self
             .instance
-            .submitRootAndFulfill(verifier_address, root, seal, fulfillments, assessor_fill)
+            .submitRootAndFulfill(
+                root.verifier_address,
+                root.root,
+                root.seal,
+                fulfillments,
+                assessor_fill,
+            )
             .from(self.caller);
         tracing::trace!("Calldata: {}", call.calldata());
         let pending_tx = call.send().await?;
@@ -611,19 +617,17 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// Useful to reduce the transaction count for fulfillments
     async fn submit_root_and_fulfill_and_withdraw(
         &self,
-        verifier_address: Address,
-        root: B256,
-        seal: Bytes,
+        root: Root,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
     ) -> Result<(), MarketError> {
-        tracing::trace!("Calling submitRootAndFulfillAndWithdraw({root:?}, {seal:x}, {fulfillments:?}, {assessor_fill:?})");
+        tracing::trace!("Calling submitRootAndFulfillAndWithdraw({:?}, {:x}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal);
         let call = self
             .instance
             .submitRootAndFulfillAndWithdraw(
-                verifier_address,
-                root,
-                seal,
+                root.verifier_address,
+                root.root,
+                root.seal,
                 fulfillments,
                 assessor_fill,
             )
@@ -643,8 +647,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// want to fulfill. Payment for unlocked requests will go to the provided `prover` address.
     async fn price_and_fulfill(
         &self,
-        requests: Vec<ProofRequest>,
-        client_sigs: Vec<Bytes>,
+        price: Price,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
         priority_gas: Option<u64>,
@@ -653,7 +656,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         let mut call = self
             .instance
-            .priceAndFulfill(requests, client_sigs, fulfillments, assessor_fill)
+            .priceAndFulfill(price.requests, price.client_sigs, fulfillments, assessor_fill)
             .from(self.caller);
         tracing::trace!("Calldata: {}", call.calldata());
 
@@ -685,8 +688,7 @@ impl<P: Provider> BoundlessMarketService<P> {
     /// want to fulfill. Payment for unlocked requests will go to the provided `prover` address.
     async fn price_and_fulfill_and_withdraw(
         &self,
-        requests: Vec<ProofRequest>,
-        client_sigs: Vec<Bytes>,
+        price: Price,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
         priority_gas: Option<u64>,
@@ -695,7 +697,12 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         let mut call = self
             .instance
-            .priceAndFulfillAndWithdraw(requests, client_sigs, fulfillments, assessor_fill)
+            .priceAndFulfillAndWithdraw(
+                price.requests,
+                price.client_sigs,
+                fulfillments,
+                assessor_fill,
+            )
             .from(self.caller);
         tracing::trace!("Calldata: {}", call.calldata());
 
@@ -724,26 +731,22 @@ impl<P: Provider> BoundlessMarketService<P> {
 
     /// Combined function to submit a new merkle root to the set-verifier and call `priceAndfulfill`.
     /// Useful to reduce the transaction count for fulfillments
-    #[allow(clippy::too_many_arguments)]
     async fn submit_root_and_price_fulfill(
         &self,
-        verifier_address: Address,
-        root: B256,
-        seal: Bytes,
-        requests: Vec<ProofRequest>,
-        client_sigs: Vec<Bytes>,
+        root: Root,
+        price: Price,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
     ) -> Result<(), MarketError> {
-        tracing::debug!("Calling submitRootAndPriceAndFulfill({root:?}, {seal:x}, {requests:?}, {client_sigs:?}, {fulfillments:?}, {assessor_fill:?})");
+        tracing::debug!("Calling submitRootAndPriceAndFulfill({:?}, {:x}, {:?}, {:?}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal, price.requests, price.client_sigs);
         let call = self
             .instance
             .submitRootAndPriceAndFulfill(
-                verifier_address,
-                root,
-                seal,
-                requests,
-                client_sigs,
+                root.verifier_address,
+                root.root,
+                root.seal,
+                price.requests,
+                price.client_sigs,
                 fulfillments,
                 assessor_fill,
             )
@@ -764,26 +767,22 @@ impl<P: Provider> BoundlessMarketService<P> {
 
     /// Combined function to submit a new merkle root to the set-verifier and call `priceAndFulfillAndWithdraw`.
     /// Useful to reduce the transaction count for fulfillments
-    #[allow(clippy::too_many_arguments)]
     async fn submit_root_and_price_fulfill_and_withdraw(
         &self,
-        verifier_address: Address,
-        root: B256,
-        seal: Bytes,
-        requests: Vec<ProofRequest>,
-        client_sigs: Vec<Bytes>,
+        root: Root,
+        price: Price,
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
     ) -> Result<(), MarketError> {
-        tracing::debug!("Calling submitRootAndPriceAndFulfillAndWithdraw({root:?}, {seal:x}, {requests:?}, {client_sigs:?}, {fulfillments:?}, {assessor_fill:?})");
+        tracing::debug!("Calling submitRootAndPriceAndFulfillAndWithdraw({:?}, {:x}, {:?}, {:?}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal, price.requests, price.client_sigs);
         let call = self
             .instance
             .submitRootAndPriceAndFulfillAndWithdraw(
-                verifier_address,
-                root,
-                seal,
-                requests,
-                client_sigs,
+                root.verifier_address,
+                root.root,
+                root.seal,
+                price.requests,
+                price.client_sigs,
                 fulfillments,
                 assessor_fill,
             )
@@ -1482,69 +1481,34 @@ impl<P: Provider> Fulfill<P> {
             }
             (None, Some(price), false) => {
                 self.boundless_market
-                    .price_and_fulfill(
-                        price.requests,
-                        price.client_sigs,
-                        fulfillments,
-                        assessor_receipt,
-                        None,
-                    )
+                    .price_and_fulfill(price, fulfillments, assessor_receipt, None)
                     .await
             }
             (None, Some(price), true) => {
                 self.boundless_market
-                    .price_and_fulfill_and_withdraw(
-                        price.requests,
-                        price.client_sigs,
-                        fulfillments,
-                        assessor_receipt,
-                        None,
-                    )
+                    .price_and_fulfill_and_withdraw(price, fulfillments, assessor_receipt, None)
                     .await
             }
             (Some(root), None, false) => {
                 self.boundless_market
-                    .submit_root_and_fulfill(
-                        root.verifier_address,
-                        root.root,
-                        root.seal,
-                        fulfillments,
-                        assessor_receipt,
-                    )
+                    .submit_root_and_fulfill(root, fulfillments, assessor_receipt)
                     .await
             }
             (Some(root), None, true) => {
                 self.boundless_market
-                    .submit_root_and_fulfill_and_withdraw(
-                        root.verifier_address,
-                        root.root,
-                        root.seal,
-                        fulfillments,
-                        assessor_receipt,
-                    )
+                    .submit_root_and_fulfill_and_withdraw(root, fulfillments, assessor_receipt)
                     .await
             }
             (Some(root), Some(price), false) => {
                 self.boundless_market
-                    .submit_root_and_price_fulfill(
-                        root.verifier_address,
-                        root.root,
-                        root.seal,
-                        price.requests,
-                        price.client_sigs,
-                        fulfillments,
-                        assessor_receipt,
-                    )
+                    .submit_root_and_price_fulfill(root, price, fulfillments, assessor_receipt)
                     .await
             }
             (Some(root), Some(price), true) => {
                 self.boundless_market
                     .submit_root_and_price_fulfill_and_withdraw(
-                        root.verifier_address,
-                        root.root,
-                        root.seal,
-                        price.requests,
-                        price.client_sigs,
+                        root,
+                        price,
                         fulfillments,
                         assessor_receipt,
                     )
