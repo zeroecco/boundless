@@ -571,7 +571,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let call = self.instance.fulfillAndWithdraw(fulfillments, assessor_fill).from(self.caller);
         tracing::trace!("Calldata: {:x}", call.calldata());
         let pending_tx = call.send().await?;
-        tracing::trace!("Broadcasting tx {}", pending_tx.tx_hash());
+        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
         let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
@@ -738,7 +738,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
     ) -> Result<(), MarketError> {
-        tracing::debug!("Calling submitRootAndPriceAndFulfill({:?}, {:x}, {:?}, {:?}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal, price.requests, price.client_sigs);
+        tracing::trace!("Calling submitRootAndPriceAndFulfill({:?}, {:x}, {:?}, {:?}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal, price.requests, price.client_sigs);
         let call = self
             .instance
             .submitRootAndPriceAndFulfill(
@@ -751,7 +751,7 @@ impl<P: Provider> BoundlessMarketService<P> {
                 assessor_fill,
             )
             .from(self.caller);
-        tracing::debug!("Calldata: {}", call.calldata());
+        tracing::trace!("Calldata: {}", call.calldata());
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
         let tx_receipt = pending_tx
@@ -774,7 +774,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         fulfillments: Vec<Fulfillment>,
         assessor_fill: AssessorReceipt,
     ) -> Result<(), MarketError> {
-        tracing::debug!("Calling submitRootAndPriceAndFulfillAndWithdraw({:?}, {:x}, {:?}, {:?}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal, price.requests, price.client_sigs);
+        tracing::trace!("Calling submitRootAndPriceAndFulfillAndWithdraw({:?}, {:x}, {:?}, {:?}, {fulfillments:?}, {assessor_fill:?})", root.root, root.seal, price.requests, price.client_sigs);
         let call = self
             .instance
             .submitRootAndPriceAndFulfillAndWithdraw(
@@ -787,7 +787,7 @@ impl<P: Provider> BoundlessMarketService<P> {
                 assessor_fill,
             )
             .from(self.caller);
-        tracing::debug!("Calldata: {}", call.calldata());
+        tracing::trace!("Calldata: {}", call.calldata());
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
         let tx_receipt = pending_tx
