@@ -644,7 +644,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
     /// Combined function to submit a new merkle root to the set-verifier and call `fulfillBatch`.
     /// Useful to reduce the transaction count for fulfillments
-    pub async fn submit_merkle_and_fulfill(
+    pub async fn submit_root_and_fulfill(
         &self,
         verifier_address: Address,
         root: B256,
@@ -669,7 +669,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
     /// Combined function to submit a new merkle root to the set-verifier and call `fulfillBatchAndWithdraw`.
     /// Useful to reduce the transaction count for fulfillments
-    pub async fn submit_merkle_and_fulfill_and_withdraw(
+    pub async fn submit_root_and_fulfill_and_withdraw(
         &self,
         verifier_address: Address,
         root: B256,
@@ -780,6 +780,86 @@ impl<P: Provider> BoundlessMarketService<P> {
         let tx_receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
+
+        Ok(())
+    }
+
+    /// Combined function to submit a new merkle root to the set-verifier and call `priceAndfulfillBatch`.
+    /// Useful to reduce the transaction count for fulfillments
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_root_and_price_fulfill(
+        &self,
+        verifier_address: Address,
+        root: B256,
+        seal: Bytes,
+        requests: Vec<ProofRequest>,
+        client_sigs: Vec<Bytes>,
+        fulfillments: Vec<Fulfillment>,
+        assessor_fill: AssessorReceipt,
+    ) -> Result<(), MarketError> {
+        tracing::debug!("Calling submitRootAndPriceAndFulfillBatch({root:?}, {seal:x}, {requests:?}, {client_sigs:?}, {fulfillments:?}, {assessor_fill:?})");
+        let call = self
+            .instance
+            .submitRootAndPriceAndFulfillBatch(
+                verifier_address,
+                root,
+                seal,
+                requests,
+                client_sigs,
+                fulfillments,
+                assessor_fill,
+            )
+            .from(self.caller);
+        tracing::debug!("Calldata: {}", call.calldata());
+        let pending_tx = call.send().await?;
+        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+        let tx_receipt = pending_tx
+            .with_timeout(Some(self.timeout))
+            .get_receipt()
+            .await
+            .context("failed to confirm tx")?;
+
+        tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
+
+        Ok(())
+    }
+
+    /// Combined function to submit a new merkle root to the set-verifier and call `priceAndFulfillBatchAndWithdraw`.
+    /// Useful to reduce the transaction count for fulfillments
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_root_and_price_fulfill_and_withdraw(
+        &self,
+        verifier_address: Address,
+        root: B256,
+        seal: Bytes,
+        requests: Vec<ProofRequest>,
+        client_sigs: Vec<Bytes>,
+        fulfillments: Vec<Fulfillment>,
+        assessor_fill: AssessorReceipt,
+    ) -> Result<(), MarketError> {
+        tracing::debug!("Calling submitRootAndPriceAndFulfillBatchAndWithdraw({root:?}, {seal:x}, {requests:?}, {client_sigs:?}, {fulfillments:?}, {assessor_fill:?})");
+        let call = self
+            .instance
+            .submitRootAndPriceAndFulfillBatchAndWithdraw(
+                verifier_address,
+                root,
+                seal,
+                requests,
+                client_sigs,
+                fulfillments,
+                assessor_fill,
+            )
+            .from(self.caller);
+        tracing::debug!("Calldata: {}", call.calldata());
+        let pending_tx = call.send().await?;
+        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+        let tx_receipt = pending_tx
+            .with_timeout(Some(self.timeout))
+            .get_receipt()
+            .await
+            .context("failed to confirm tx")?;
+
+        tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
 
         Ok(())
     }

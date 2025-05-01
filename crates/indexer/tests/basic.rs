@@ -135,7 +135,7 @@ async fn test_e2e() {
     let order_fulfilled =
         OrderFulfilled::new(fill.clone(), root_receipt, assessor_receipt).unwrap();
     ctx.prover_market
-        .submit_merkle_and_fulfill(
+        .submit_root_and_fulfill(
             ctx.set_verifier_address,
             order_fulfilled.root,
             order_fulfilled.seal,

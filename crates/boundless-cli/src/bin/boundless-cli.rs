@@ -816,7 +816,6 @@ where
                 .with_private_key(args.config.private_key.clone())
                 .with_rpc_url(args.config.rpc_url.clone())
                 .with_boundless_market_address(args.config.boundless_market_address)
-                .with_set_verifier_address(args.config.set_verifier_address)
                 .with_order_stream_url(order_stream_url.clone())
                 .with_timeout(args.config.tx_timeout)
                 .build()
@@ -865,17 +864,16 @@ where
 
             let (fills, root_receipt, assessor_receipt) = prover.fulfill(&orders).await?;
             let order_fulfilled = OrderFulfilled::new(fills, root_receipt, assessor_receipt)?;
-            tracing::debug!("Submitting root {} to SetVerifier", order_fulfilled.root);
-            set_verifier.submit_merkle_root(order_fulfilled.root, order_fulfilled.seal).await?;
-            tracing::debug!("Successfully submitted root to SetVerifier");
 
             match boundless_market
-                .price_and_fulfill_batch(
+                .submit_root_and_price_fulfill(
+                    args.config.set_verifier_address,
+                    order_fulfilled.root,
+                    order_fulfilled.seal,
                     requests_to_price,
                     signatures,
                     order_fulfilled.fills,
                     order_fulfilled.assessorReceipt,
-                    None,
                 )
                 .await
             {

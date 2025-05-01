@@ -345,7 +345,7 @@ contract BoundlessMarket is
         bytes[] calldata clientSignatures,
         Fulfillment[] calldata fills,
         AssessorReceipt calldata assessorReceipt
-    ) external returns (bytes[] memory paymentError) {
+    ) public returns (bytes[] memory paymentError) {
         for (uint256 i = 0; i < requests.length; i++) {
             priceRequest(requests[i], clientSignatures[i]);
         }
@@ -410,7 +410,7 @@ contract BoundlessMarket is
         bytes[] calldata clientSignatures,
         Fulfillment[] calldata fills,
         AssessorReceipt calldata assessorReceipt
-    ) external returns (bytes[] memory paymentError) {
+    ) public returns (bytes[] memory paymentError) {
         for (uint256 i = 0; i < requests.length; i++) {
             priceRequest(requests[i], clientSignatures[i]);
         }
@@ -676,6 +676,34 @@ contract BoundlessMarket is
     ) external returns (bytes[] memory paymentError) {
         IRiscZeroSetVerifier(address(setVerifier)).submitMerkleRoot(root, seal);
         paymentError = fulfillBatchAndWithdraw(fills, assessorReceipt);
+    }
+
+    /// @inheritdoc IBoundlessMarket
+    function submitRootAndPriceAndFulfillBatch(
+        address setVerifier,
+        bytes32 root,
+        bytes calldata seal,
+        ProofRequest[] calldata requests,
+        bytes[] calldata clientSignatures,
+        Fulfillment[] calldata fills,
+        AssessorReceipt calldata assessorReceipt
+    ) external returns (bytes[] memory paymentError) {
+        IRiscZeroSetVerifier(address(setVerifier)).submitMerkleRoot(root, seal);
+        paymentError = priceAndFulfillBatch(requests, clientSignatures, fills, assessorReceipt);
+    }
+
+    /// @inheritdoc IBoundlessMarket
+    function submitRootAndPriceAndFulfillBatchAndWithdraw(
+        address setVerifier,
+        bytes32 root,
+        bytes calldata seal,
+        ProofRequest[] calldata requests,
+        bytes[] calldata clientSignatures,
+        Fulfillment[] calldata fills,
+        AssessorReceipt calldata assessorReceipt
+    ) external returns (bytes[] memory paymentError) {
+        IRiscZeroSetVerifier(address(setVerifier)).submitMerkleRoot(root, seal);
+        paymentError = priceAndFulfillBatchAndWithdraw(requests, clientSignatures, fills, assessorReceipt);
     }
 
     /// @inheritdoc IBoundlessMarket

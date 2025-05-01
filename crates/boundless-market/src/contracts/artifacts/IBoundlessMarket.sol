@@ -416,6 +416,42 @@ interface IBoundlessMarket {
         AssessorReceipt calldata assessorReceipt
     ) external returns (bytes[] memory paymentError);
 
+    /// @notice Combined function to submit a new root to a set-verifier and call priceAndFulfillBatch.
+    /// @dev Useful to reduce the transaction count for fulfillments.
+    /// @param setVerifier The address of the set-verifier contract.
+    /// @param root The new merkle root.
+    /// @param seal The seal of the new merkle root.
+    /// @param fills The array of fulfillment information.
+    /// @param assessorReceipt The Assessor's guest fulfillment information verified to confirm the
+    /// request's requirements are met.
+    function submitRootAndPriceAndFulfillBatch(
+        address setVerifier,
+        bytes32 root,
+        bytes calldata seal,
+        ProofRequest[] calldata requests,
+        bytes[] calldata clientSignatures,
+        Fulfillment[] calldata fills,
+        AssessorReceipt calldata assessorReceipt
+    ) external returns (bytes[] memory paymentError);
+
+    /// @notice Combined function to submit a new root to a set-verifier and call priceAndFulfillBatchAndWithdraw.
+    /// @dev Useful to reduce the transaction count for fulfillments.
+    /// @param setVerifier The address of the set-verifier contract.
+    /// @param root The new merkle root.
+    /// @param seal The seal of the new merkle root.
+    /// @param fills The array of fulfillment information.
+    /// @param assessorReceipt The Assessor's guest fulfillment information verified to confirm the
+    /// request's requirements are met.
+    function submitRootAndPriceAndFulfillBatchAndWithdraw(
+        address setVerifier,
+        bytes32 root,
+        bytes calldata seal,
+        ProofRequest[] calldata requests,
+        bytes[] calldata clientSignatures,
+        Fulfillment[] calldata fills,
+        AssessorReceipt calldata assessorReceipt
+    ) external returns (bytes[] memory paymentError);
+
     /// @notice When a prover fails to fulfill a request by the deadline, this method can be used to burn
     /// the associated prover stake.
     /// @dev The provers stake has already been transferred to the contract when the request was locked.

@@ -20,7 +20,6 @@ use boundless_market::{
 };
 use guest_assessor::ASSESSOR_GUEST_ID;
 use risc0_aggregation::{SetInclusionReceipt, SetInclusionReceiptVerifierParameters};
-use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::{
     sha::{Digest, Digestible},
     MaybePruned, Receipt, ReceiptClaim,
@@ -39,7 +38,6 @@ pub struct Submitter<P> {
     db: DbObj,
     prover: ProverObj,
     market: BoundlessMarketService<Arc<P>>,
-    set_verifier: SetVerifierService<Arc<P>>,
     set_verifier_addr: Address,
     set_builder_img_id: Digest,
     prover_address: Address,
@@ -75,23 +73,12 @@ where
             market = market.with_timeout(Duration::from_secs(txn_timeout));
         }
 
-        let mut set_verifier = SetVerifierService::new(
-            set_verifier_addr,
-            provider.clone(),
-            provider.default_signer_address(),
-        );
-        if let Some(txn_timeout) = txn_timeout_opt {
-            tracing::debug!("Setting set verifier timeout to {}", txn_timeout);
-            set_verifier = set_verifier.with_timeout(Duration::from_secs(txn_timeout));
-        }
-
         let prover_address = provider.default_signer_address();
 
         Ok(Self {
             db,
             prover,
             market,
-            set_verifier,
             set_verifier_addr,
             set_builder_img_id,
             prover_address,
@@ -311,7 +298,7 @@ where
         if single_txn_fulfill {
             if let Err(err) = self
                 .market
-                .submit_merkle_and_fulfill(
+                .submit_root_and_fulfill(
                     self.set_verifier_addr,
                     root,
                     batch_seal.into(),
@@ -326,60 +313,51 @@ where
                     .collect();
                 self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
             }
-        } else {
-            let contains_root = match self.set_verifier.contains_root(root).await {
-                Ok(res) => res,
-                Err(err) => {
-                    tracing::error!("Failed to query if set-verifier contains the new root, trying to submit anyway {err:?}");
-                    false
-                }
-            };
-            if !contains_root {
-                tracing::info!("Submitting app merkle root: {root}");
-                self.set_verifier
-                    .submit_merkle_root(root, batch_seal.into())
-                    .await
-                    .context("Failed to submit app merkle_root")?;
-            } else {
-                tracing::info!("Contract already contains root, skipping to fulfillment");
+        } else if !requests_to_price.is_empty() {
+            let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
+                requests_to_price.into_iter().unzip();
+            tracing::info!(
+                "Fulfilling {} requests, and pricing {} requests using priceAndFulfillBatch",
+                fulfillments.len(),
+                requests.len()
+            );
+            if let Err(err) = self
+                .market
+                .submit_root_and_price_fulfill(
+                    self.set_verifier_addr,
+                    root,
+                    batch_seal.into(),
+                    requests,
+                    client_sigs,
+                    fulfillments.clone(),
+                    assessor_receipt,
+                )
+                .await
+            {
+                let order_ids: Vec<&str> = fulfillments
+                    .iter()
+                    .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
+                    .collect();
+                self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
             }
-
-            if !requests_to_price.is_empty() {
-                let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
-                    requests_to_price.into_iter().unzip();
-                tracing::info!(
-                    "Fulfilling {} requests, and pricing {} requests using priceAndFulfillBatch",
-                    fulfillments.len(),
-                    requests.len()
-                );
-                if let Err(err) = self
-                    .market
-                    .price_and_fulfill_batch(
-                        requests,
-                        client_sigs,
-                        fulfillments.clone(),
-                        assessor_receipt,
-                        None,
-                    )
-                    .await
-                {
-                    let order_ids: Vec<&str> = fulfillments
-                        .iter()
-                        .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
-                        .collect();
-                    self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
-                }
-            } else {
-                tracing::info!("Fulfilling {} requests using fulfillBatch", fulfillments.len());
-                if let Err(err) =
-                    self.market.fulfill_batch(fulfillments.clone(), assessor_receipt).await
-                {
-                    let order_ids: Vec<&str> = fulfillments
-                        .iter()
-                        .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
-                        .collect();
-                    self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
-                }
+        } else {
+            tracing::info!("Fulfilling {} requests using fulfillBatch", fulfillments.len());
+            if let Err(err) = self
+                .market
+                .submit_root_and_fulfill(
+                    self.set_verifier_addr,
+                    root,
+                    batch_seal.into(),
+                    fulfillments.clone(),
+                    assessor_receipt,
+                )
+                .await
+            {
+                let order_ids: Vec<&str> = fulfillments
+                    .iter()
+                    .map(|f| *fulfillment_to_order_id.get(&f.id).unwrap())
+                    .collect();
+                self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;
             }
         }
 
