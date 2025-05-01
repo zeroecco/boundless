@@ -179,7 +179,7 @@ where
     async fn price_order(&self, order: &Order) -> Result<OrderPricingOutcome, PriceOrderErr> {
         let order_id = order.id();
         let request_id = order.request.id;
-        tracing::debug!("Processing order {order_id} with request id {request_id:x}: {order:?}");
+        tracing::debug!("Pricing order {order_id} with request id {request_id:x}");
 
         let (min_deadline, allowed_addresses_opt) = {
             let config = self.config.lock_all().context("Failed to read config")?;
@@ -693,7 +693,7 @@ where
     async fn estimate_gas_to_fulfill_pending(&self) -> Result<u64> {
         let mut gas = 0;
         for order in self.db.get_pending_fulfill_orders(i64::MAX as u64).await? {
-            tracing::debug!("Estimating gas to fulfill order with id {}", order.id());
+            tracing::trace!("Estimating gas to fulfill order with id {}", order.id());
             gas += self.estimate_gas_to_fulfill(&order).await?;
         }
         Ok(gas)
