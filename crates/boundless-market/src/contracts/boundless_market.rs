@@ -1463,16 +1463,16 @@ impl<P: Provider> Fulfill<P> {
 
     /// Fulfill a batch of requests by delivering the proof for each application.
     ///
-    /// This function can be called with a `Fulfill` struct that contains the root, price, and
-    /// fulfillments. The root and price can be `None` if the caller does not want to submit a new
-    /// root or price. The `withdraw` field indicates whether the prover should withdraw their
-    /// balance after fulfilling the requests.
-    pub async fn send(&self) -> Result<(), MarketError> {
-        let root = self.root.clone();
-        let price = self.price.clone();
-        let fulfillments = self.fulfillments.clone();
-        let assessor_receipt = self.assessor_receipt.clone();
-        match (root, price, self.withdraw) {
+    /// The root and price can be `None` if the caller does not want to submit a new
+    /// root or price the requests. The `withdraw` field indicates whether the prover
+    /// should withdraw their balance after fulfilling the requests.
+    pub async fn send(self) -> Result<(), MarketError> {
+        let root = self.root;
+        let price = self.price;
+        let fulfillments = self.fulfillments;
+        let assessor_receipt = self.assessor_receipt;
+        let withdraw = self.withdraw;
+        match (root, price, withdraw) {
             (None, None, false) => {
                 self.boundless_market.fulfill(fulfillments, assessor_receipt).await
             }
