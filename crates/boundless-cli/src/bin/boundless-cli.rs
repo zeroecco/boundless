@@ -300,6 +300,10 @@ enum ProvingCommands {
         /// If provided, the request will be fetched offchain via the provided order stream service URL.
         #[arg(long, env = "ORDER_STREAM_URL", conflicts_with_all = ["tx_hash"])]
         order_stream_url: Option<Url>,
+
+        /// Withdraw the funds after fulfilling the requests
+        #[arg(long, default_value = "false")]
+        withdraw: bool,
     },
 
     /// Lock a request in the market
@@ -781,7 +785,13 @@ where
             tracing::debug!("Journal: {:?}", journal);
             Ok(())
         }
-        ProvingCommands::Fulfill { request_ids, request_digests, tx_hashes, order_stream_url } => {
+        ProvingCommands::Fulfill {
+            request_ids,
+            request_digests,
+            tx_hashes,
+            order_stream_url,
+            withdraw,
+        } => {
             if request_digests.is_some()
                 && request_ids.len() != request_digests.as_ref().unwrap().len()
             {
@@ -878,6 +888,7 @@ where
                 order_fulfilled.seal,
             )
             .with_price(requests_to_price, signatures)
+            .with_withdraw(*withdraw)
             .send()
             .await;
             match fulfill {
@@ -1927,6 +1938,7 @@ mod tests {
                 request_digests: None,
                 tx_hashes: None,
                 order_stream_url: None,
+                withdraw: false,
             })),
         })
         .await
@@ -1999,6 +2011,7 @@ mod tests {
                 request_digests: None,
                 tx_hashes: None,
                 order_stream_url: None,
+                withdraw: false,
             })),
         })
         .await
@@ -2077,6 +2090,7 @@ mod tests {
                 request_digests: None,
                 tx_hashes: None,
                 order_stream_url: None,
+                withdraw: false,
             })),
         })
         .await
@@ -2131,6 +2145,7 @@ mod tests {
                 request_digests: None,
                 tx_hashes: None,
                 order_stream_url: None,
+                withdraw: false,
             })),
         })
         .await
@@ -2232,12 +2247,17 @@ mod tests {
                 request_digests: None,
                 tx_hashes: None,
                 order_stream_url: Some(order_stream_url),
+                withdraw: true,
             })),
         })
         .await
         .unwrap();
 
         assert!(logs_contain(&format!("Successfully fulfilled requests 0x{:x}", request.id)));
+
+        // test the automated withdraw
+        let balance = ctx.prover_market.balance_of(ctx.prover_signer.address()).await.unwrap();
+        assert_eq!(balance, U256::from(0));
 
         // Clean up
         order_stream_handle.abort();
