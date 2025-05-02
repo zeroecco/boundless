@@ -302,8 +302,16 @@ where
             prover: self.prover_address,
             callbacks: assessor_journal.callbacks,
         };
-        let mut fulfill = Fulfill::new(self.market.clone(), fulfillments.clone(), assessor_receipt)
-            .with_submit_root(self.set_verifier_addr, root, batch_seal.into());
+
+        let single_txn_fulfill = {
+            let config = self.config.lock_all().context("Failed to read config")?;
+            config.batcher.single_txn_fulfill
+        };
+
+        let mut fulfill = Fulfill::new(self.market.clone(), fulfillments.clone(), assessor_receipt);
+        if single_txn_fulfill {
+            fulfill = fulfill.with_submit_root(self.set_verifier_addr, root, batch_seal.into());
+        };
         if !requests_to_price.is_empty() {
             let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
                 requests_to_price.into_iter().unzip();
