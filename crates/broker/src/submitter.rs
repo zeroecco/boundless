@@ -20,6 +20,7 @@ use boundless_market::{
 };
 use guest_assessor::ASSESSOR_GUEST_ID;
 use risc0_aggregation::{SetInclusionReceipt, SetInclusionReceiptVerifierParameters};
+use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::{
     sha::{Digest, Digestible},
     MaybePruned, Receipt, ReceiptClaim,
@@ -55,6 +56,7 @@ pub struct Submitter<P> {
     db: DbObj,
     prover: ProverObj,
     market: BoundlessMarketService<Arc<P>>,
+    set_verifier: SetVerifierService<Arc<P>>,
     set_verifier_addr: Address,
     set_builder_img_id: Digest,
     prover_address: Address,
@@ -90,12 +92,23 @@ where
             market = market.with_timeout(Duration::from_secs(txn_timeout));
         }
 
+        let mut set_verifier = SetVerifierService::new(
+            set_verifier_addr,
+            provider.clone(),
+            provider.default_signer_address(),
+        );
+        if let Some(txn_timeout) = txn_timeout_opt {
+            tracing::debug!("Setting set verifier timeout to {}", txn_timeout);
+            set_verifier = set_verifier.with_timeout(Duration::from_secs(txn_timeout));
+        }
+
         let prover_address = provider.default_signer_address();
 
         Ok(Self {
             db,
             prover,
             market,
+            set_verifier,
             set_verifier_addr,
             set_builder_img_id,
             prover_address,
@@ -303,14 +316,32 @@ where
             callbacks: assessor_journal.callbacks,
         };
 
-        let single_txn_fulfill = {
+        let (single_txn_fulfill, withdraw) = {
             let config = self.config.lock_all().context("Failed to read config")?;
-            config.batcher.single_txn_fulfill
+            (config.batcher.single_txn_fulfill, config.batcher.withdraw)
         };
 
-        let mut fulfill = Fulfill::new(self.market.clone(), fulfillments.clone(), assessor_receipt);
+        let mut fulfill = Fulfill::new(self.market.clone(), fulfillments.clone(), assessor_receipt)
+            .with_withdraw(withdraw);
         if single_txn_fulfill {
             fulfill = fulfill.with_submit_root(self.set_verifier_addr, root, batch_seal.into());
+        } else {
+            let contains_root = match self.set_verifier.contains_root(root).await {
+                Ok(res) => res,
+                Err(err) => {
+                    tracing::error!("Failed to query if set-verifier contains the new root, trying to submit anyway {err:?}");
+                    false
+                }
+            };
+            if !contains_root {
+                tracing::info!("Submitting app merkle root: {root}");
+                self.set_verifier
+                    .submit_merkle_root(root, batch_seal.into())
+                    .await
+                    .context("Failed to submit app merkle_root")?;
+            } else {
+                tracing::info!("Contract already contains root, skipping to fulfillment");
+            }
         };
         if !requests_to_price.is_empty() {
             let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
