@@ -23,7 +23,7 @@ use alloy::{
     eips::BlockNumberOrTag,
     network::Ethereum,
     primitives::{Address, Bytes, B256, U256},
-    providers::Provider,
+    providers::{PendingTransactionBuilder, PendingTransactionError, Provider},
     rpc::types::{Log, TransactionReceipt},
     signers::Signer,
 };
@@ -39,6 +39,12 @@ use super::{
     IBoundlessMarket::{self, IBoundlessMarketInstance},
     Offer, ProofRequest, RequestError, RequestId, RequestStatus, TxnErr, TXN_CONFIRM_TIMEOUT,
 };
+
+/// Fraction of stake the protocol gives to the prover who fills an order that was locked by another prover but expired
+/// This is determined by the constant SLASHING_BURN_BPS defined in the BoundlessMarket contract.
+/// The value is 4 because the slashing burn is 75% of the stake, and we give the remaining 1/4 of that to the prover.
+/// TODO(https://github.com/boundless-xyz/boundless/issues/517): Retrieve this from the contract in the future
+const FRACTION_STAKE_REWARD: u64 = 4;
 
 /// Boundless market errors.
 #[derive(Error, Debug)]
@@ -100,6 +106,21 @@ pub struct BoundlessMarketService<P> {
     timeout: Duration,
     event_query_config: EventQueryConfig,
     balance_alert_config: StakeBalanceAlertConfig,
+    receipt_query_config: ReceiptQueryConfig,
+}
+
+#[derive(Clone, Debug)]
+struct ReceiptQueryConfig {
+    /// Interval at which the transaction receipts are polled.
+    retry_interval: Duration,
+    /// Number of retries for querying receipt of lock transactions.
+    retry_count: usize,
+}
+
+impl Default for ReceiptQueryConfig {
+    fn default() -> Self {
+        Self { retry_count: 10, retry_interval: Duration::from_millis(500) }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -122,6 +143,7 @@ where
             timeout: self.timeout,
             event_query_config: self.event_query_config.clone(),
             balance_alert_config: self.balance_alert_config.clone(),
+            receipt_query_config: self.receipt_query_config.clone(),
         }
     }
 }
@@ -172,6 +194,7 @@ impl<P: Provider> BoundlessMarketService<P> {
             timeout: TXN_CONFIRM_TIMEOUT,
             event_query_config: EventQueryConfig::default(),
             balance_alert_config: StakeBalanceAlertConfig::default(),
+            receipt_query_config: ReceiptQueryConfig::default(),
         }
     }
 
@@ -198,6 +221,18 @@ impl<P: Provider> BoundlessMarketService<P> {
             },
             ..self
         }
+    }
+
+    /// Retry count for confirmed transactions receipts.
+    pub fn with_receipt_retry_count(mut self, count: usize) -> Self {
+        self.receipt_query_config.retry_count = count;
+        self
+    }
+
+    /// Retry polling interval for confirmed transactions receipts.
+    pub fn with_receipt_retry_interval(mut self, interval: Duration) -> Self {
+        self.receipt_query_config.retry_interval = interval;
+        self
     }
 
     /// Returns the market contract instance.
@@ -283,11 +318,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         // Look for the logs for submitting the transaction.
         let log = extract_tx_log::<IBoundlessMarket::RequestSubmitted>(&receipt)?;
@@ -307,11 +338,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         // Look for the logs for submitting the transaction.
         let log = extract_tx_log::<IBoundlessMarket::RequestSubmitted>(&receipt)?;
@@ -376,20 +403,21 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         let pending_tx = call.send().await?;
 
-        tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
+        let tx_hash = *pending_tx.tx_hash();
+        tracing::debug!("Broadcasting tx {}", tx_hash);
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         if !receipt.status() {
             // TODO: Get + print revertReason
             return Err(MarketError::LockRevert(receipt.transaction_hash));
         }
 
-        tracing::info!("Registered request {:x}: {}", request.id, receipt.transaction_hash);
+        tracing::info!(
+            "Locked request {:x}, transaction hash: {}",
+            request.id,
+            receipt.transaction_hash
+        );
 
         self.check_stake_balance().await?;
 
@@ -434,12 +462,7 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
-
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
         if !receipt.status() {
             // TODO: Get + print revertReason
             return Err(MarketError::Error(anyhow!(
@@ -448,9 +471,52 @@ impl<P: Provider> BoundlessMarketService<P> {
             )));
         }
 
-        tracing::info!("Registered request {:x}: {}", request.id, receipt.transaction_hash);
+        tracing::info!(
+            "Locked request {:x}, transaction hash: {}",
+            request.id,
+            receipt.transaction_hash
+        );
 
         Ok(receipt.block_number.context("TXN Receipt missing block number")?)
+    }
+
+    async fn get_receipt_with_retry(
+        &self,
+        pending_tx: PendingTransactionBuilder<Ethereum>,
+    ) -> Result<TransactionReceipt, MarketError> {
+        let tx_hash = *pending_tx.tx_hash();
+        match pending_tx.with_timeout(Some(self.timeout)).get_receipt().await {
+            Ok(receipt) => Ok(receipt),
+            Err(PendingTransactionError::TransportError(err)) if err.is_null_resp() => {
+                tracing::debug!("failed to query receipt of confirmed transaction, retrying");
+                // There is a race condition with some providers where a transaction will be
+                // confirmed through the RPC, but querying the receipt returns null when requested
+                // immediately after.
+                for _ in 0..self.receipt_query_config.retry_count {
+                    if let Ok(Some(receipt)) =
+                        self.instance.provider().get_transaction_receipt(tx_hash).await
+                    {
+                        return Ok(receipt);
+                    }
+
+                    tokio::time::sleep(self.receipt_query_config.retry_interval).await;
+                }
+
+                Err(anyhow!(
+                    "Transaction {:?} confirmed, but receipt was not found after {} retries.",
+                    tx_hash,
+                    self.receipt_query_config.retry_count
+                )
+                .into())
+            }
+            Err(e) => Err(anyhow!(
+                "failed to confirm tx {:?} within timeout {:?}: {}",
+                tx_hash,
+                self.timeout,
+                e
+            )
+            .into()),
+        }
     }
 
     /// When a prover fails to fulfill a request by the deadline, this function can be used to burn
@@ -464,11 +530,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         let log = extract_tx_log::<IBoundlessMarket::ProverSlashed>(&receipt)?;
         Ok(log.inner.data)
@@ -493,11 +555,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!(
             "Submitted proof for request {:x}: {:x}",
@@ -528,11 +586,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!(
             "Submitted proof for request {:x}: {:x}",
@@ -558,11 +612,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Submitted proof for batch {:?}: {}", fill_ids, receipt.transaction_hash);
 
@@ -585,11 +635,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Submitted proof for batch {:?}: {}", fill_ids, receipt.transaction_hash);
 
@@ -614,11 +660,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         tracing::debug!("Calldata: {}", call.calldata());
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let tx_receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
 
@@ -649,11 +691,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         tracing::debug!("Calldata: {}", call.calldata());
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let tx_receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
 
@@ -671,18 +709,6 @@ impl<P: Provider> BoundlessMarketService<P> {
         assessor_fill: AssessorReceipt,
         priority_gas: Option<u64>,
     ) -> Result<(), MarketError> {
-        for request in requests.iter() {
-            tracing::debug!("Calling requestIsLocked({:x})", request.id);
-            let is_locked_in: bool =
-                self.instance.requestIsLocked(request.id).call().await.context("call failed")?._0;
-            if is_locked_in {
-                return Err(MarketError::Error(anyhow!(
-                    "request {:x} is already locked-in",
-                    request.id
-                )));
-            }
-        }
-
         tracing::debug!("Calling priceAndFulfillBatch({fulfillments:?}, {assessor_fill:?})");
 
         let mut call = self
@@ -707,11 +733,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let tx_receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
 
@@ -729,18 +751,6 @@ impl<P: Provider> BoundlessMarketService<P> {
         assessor_fill: AssessorReceipt,
         priority_gas: Option<u64>,
     ) -> Result<(), MarketError> {
-        for request in requests.iter() {
-            tracing::debug!("Calling requestIsLocked({:x})", request.id);
-            let is_locked_in: bool =
-                self.instance.requestIsLocked(request.id).call().await.context("call failed")?._0;
-            if is_locked_in {
-                return Err(MarketError::Error(anyhow!(
-                    "request {:x} is already locked-in",
-                    request.id
-                )));
-            }
-        }
-
         tracing::debug!(
             "Calling priceAndFulfillBatchAndWithdraw({fulfillments:?}, {assessor_fill:?})"
         );
@@ -767,11 +777,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         let pending_tx = call.send().await?;
         tracing::debug!("Broadcasting tx {}", pending_tx.tx_hash());
 
-        let tx_receipt = pending_tx
-            .with_timeout(Some(self.timeout))
-            .get_receipt()
-            .await
-            .context("failed to confirm tx")?;
+        let tx_receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         tracing::info!("Fulfilled proof for batch {}", tx_receipt.transaction_hash);
 
@@ -902,7 +908,7 @@ impl<P: Provider> BoundlessMarketService<P> {
                     .context("Failed to get transaction")?
                     .context("Transaction not found")?;
                 let inputs = tx_data.input();
-                let fills = decode_calldata(inputs).context("Failed to decode calldata")?;
+                let (fills, _) = decode_calldata(inputs).context("Failed to decode calldata")?;
                 for fill in fills {
                     if fill.id == request_id {
                         return Ok((fill.journal.clone(), fill.seal.clone()));
@@ -993,7 +999,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         }
     }
 
-    /// Returns journal and seal if the request is fulfilled.
+    /// Returns proof request and signature for a request submitted onchain.
     pub async fn get_submitted_request(
         &self,
         request_id: U256,
@@ -1325,41 +1331,48 @@ impl Offer {
     pub fn lock_deadline(&self) -> u64 {
         self.biddingStart + (self.lockTimeout as u64)
     }
+
+    /// Returns the amount of stake that the protocol awards to the prover who fills an order that
+    /// was locked by another prover but not fulfilled by lock expiry.
+    pub fn stake_reward_if_locked_and_not_fulfilled(&self) -> U256 {
+        self.lockStake / U256::from(FRACTION_STAKE_REWARD)
+    }
 }
 
-fn decode_calldata(data: &Bytes) -> Result<Vec<Fulfillment>> {
+/// Decodes the given calldata into a vector of Fulfillment objects.
+pub fn decode_calldata(data: &Bytes) -> Result<(Vec<Fulfillment>, AssessorReceipt)> {
     if let Ok(call) = IBoundlessMarket::submitRootAndFulfillBatchCall::abi_decode(data, true) {
-        return Ok(call.fills);
+        return Ok((call.fills, call.assessorReceipt));
     }
     if let Ok(call) =
         IBoundlessMarket::submitRootAndFulfillBatchAndWithdrawCall::abi_decode(data, true)
     {
-        return Ok(call.fills);
+        return Ok((call.fills, call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::fulfillCall::abi_decode(data, true) {
-        return Ok(vec![call.fill]);
+        return Ok((vec![call.fill], call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::fulfillBatchCall::abi_decode(data, true) {
-        return Ok(call.fills);
+        return Ok((call.fills, call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::fulfillAndWithdrawCall::abi_decode(data, true) {
-        return Ok(vec![call.fill]);
+        return Ok((vec![call.fill], call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::fulfillBatchAndWithdrawCall::abi_decode(data, true) {
-        return Ok(call.fills);
+        return Ok((call.fills, call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::priceAndFulfillCall::abi_decode(data, true) {
-        return Ok(vec![call.fill]);
+        return Ok((vec![call.fill], call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::priceAndFulfillBatchCall::abi_decode(data, true) {
-        return Ok(call.fills);
+        return Ok((call.fills, call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::priceAndFulfillAndWithdrawCall::abi_decode(data, true) {
-        return Ok(vec![call.fill]);
+        return Ok((vec![call.fill], call.assessorReceipt));
     }
     if let Ok(call) = IBoundlessMarket::priceAndFulfillBatchAndWithdrawCall::abi_decode(data, true)
     {
-        return Ok(call.fills);
+        return Ok((call.fills, call.assessorReceipt));
     }
 
     Err(anyhow!(
@@ -1373,36 +1386,14 @@ mod tests {
     use super::decode_calldata;
     use crate::{
         contracts::{
-            hit_points::default_allowance,
-            test_utils::{create_test_ctx, TestCtx},
-            AssessorCommitment, AssessorJournal, AssessorReceipt, Fulfillment, IBoundlessMarket,
-            Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId,
-            RequestStatus, Requirements,
+            AssessorReceipt, Fulfillment, IBoundlessMarket, Input, InputType, Offer, Predicate,
+            PredicateType, ProofRequest, RequestId, Requirements,
         },
-        input::InputBuilder,
         now_timestamp,
     };
-    use alloy::{
-        consensus::Transaction,
-        node_bindings::Anvil,
-        primitives::{aliases::U160, utils::parse_ether, Address, Bytes, B256, U256},
-        providers::Provider,
-        sol_types::{eip712_domain, Eip712Domain, SolStruct, SolValue},
-    };
+    use alloy::primitives::{aliases::U160, utils::parse_ether, Address, Bytes, B256, U256};
     use alloy_sol_types::SolCall;
-    use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
-    use guest_set_builder::{SET_BUILDER_ID, SET_BUILDER_PATH};
-    use guest_util::ECHO_ID;
-    use risc0_aggregation::{
-        merkle_path, merkle_root, GuestState, SetInclusionReceipt,
-        SetInclusionReceiptVerifierParameters,
-    };
-    use risc0_ethereum_contracts::encode_seal;
-    use risc0_zkvm::{
-        sha::{Digest, Digestible},
-        FakeReceipt, InnerReceipt, Journal, MaybePruned, Receipt, ReceiptClaim,
-    };
-    use tracing_test::traced_test;
+    use risc0_zkvm::sha::Digest;
 
     fn ether(value: &str) -> U256 {
         parse_ether(value).unwrap()
@@ -1418,99 +1409,6 @@ mod tests {
             lockTimeout: 500,
             lockStake: ether("1"),
         }
-    }
-
-    async fn new_request<P: Provider>(idx: u32, ctx: &TestCtx<P>) -> ProofRequest {
-        ProofRequest::new(
-            RequestId::new(ctx.customer_signer.address(), idx),
-            Requirements::new(
-                Digest::from(ECHO_ID),
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
-            "http://image_uri.null",
-            InputBuilder::new().build_inline().unwrap(),
-            Offer {
-                minPrice: U256::from(20000000000000u64),
-                maxPrice: U256::from(40000000000000u64),
-                biddingStart: now_timestamp(),
-                timeout: 100,
-                rampUpPeriod: 1,
-                lockStake: U256::from(10),
-                lockTimeout: 100,
-            },
-        )
-    }
-
-    fn to_b256(digest: Digest) -> B256 {
-        <[u8; 32]>::from(digest).into()
-    }
-
-    fn mock_singleton(
-        request: &ProofRequest,
-        eip712_domain: Eip712Domain,
-        prover: Address,
-    ) -> (B256, Bytes, Fulfillment, Bytes) {
-        let app_journal = Journal::new(vec![0x41, 0x41, 0x41, 0x41]);
-        let app_receipt_claim = ReceiptClaim::ok(ECHO_ID, app_journal.clone().bytes);
-        let app_claim_digest = app_receipt_claim.digest();
-        let request_digest = request.eip712_signing_hash(&eip712_domain);
-        let assessor_root = AssessorCommitment {
-            index: U256::ZERO,
-            id: request.id,
-            requestDigest: request_digest,
-            claimDigest: <[u8; 32]>::from(app_claim_digest).into(),
-        }
-        .eip712_hash_struct();
-        let assessor_journal =
-            AssessorJournal { selectors: vec![], root: assessor_root, prover, callbacks: vec![] };
-        let assesor_receipt_claim =
-            ReceiptClaim::ok(ASSESSOR_GUEST_ID, assessor_journal.abi_encode());
-        let assessor_claim_digest = assesor_receipt_claim.digest();
-
-        let set_builder_root = merkle_root(&[app_claim_digest, assessor_claim_digest]);
-        let set_builder_journal = {
-            let mut state = GuestState::initial(SET_BUILDER_ID);
-            state.mmr.push(app_claim_digest).unwrap();
-            state.mmr.push(assessor_claim_digest).unwrap();
-            state.mmr.finalize().unwrap();
-            state.encode()
-        };
-        let set_builder_receipt_claim =
-            ReceiptClaim::ok(SET_BUILDER_ID, set_builder_journal.clone());
-
-        let set_builder_receipt = Receipt::new(
-            InnerReceipt::Fake(FakeReceipt::new(set_builder_receipt_claim)),
-            set_builder_journal,
-        );
-        let set_builder_seal = encode_seal(&set_builder_receipt).unwrap();
-
-        let verifier_parameters =
-            SetInclusionReceiptVerifierParameters { image_id: Digest::from(SET_BUILDER_ID) };
-        let set_inclusion_seal = SetInclusionReceipt::from_path_with_verifier_params(
-            ReceiptClaim::ok(ECHO_ID, MaybePruned::Pruned(app_journal.digest())),
-            merkle_path(&[app_claim_digest, assessor_claim_digest], 0),
-            verifier_parameters.digest(),
-        )
-        .abi_encode_seal()
-        .unwrap();
-
-        let fulfillment = Fulfillment {
-            id: request.id,
-            requestDigest: request_digest,
-            imageId: to_b256(Digest::from(ECHO_ID)),
-            journal: app_journal.bytes.into(),
-            seal: set_inclusion_seal.into(),
-        };
-
-        let assessor_seal = SetInclusionReceipt::from_path_with_verifier_params(
-            ReceiptClaim::ok(ASSESSOR_GUEST_ID, MaybePruned::Pruned(Digest::ZERO)),
-            merkle_path(&[app_claim_digest, assessor_claim_digest], 1),
-            verifier_parameters.digest(),
-        )
-        .abi_encode_seal()
-        .unwrap();
-
-        (to_b256(set_builder_root), set_builder_seal.into(), fulfillment, assessor_seal.into())
     }
 
     #[test]
@@ -1549,500 +1447,6 @@ mod tests {
 
         // Price cannot exceed maxPrice
         assert!(offer.time_at_price(ether("3")).is_err());
-    }
-
-    #[tokio::test]
-    async fn test_deposit_withdraw() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        // Deposit prover balances
-        ctx.prover_market.deposit(parse_ether("2").unwrap()).await.unwrap();
-        assert_eq!(
-            ctx.prover_market.balance_of(ctx.prover_signer.address()).await.unwrap(),
-            parse_ether("2").unwrap()
-        );
-
-        // Withdraw prover balances
-        ctx.prover_market.withdraw(parse_ether("2").unwrap()).await.unwrap();
-        assert_eq!(
-            ctx.prover_market.balance_of(ctx.prover_signer.address()).await.unwrap(),
-            U256::ZERO
-        );
-
-        // Withdraw when balance is zero
-        assert!(ctx.prover_market.withdraw(parse_ether("2").unwrap()).await.is_err());
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_deposit_withdraw_stake() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let mut ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        let deposit = U256::from(10);
-
-        // set stake balance alerts
-        ctx.prover_market =
-            ctx.prover_market.with_stake_balance_alert(&Some(U256::from(10)), &Some(U256::from(5)));
-
-        // Approve and deposit stake
-        ctx.prover_market.approve_deposit_stake(deposit).await.unwrap();
-        ctx.prover_market.deposit_stake(deposit).await.unwrap();
-
-        // Deposit stake with permit
-        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
-
-        assert_eq!(
-            ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap(),
-            U256::from(20)
-        );
-
-        // Withdraw prover balances in chunks to observe alerts
-
-        ctx.prover_market.withdraw_stake(U256::from(11)).await.unwrap();
-        assert_eq!(
-            ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap(),
-            U256::from(9)
-        );
-        assert!(logs_contain("< warning threshold"));
-
-        ctx.prover_market.withdraw_stake(U256::from(5)).await.unwrap();
-        assert_eq!(
-            ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap(),
-            U256::from(4)
-        );
-        assert!(logs_contain("< error threshold"));
-
-        ctx.prover_market.withdraw_stake(U256::from(4)).await.unwrap();
-        assert_eq!(
-            ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap(),
-            U256::ZERO
-        );
-
-        // Withdraw when balance is zero
-        assert!(ctx.prover_market.withdraw_stake(U256::from(20)).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_submit_request() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        let request = new_request(1, &ctx).await;
-
-        let request_id =
-            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
-
-        // fetch logs and check if the event was emitted
-        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
-
-        let (log, _) = logs.first().unwrap();
-        assert!(log.requestId == request_id);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_e2e() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        let eip712_domain = eip712_domain! {
-            name: "IBoundlessMarket",
-            version: "1",
-            chain_id: anvil.chain_id(),
-            verifying_contract: *ctx.customer_market.instance().address(),
-        };
-
-        let request = new_request(1, &ctx).await;
-        let expires_at = request.expires_at();
-
-        let request_id =
-            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
-
-        // fetch logs to retrieve the customer signature from the event
-        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
-
-        let (_, log) = logs.first().unwrap();
-        let tx_hash = log.transaction_hash.unwrap();
-        let tx_data = ctx
-            .customer_market
-            .instance()
-            .provider()
-            .get_transaction_by_hash(tx_hash)
-            .await
-            .unwrap()
-            .unwrap();
-        let inputs = tx_data.input();
-        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
-
-        let request = calldata.request;
-        let customer_sig = calldata.clientSignature;
-
-        // Deposit prover balances
-        let deposit = default_allowance();
-        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
-
-        // Lock the request
-        ctx.prover_market.lock_request(&request, &customer_sig, None).await.unwrap();
-        assert!(ctx.customer_market.is_locked(request_id).await.unwrap());
-        assert!(
-            ctx.customer_market.get_status(request_id, Some(expires_at)).await.unwrap()
-                == RequestStatus::Locked
-        );
-
-        // mock the fulfillment
-        let (root, set_verifier_seal, fulfillment, assessor_seal) =
-            mock_singleton(&request, eip712_domain, ctx.prover_signer.address());
-
-        // publish the committed root
-        ctx.set_verifier.submit_merkle_root(root, set_verifier_seal).await.unwrap();
-
-        let assessor_fill = AssessorReceipt {
-            seal: assessor_seal,
-            selectors: vec![],
-            prover: ctx.prover_signer.address(),
-            callbacks: vec![],
-        };
-        // fulfill the request
-        ctx.prover_market.fulfill(&fulfillment, assessor_fill).await.unwrap();
-        assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
-
-        // retrieve journal and seal from the fulfilled request
-        let (journal, seal) =
-            ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
-
-        assert_eq!(journal, fulfillment.journal);
-        assert_eq!(seal, fulfillment.seal);
-    }
-
-    #[tokio::test]
-    async fn test_e2e_merged_submit_fulfill() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        let eip712_domain = eip712_domain! {
-            name: "IBoundlessMarket",
-            version: "1",
-            chain_id: anvil.chain_id(),
-            verifying_contract: *ctx.customer_market.instance().address(),
-        };
-
-        let request = new_request(1, &ctx).await;
-        let expires_at = request.expires_at();
-
-        let request_id =
-            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
-
-        // fetch logs to retrieve the customer signature from the event
-        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
-
-        let (_, log) = logs.first().unwrap();
-        let tx_hash = log.transaction_hash.unwrap();
-        let tx_data = ctx
-            .customer_market
-            .instance()
-            .provider()
-            .get_transaction_by_hash(tx_hash)
-            .await
-            .unwrap()
-            .unwrap();
-        let inputs = tx_data.input();
-        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
-
-        let request = calldata.request;
-        let customer_sig = calldata.clientSignature;
-
-        // Deposit prover balances
-        let deposit = default_allowance();
-        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
-
-        // Lock the request
-        ctx.prover_market.lock_request(&request, &customer_sig, None).await.unwrap();
-        assert!(ctx.customer_market.is_locked(request_id).await.unwrap());
-        assert!(
-            ctx.customer_market.get_status(request_id, Some(expires_at)).await.unwrap()
-                == RequestStatus::Locked
-        );
-
-        // mock the fulfillment
-        let (root, set_verifier_seal, fulfillment, assessor_seal) =
-            mock_singleton(&request, eip712_domain, ctx.prover_signer.address());
-
-        let fulfillments = vec![fulfillment];
-        let assessor_fill = AssessorReceipt {
-            seal: assessor_seal,
-            selectors: vec![],
-            prover: ctx.prover_signer.address(),
-            callbacks: vec![],
-        };
-        // publish the committed root + fulfillments
-        ctx.prover_market
-            .submit_merkle_and_fulfill(
-                ctx.set_verifier_address,
-                root,
-                set_verifier_seal,
-                fulfillments.clone(),
-                assessor_fill,
-            )
-            .await
-            .unwrap();
-
-        // retrieve journal and seal from the fulfilled request
-        let (journal, seal) =
-            ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
-
-        assert_eq!(journal, fulfillments[0].journal);
-        assert_eq!(seal, fulfillments[0].seal);
-    }
-
-    #[tokio::test]
-    async fn test_e2e_price_and_fulfill_batch() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        let eip712_domain = eip712_domain! {
-            name: "IBoundlessMarket",
-            version: "1",
-            chain_id: anvil.chain_id(),
-            verifying_contract: *ctx.customer_market.instance().address(),
-        };
-
-        let request = new_request(1, &ctx).await;
-        let request_id =
-            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
-
-        // fetch logs to retrieve the customer signature from the event
-        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
-
-        let (_, log) = logs.first().unwrap();
-        let tx_hash = log.transaction_hash.unwrap();
-        let tx_data = ctx
-            .customer_market
-            .instance()
-            .provider()
-            .get_transaction_by_hash(tx_hash)
-            .await
-            .unwrap()
-            .unwrap();
-        let inputs = tx_data.input();
-        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
-
-        let request = calldata.request;
-        let customer_sig = calldata.clientSignature;
-
-        // mock the fulfillment
-        let (root, set_verifier_seal, fulfillment, assessor_seal) =
-            mock_singleton(&request, eip712_domain, ctx.prover_signer.address());
-
-        let fulfillments = vec![fulfillment];
-        let assessor_fill = AssessorReceipt {
-            seal: assessor_seal,
-            selectors: vec![],
-            prover: ctx.prover_signer.address(),
-            callbacks: vec![],
-        };
-        // publish the committed root
-        ctx.set_verifier.submit_merkle_root(root, set_verifier_seal).await.unwrap();
-
-        // Price and fulfill the request
-        ctx.prover_market
-            .price_and_fulfill_batch(
-                vec![request],
-                vec![customer_sig],
-                fulfillments.clone(),
-                assessor_fill,
-                None,
-            )
-            .await
-            .unwrap();
-
-        // retrieve journal and seal from the fulfilled request
-        let (journal, seal) =
-            ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
-
-        assert_eq!(journal, fulfillments[0].journal);
-        assert_eq!(seal, fulfillments[0].seal);
-    }
-
-    #[tokio::test]
-    async fn test_e2e_no_payment() {
-        // Setup anvil
-        let anvil = Anvil::new().spawn();
-
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
-
-        let eip712_domain = eip712_domain! {
-            name: "IBoundlessMarket",
-            version: "1",
-            chain_id: anvil.chain_id(),
-            verifying_contract: *ctx.customer_market.instance().address(),
-        };
-
-        let request = new_request(1, &ctx).await;
-        let expires_at = request.expires_at();
-
-        let request_id =
-            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
-
-        // fetch logs to retrieve the customer signature from the event
-        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
-
-        let (_, log) = logs.first().unwrap();
-        let tx_hash = log.transaction_hash.unwrap();
-        let tx_data = ctx
-            .customer_market
-            .instance()
-            .provider()
-            .get_transaction_by_hash(tx_hash)
-            .await
-            .unwrap()
-            .unwrap();
-        let inputs = tx_data.input();
-        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
-
-        let request = calldata.request;
-        let customer_sig = calldata.clientSignature;
-
-        // Deposit prover balances
-        let deposit = default_allowance();
-        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
-
-        // Lock the request
-        ctx.prover_market.lock_request(&request, &customer_sig, None).await.unwrap();
-        assert!(ctx.customer_market.is_locked(request_id).await.unwrap());
-        assert!(
-            ctx.customer_market.get_status(request_id, Some(expires_at)).await.unwrap()
-                == RequestStatus::Locked
-        );
-
-        // Test behavior when payment requirements are not met.
-        {
-            // mock the fulfillment, using the wrong prover address. Address::from(3) arbitrary.
-            let some_other_address = Address::from(U160::from(3));
-            let (root, set_verifier_seal, fulfillment, assessor_seal) =
-                mock_singleton(&request, eip712_domain.clone(), some_other_address);
-
-            // publish the committed root
-            ctx.set_verifier.submit_merkle_root(root, set_verifier_seal).await.unwrap();
-
-            let assessor_fill = AssessorReceipt {
-                seal: assessor_seal,
-                selectors: vec![],
-                prover: some_other_address,
-                callbacks: vec![],
-            };
-
-            let balance_before = ctx.prover_market.balance_of(some_other_address).await.unwrap();
-            // fulfill the request.
-            ctx.prover_market.fulfill(&fulfillment, assessor_fill.clone()).await.unwrap();
-            assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
-            let balance_after = ctx.prover_market.balance_of(some_other_address).await.unwrap();
-            assert!(balance_before == balance_after);
-
-            // retrieve journal and seal from the fulfilled request
-            let (journal, seal) =
-                ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
-
-            assert_eq!(journal, fulfillment.journal);
-            assert_eq!(seal, fulfillment.seal);
-        }
-
-        // mock the fulfillment, this time using the right prover address.
-        let (root, set_verifier_seal, fulfillment, assessor_seal) =
-            mock_singleton(&request, eip712_domain, ctx.prover_signer.address());
-
-        // publish the committed root
-        ctx.set_verifier.submit_merkle_root(root, set_verifier_seal).await.unwrap();
-
-        let assessor_fill = AssessorReceipt {
-            seal: assessor_seal,
-            selectors: vec![],
-            prover: ctx.prover_signer.address(),
-            callbacks: vec![],
-        };
-
-        // fulfill the request, this time getting paid.
-        ctx.prover_market.fulfill(&fulfillment, assessor_fill).await.unwrap();
-        assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
-
-        // retrieve journal and seal from the fulfilled request
-        let (_journal, _seal) =
-            ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
-
-        // TODO: Instead of checking that this is the same seal, check if this is some valid seal.
-        // When there are multiple fulfillments one order, there will be multiple ProofDelivered
-        // events. All proofs will be valid though.
-        //assert_eq!(journal, fulfillment.journal);
-        //assert_eq!(seal, fulfillment.seal);
     }
 
     #[test]

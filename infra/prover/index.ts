@@ -5,6 +5,8 @@ import * as docker_build from '@pulumi/docker-build';
 import * as pulumi from '@pulumi/pulumi';
 import { getEnvVar, ChainId, getServiceNameV1 } from "../util";
 
+require('dotenv').config();
+
 export = () => {
   // Read config
   const config = new pulumi.Config();
@@ -12,7 +14,7 @@ export = () => {
   const stackName = pulumi.getStack();
   const isDev = stackName === "dev";
   const serviceName = getServiceNameV1(stackName, "bonsai-prover", ChainId.SEPOLIA);
-  
+  const dockerRemoteBuilder = isDev ? process.env.DOCKER_REMOTE_BUILDER : undefined;
 
   const privateKey = isDev ? getEnvVar("PRIVATE_KEY") : config.requireSecret('PRIVATE_KEY');
   const ethRpcUrl = isDev ? getEnvVar("ETH_RPC_URL") : config.requireSecret('ETH_RPC_URL');
@@ -76,7 +78,7 @@ export = () => {
   });
 
   // EFS
-  const fileSystem = new aws.efs.FileSystem(`${serviceName}-efs`, {
+  const fileSystem = new aws.efs.FileSystem(`${serviceName}-efs-rev3`, {
     encrypted: true,
     tags: {
       Name: serviceName,
@@ -199,6 +201,9 @@ export = () => {
     },
     platforms: ['linux/amd64'],
     push: true,
+    builder: dockerRemoteBuilder ? {
+      name: dockerRemoteBuilder,
+    } : undefined,
     dockerfile: {
       location: `${dockerDir}/dockerfiles/broker.dockerfile`,
     },
@@ -343,7 +348,7 @@ export = () => {
         ],
         environment: [
           { name: 'NO_COLOR', value: '1' },
-          { name: 'RUST_LOG', value: 'broker=debug,boundless_market=debug' },
+          { name: 'RUST_LOG', value: 'broker=debug,boundless_market=debug,broker::order_picker=trace' },
           { name: 'RUST_BACKTRACE', value: '1' },
           { name: 'BONSAI_API_URL', value: bonsaiApiUrl },
           { name: 'BUCKET', value: brokerS3BucketName }

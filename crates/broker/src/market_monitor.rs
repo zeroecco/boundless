@@ -15,8 +15,11 @@ use alloy::{
 };
 
 use anyhow::{Context, Result};
-use boundless_market::contracts::{
-    boundless_market::BoundlessMarketService, IBoundlessMarket, RequestId, RequestStatus,
+use boundless_market::{
+    contracts::{
+        boundless_market::BoundlessMarketService, IBoundlessMarket, RequestId, RequestStatus,
+    },
+    order_stream_client::Client as OrderStreamClient,
 };
 use futures_util::StreamExt;
 
@@ -24,7 +27,7 @@ use crate::{
     chain_monitor::ChainMonitorService,
     db::DbError,
     task::{RetryRes, RetryTask, SupervisorErr},
-    DbObj, Order,
+    DbObj, FulfillmentType, Order,
 };
 
 const BLOCK_TIME_SAMPLE_SIZE: u64 = 10;
@@ -35,6 +38,8 @@ pub struct MarketMonitor<P> {
     provider: Arc<P>,
     db: DbObj,
     chain_monitor: Arc<ChainMonitorService<P>>,
+    prover_addr: Address,
+    order_stream: Option<OrderStreamClient>,
 }
 
 sol! {
@@ -56,8 +61,18 @@ where
         provider: Arc<P>,
         db: DbObj,
         chain_monitor: Arc<ChainMonitorService<P>>,
+        prover_addr: Address,
+        order_stream: Option<OrderStreamClient>,
     ) -> Self {
-        Self { lookback_blocks, market_addr, provider, db, chain_monitor }
+        Self {
+            lookback_blocks,
+            market_addr,
+            provider,
+            db,
+            chain_monitor,
+            prover_addr,
+            order_stream,
+        }
     }
 
     /// Queries chain history to sample for the median block time
@@ -92,6 +107,7 @@ where
         chain_monitor: Arc<ChainMonitorService<P>>,
     ) -> Result<u64> {
         let current_block = chain_monitor.current_block_number().await?;
+        let chain_id = provider.get_chain_id().await?;
 
         let start_block = current_block.saturating_sub(lookback_blocks);
 
@@ -136,7 +152,7 @@ where
                 .context("Missing transaction data")?;
             let calldata = IBoundlessMarket::submitRequestCall::abi_decode(tx_data.input(), true)
                 .context("Failed to decode calldata")?;
-            let order_exists = match db.order_exists(request_id).await {
+            let order_exists = match db.order_exists_with_request_id(request_id).await {
                 Ok(val) => val,
                 Err(err) => {
                     tracing::error!("Failed to check if order exists in db: {err:?}");
@@ -166,12 +182,25 @@ where
                 continue;
             }
 
-            tracing::info!("Found open order: {}", calldata.request.id);
+            let fulfillment_type = match req_status {
+                RequestStatus::Locked => FulfillmentType::FulfillAfterLockExpire,
+                _ => FulfillmentType::LockAndFulfill,
+            };
+
+            tracing::info!(
+                "Found open order: {:x} with request status: {:?}, adding to database with fulfillment type: {:?}",
+                calldata.request.id,
+                req_status,
+                fulfillment_type
+            );
             if let Err(err) = db
-                .add_order(
-                    request_id,
-                    Order::new(calldata.request.clone(), calldata.clientSignature.clone()),
-                )
+                .add_order(Order::new(
+                    calldata.request.clone(),
+                    calldata.clientSignature.clone(),
+                    fulfillment_type,
+                    market_addr,
+                    chain_id,
+                ))
                 .await
             {
                 tracing::error!("Failed to insert order in to database: {err:?}");
@@ -223,6 +252,137 @@ where
         anyhow::bail!("Event polling exited, polling failed (possible RPC error)");
     }
 
+    /// Monitors the RequestLocked events and updates the database accordingly.
+    async fn monitor_order_locks(
+        market_addr: Address,
+        prover_addr: Address,
+        provider: Arc<P>,
+        db: DbObj,
+        order_stream: Option<OrderStreamClient>,
+    ) -> Result<()> {
+        let market = BoundlessMarketService::new(market_addr, provider.clone(), Address::ZERO);
+        let chain_id = provider.get_chain_id().await?;
+        let event = market.instance().RequestLocked_filter().watch().await?;
+        tracing::info!("Subscribed to RequestLocked event");
+
+        event
+            .into_stream()
+            .for_each(|log_res| async {
+                match log_res {
+                    Ok((event, log)) => {
+                        tracing::info!(
+                            "Detected request {:x} locked by {:x}",
+                            event.requestId,
+                            event.prover,
+                        );
+                        if let Err(e) = db
+                            .set_request_locked(
+                                U256::from(event.requestId),
+                                &event.prover.to_string(),
+                                log.block_number.unwrap(),
+                            )
+                            .await
+                        {
+                            tracing::error!(
+                                "Failed to store request locked for request {:x} in db: {e:?}",
+                                event.requestId
+                            );
+                        }
+
+                        // If the request was not locked by the prover, we create an order to evaluate the request
+                        // for fulfilling after the lock expires.
+                        if event.prover != prover_addr {
+                            // Try to get from market first. If the request was submitted via the order stream, we will be unable to find it there.
+                            // In that case we check the order stream.
+                            let mut order: Option<Order> = None;
+                            if let Ok((proof_request, signature)) = market.get_submitted_request(event.requestId, None).await {
+                                order = Some(Order::new(
+                                    proof_request,
+                                    signature,
+                                    FulfillmentType::FulfillAfterLockExpire,
+                                    market_addr,
+                                    chain_id,
+                                ));
+                            } else if let Some(order_stream) = &order_stream {
+                                if let Ok(order_stream_order) = order_stream.fetch_order(event.requestId, None).await {
+                                    let proof_request = order_stream_order.request;
+                                    let signature = order_stream_order.signature;
+                                    order = Some(Order::new(
+                                        proof_request,
+                                        signature.as_bytes().into(),
+                                        FulfillmentType::FulfillAfterLockExpire,
+                                        market_addr,
+                                        chain_id,
+                                    ));
+                                }
+                            }
+
+                            if order.is_none() {
+                                tracing::warn!("Failed to get order from market or order stream for locked request {:x}. Unable to evaluate for fulfillment after lock expires.", event.requestId);
+                                return;
+                            }
+
+                            let order = order.unwrap();
+                            if let Err(e) = db.add_order(order.clone()).await {
+                                tracing::error!("Failed to add order {} to database with fulfillment type: {:?}: {e:?}", order.id(), FulfillmentType::FulfillAfterLockExpire);
+                            } else {
+                                tracing::info!(
+                                    "Added order {:x} to database with fulfillment type: {:?}",
+                                    event.requestId,
+                                    FulfillmentType::FulfillAfterLockExpire
+                                );
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!("Failed to fetch RequestLocked event log: {:?}", err);
+                    }
+                }
+            })
+            .await;
+
+        anyhow::bail!("Event polling exited, polling failed (possible RPC error)");
+    }
+
+    /// Monitors the RequestFulfilled events and updates the database accordingly.
+    async fn monitor_order_fulfillments(
+        market_addr: Address,
+        provider: Arc<P>,
+        db: DbObj,
+    ) -> Result<()> {
+        let market = BoundlessMarketService::new(market_addr, provider.clone(), Address::ZERO);
+        let event = market.instance().RequestFulfilled_filter().watch().await?;
+        tracing::info!("Subscribed to RequestFulfilled event");
+
+        event
+            .into_stream()
+            .for_each(|log_res| async {
+                match log_res {
+                    Ok((event, log)) => {
+                        tracing::info!("Detected request fulfilled {:x}", event.requestId);
+                        if let Err(e) = db
+                            .set_request_fulfilled(
+                                U256::from(event.requestId),
+                                log.block_number.unwrap(),
+                            )
+                            .await
+                        {
+                            tracing::error!(
+                                "Failed to store fulfillment for request id {:x}: {e:?}",
+                                event.requestId
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!("Failed to fetch RequestFulfilled event log: {:?}", err);
+                    }
+                }
+            })
+            .await;
+
+        anyhow::bail!("Event polling exited, polling failed (possible RPC error)");
+    }
+
     async fn process_log(
         event: IBoundlessMarket::RequestSubmitted,
         log: Log,
@@ -247,7 +407,7 @@ where
         if request_id.smart_contract_signed {
             let erc1271 = IERC1271::new(request_id.addr, provider);
             let request_hash = calldata.request.signing_hash(market_addr, chain_id)?;
-            tracing::info!(
+            tracing::debug!(
                 "Validating ERC1271 signature for request 0x{:x}, calling contract: {} with hash {:x}",
                 calldata.request.id,
                 request_id.addr,
@@ -281,10 +441,13 @@ where
         }
 
         if let Err(err) = db
-            .add_order(
-                U256::from(calldata.request.id),
-                Order::new(calldata.request, calldata.clientSignature),
-            )
+            .add_order(Order::new(
+                calldata.request,
+                calldata.clientSignature,
+                FulfillmentType::LockAndFulfill,
+                market_addr,
+                chain_id,
+            ))
             .await
         {
             match err {
@@ -314,6 +477,8 @@ where
         let provider = self.provider.clone();
         let db = self.db.clone();
         let chain_monitor = self.chain_monitor.clone();
+        let order_stream = self.order_stream.clone();
+        let prover_addr = self.prover_addr;
 
         Box::pin(async move {
             tracing::info!("Starting up market monitor");
@@ -331,13 +496,20 @@ where
                 SupervisorErr::Recover(err)
             })?;
 
-            Self::monitor_orders(market_addr, provider, db).await.map_err(|err| {
-                tracing::error!("Monitor for new blocks failed, restarting: {err:?}");
-
-                SupervisorErr::Recover(err)
-            })?;
-
-            Ok(())
+            tokio::select! {
+                Err(err) = Self::monitor_orders(market_addr, provider.clone(), db.clone()) => {
+                    tracing::error!("Monitor for new orders failed, restarting: {err:?}");
+                    Err(SupervisorErr::Recover(err))
+                }
+                Err(err) = Self::monitor_order_fulfillments(market_addr, provider.clone(), db.clone()) => {
+                    tracing::error!("Monitor for order fulfillments failed, restarting: {err:?}");
+                    Err(SupervisorErr::Recover(err))
+                }
+                Err(err) = Self::monitor_order_locks(market_addr, prover_addr, provider.clone(), db.clone(), order_stream.clone()) => {
+                    tracing::error!("Monitor for order locks failed, restarting: {err:?}");
+                    Err(SupervisorErr::Recover(err))
+                }
+            }
         })
     }
 }
@@ -352,12 +524,22 @@ mod tests {
         primitives::{Address, U256},
         providers::{ext::AnvilApi, ProviderBuilder, WalletProvider},
         signers::local::PrivateKeySigner,
+        sol_types::eip712_domain,
     };
-    use boundless_market::contracts::{
-        boundless_market::BoundlessMarketService, test_utils::deploy_boundless_market, Input,
-        InputType, Offer, Predicate, PredicateType, ProofRequest, Requirements,
+    use boundless_market::{
+        contracts::{
+            boundless_market::BoundlessMarketService, hit_points::default_allowance,
+            AssessorReceipt, Input, InputType, Offer, Predicate, PredicateType, ProofRequest,
+            Requirements,
+        },
+        input::InputBuilder,
+    };
+    use boundless_market_test_utils::{
+        create_test_ctx, deploy_boundless_market, mock_singleton, TestCtx,
     };
     use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
+    use guest_set_builder::{SET_BUILDER_ID, SET_BUILDER_PATH};
+    use guest_util::ECHO_ID;
     use risc0_zkvm::sha::Digest;
 
     #[tokio::test]
@@ -445,9 +627,116 @@ mod tests {
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
         tokio::spawn(chain_monitor.spawn());
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
-        let market_monitor = MarketMonitor::new(1, Address::ZERO, provider, db, chain_monitor);
+        let market_monitor =
+            MarketMonitor::new(1, Address::ZERO, provider, db, chain_monitor, Address::ZERO, None);
 
         let block_time = market_monitor.get_block_time().await.unwrap();
         assert_eq!(block_time, 2);
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_e2e_monitor() {
+        // Setup anvil
+        let anvil = Anvil::new().spawn();
+
+        let ctx = create_test_ctx(
+            &anvil,
+            SET_BUILDER_ID,
+            format!("file://{SET_BUILDER_PATH}"),
+            ASSESSOR_GUEST_ID,
+            format!("file://{ASSESSOR_GUEST_PATH}"),
+        )
+        .await
+        .unwrap();
+
+        let eip712_domain = eip712_domain! {
+            name: "IBoundlessMarket",
+            version: "1",
+            chain_id: anvil.chain_id(),
+            verifying_contract: *ctx.customer_market.instance().address(),
+        };
+
+        let request = new_request(1, &ctx).await;
+        let expires_at = request.expires_at();
+
+        let request_id =
+            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
+
+        // fetch logs to retrieve the customer signature from the event
+        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
+
+        let (_, log) = logs.first().unwrap();
+        let tx_hash = log.transaction_hash.unwrap();
+        let tx_data = ctx
+            .customer_market
+            .instance()
+            .provider()
+            .get_transaction_by_hash(tx_hash)
+            .await
+            .unwrap()
+            .unwrap();
+        let inputs = tx_data.input();
+        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
+
+        let request = calldata.request;
+        let customer_sig = calldata.clientSignature;
+
+        // Deposit prover balances
+        let deposit = default_allowance();
+        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
+
+        // Lock the request
+        ctx.prover_market.lock_request(&request, &customer_sig, None).await.unwrap();
+        assert!(ctx.customer_market.is_locked(request_id).await.unwrap());
+        assert!(
+            ctx.customer_market.get_status(request_id, Some(expires_at)).await.unwrap()
+                == RequestStatus::Locked
+        );
+
+        // mock the fulfillment
+        let (root, set_verifier_seal, fulfillment, assessor_seal) =
+            mock_singleton(&request, eip712_domain, ctx.prover_signer.address());
+
+        // publish the committed root
+        ctx.set_verifier.submit_merkle_root(root, set_verifier_seal).await.unwrap();
+
+        let assessor_fill = AssessorReceipt {
+            seal: assessor_seal,
+            selectors: vec![],
+            prover: ctx.prover_signer.address(),
+            callbacks: vec![],
+        };
+        // fulfill the request
+        ctx.prover_market.fulfill(&fulfillment, assessor_fill).await.unwrap();
+        assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
+
+        // retrieve journal and seal from the fulfilled request
+        let (journal, seal) =
+            ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
+
+        assert_eq!(journal, fulfillment.journal);
+        assert_eq!(seal, fulfillment.seal);
+    }
+
+    async fn new_request<P: Provider>(idx: u32, ctx: &TestCtx<P>) -> ProofRequest {
+        ProofRequest::new(
+            RequestId::new(ctx.customer_signer.address(), idx),
+            Requirements::new(
+                Digest::from(ECHO_ID),
+                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
+            ),
+            "http://image_uri.null",
+            InputBuilder::new().build_inline().unwrap(),
+            Offer {
+                minPrice: U256::from(20000000000000u64),
+                maxPrice: U256::from(40000000000000u64),
+                biddingStart: now_timestamp(),
+                timeout: 100,
+                rampUpPeriod: 1,
+                lockStake: U256::from(10),
+                lockTimeout: 100,
+            },
+        )
     }
 }

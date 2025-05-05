@@ -16,6 +16,7 @@ interface ZethGeneratorArgs {
   logLevel: string;
   dockerDir: string;
   dockerTag: string;
+  dockerRemoteBuilder?: string;
   setVerifierAddr: string;
   boundlessMarketAddr: string;
   pinataGateway: string;
@@ -49,6 +50,7 @@ export class ZethGenerator extends pulumi.ComponentResource {
       logLevel, 
       dockerDir, 
       dockerTag, 
+      dockerRemoteBuilder,
       setVerifierAddr, 
       boundlessMarketAddr, 
       pinataGateway, 
@@ -130,6 +132,9 @@ export class ZethGenerator extends pulumi.ComponentResource {
       context: {
         location: dockerDir,
       },
+      builder: dockerRemoteBuilder ? {
+        name: dockerRemoteBuilder,
+      } : undefined,
       platforms: ['linux/amd64'],
       push: true,
       dockerfile: {
@@ -274,7 +279,7 @@ export class ZethGenerator extends pulumi.ComponentResource {
           essential: true,
           entryPoint: ['/bin/sh', '-c'],
           command: [
-            `/app/order-generator-zeth --one-shot --max-retries ${retries} --interval ${interval} --min ${minPricePerMCycle} --max ${maxPricePerMCycle} --stake ${lockStake} --lock-timeout ${lockTimeout} --timeout ${timeout} --ramp-up ${rampUp} --set-verifier-address ${setVerifierAddr} --boundless-market-address ${boundlessMarketAddr}`,
+            `/app/order-generator-zeth --one-shot --auto-deposit 5 --max-retries ${retries} --interval ${interval} --min ${minPricePerMCycle} --max ${maxPricePerMCycle} --stake ${lockStake} --lock-timeout ${lockTimeout} --timeout ${timeout} --ramp-up ${rampUp} --set-verifier-address ${setVerifierAddr} --boundless-market-address ${boundlessMarketAddr}`,
           ],
           environment: [
             {

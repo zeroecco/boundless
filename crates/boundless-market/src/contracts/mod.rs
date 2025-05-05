@@ -427,6 +427,11 @@ impl ProofRequest {
         self.offer.biddingStart + self.offer.timeout as u64
     }
 
+    /// Returns the time, in seconds since the UNIX epoch, at which the request lock expires.
+    pub fn lock_expires_at(&self) -> u64 {
+        self.offer.biddingStart + self.offer.lockTimeout as u64
+    }
+
     /// Return true if the request ID indicates that it is authorized by a smart contract, rather
     /// than an EOA (i.e. an ECDSA key).
     pub fn is_smart_contract_signed(&self) -> bool {
@@ -864,12 +869,7 @@ pub const UNSPECIFIED_SELECTOR: FixedBytes<4> = FixedBytes::<4>([0; 4]);
 
 #[cfg(feature = "test-utils")]
 #[allow(missing_docs)]
-pub(crate) mod bytecode;
-
-#[cfg(feature = "test-utils")]
-#[allow(missing_docs)]
-/// Module for testing utilities.
-pub mod test_utils;
+pub mod bytecode;
 
 #[cfg(test)]
 mod tests {

@@ -1,4 +1,4 @@
-name: Lint / Format / Test
+name: Main workflow
 
 on:
   pull_request:
@@ -18,6 +18,8 @@ permissions:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  RISC0_TOOLCHAIN_VERSION: 1.85.0
+  RISC0_CRATE_VERSION: "2.0.0"
 
 jobs:
   # see: https://github.com/orgs/community/discussions/26822
@@ -32,8 +34,8 @@ jobs:
       - docker
       - rust-pkg-check
       - docs-rs
-      - bento
-      - bento_run
+      - bento-check
+      - bento-run
 
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +47,8 @@ jobs:
 
   rust:
     runs-on: [ self-hosted, Linux, X64, prod, cpu ]
+    needs: files-changed
+    if: needs.files-changed.outputs.main == 'true'
     services:
       postgres:
         image: postgres:latest
@@ -67,6 +71,8 @@ jobs:
 
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "v1.0.0"
         
       - name: setup sccache + s3
         uses: ./.github/actions/sccache
@@ -74,8 +80,8 @@ jobs:
       - name: install cargo risczero
         uses: ./.github/actions/bininstall-risc0
         with:
-          risczero-version: '2.0.0'
-          toolchain-version: '1.85.0'
+          risczero-version: ${{ env.RISC0_CRATE_VERSION }}
+          toolchain-version: ${{ env.RISC0_TOOLCHAIN_VERSION }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -104,11 +110,13 @@ jobs:
       - name: cargo doc
         run: cargo doc --locked
 
+        # NOTE: We set boundless-order-generator/zeth to ensure the Zeth order generator at least passes cargo clippy.
+        # This flag is not set for build or test since building Zeth is quite slow.
       - name: cargo clippy
         env:
           RUSTFLAGS: "-Dwarnings"
           RISC0_SKIP_BUILD: 1
-        run: cargo clippy --locked --all-targets
+        run: cargo clippy --locked --all-targets -F boundless-order-generator/zeth
 
         # build script for boundless-market copies Solidity build artifacts.
         # check that these are not modified, which would indicate they need to be updated.
@@ -124,8 +132,10 @@ jobs:
       - name: sccache stats
         run: sccache --show-stats
 
-  bento:
+  bento-check:
     runs-on: [ self-hosted, Linux, X64, prod, cpu ]
+    needs: files-changed
+    if: needs.files-changed.outputs.bento == 'true'
     services:
       postgres:
         image: postgres:latest
@@ -199,7 +209,7 @@ jobs:
         run: sccache --show-stats
 
 
-  bento_run:
+  bento-run:
     runs-on: [ self-hosted, Linux, X64, prod, cuda, g6.4xlarge ]
     needs: files-changed
     if: needs.files-changed.outputs.bento == 'true'
@@ -248,6 +258,8 @@ jobs:
 
   rust-pkg-check:
     runs-on: [ self-hosted, Linux, X64, prod, cpu ]
+    needs: files-changed
+    if: needs.files-changed.outputs.main == 'true'
     steps:
       - name: checkout code
         uses: actions/checkout@v4
@@ -256,6 +268,8 @@ jobs:
 
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "v1.0.0"
 
       - name: setup sccache + s3
         uses: ./.github/actions/sccache
@@ -275,7 +289,9 @@ jobs:
         run: cargo check --locked -p broker --bin broker
 
   link-check:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, Linux, X64, prod, cpu]
+    needs: files-changed
+    if: needs.files-changed.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -286,6 +302,11 @@ jobs:
           path: .lycheecache
           key: cache-lychee-${{ github.sha }}
           restore-keys: cache-lychee-
+
+      - name: install rust
+        uses: risc0/risc0/.github/actions/rustup@release-2.0
+        with:
+          toolchain: ${{ env.RISC0_TOOLCHAIN_VERSION }}
 
       - name: install cargo-binstall
         uses: baptiste0928/cargo-install@904927dbe77864e0f2281519fe9d5bd097a220b3
@@ -310,9 +331,14 @@ jobs:
           key: ${{ steps.restore-cache.outputs.cache-primary-key }}
 
   format:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, Linux, X64, prod, cpu]
     steps:
       - uses: actions/checkout@v4
+
+      - name: install rust
+        uses: risc0/risc0/.github/actions/rustup@release-2.0
+        with:
+          toolchain: ${{ env.RISC0_TOOLCHAIN_VERSION }}
 
       - name: install cargo-binstall
         uses: baptiste0928/cargo-install@904927dbe77864e0f2281519fe9d5bd097a220b3
@@ -326,7 +352,9 @@ jobs:
       - run: dprint check
 
   foundry:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, Linux, X64, prod, cpu]
+    needs: files-changed
+    if: needs.files-changed.outputs.main == 'true'
     steps:
       - name: checkout code
         uses: actions/checkout@v4
@@ -335,6 +363,8 @@ jobs:
 
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "v1.0.0"
 
       - name: forge fmt
         run: forge fmt --check
@@ -347,8 +377,10 @@ jobs:
   # Run as a separate job because we need to install a different set of tools.
   # In particular, it uses nightly Rust and _does not_ install Forge or cargo risczero.
   docs-rs:
-  # TODO: Revert this change when CC on self-hosted runners in fixed.
+    # TODO: Revert this change when CC on self-hosted runners in fixed.
     runs-on: ubuntu-latest
+    needs: files-changed
+    if: needs.files-changed.outputs.main == 'true'
     steps:
       # This is a workaround from: https://github.com/actions/checkout/issues/590#issuecomment-970586842
       - run: "git checkout -f $(git -c user.name=x -c user.email=x@x commit-tree $(git hash-object -t tree /dev/null) < /dev/null) || :"
@@ -357,7 +389,7 @@ jobs:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@release-2.0
         with:
-          toolchain: '1.85'
+          toolchain: ${{ env.RISC0_TOOLCHAIN_VERSION }}
       - uses: risc0/risc0/.github/actions/rustup@release-2.0
         with:
           # Building with docs.rs config requires the nightly toolchain.
@@ -369,6 +401,8 @@ jobs:
   # Check that cargo publish can package the boundless-market crate
   check-pusblish:
     runs-on: [ self-hosted, Linux, X64, prod, cpu ]
+    needs: files-changed
+    if: needs.files-changed.outputs.main == 'true'
     steps:
       # This is a workaround from: https://github.com/actions/checkout/issues/590#issuecomment-970586842
       - run: "git checkout -f $(git -c user.name=x -c user.email=x@x commit-tree $(git hash-object -t tree /dev/null) < /dev/null) || :"
@@ -377,13 +411,15 @@ jobs:
           submodules: recursive
       - uses: risc0/risc0/.github/actions/rustup@release-2.0
         with:
-          toolchain: '1.85'
+          toolchain: ${{ env.RISC0_TOOLCHAIN_VERSION }}
 
       # TODO: Add dry-run publish checks for other crates; difficulty is they all depend on boundless-market being published
       - run: cargo publish -p boundless-market --dry-run
 
   examples:
     runs-on: [ self-hosted, Linux, X64, prod, cuda, g6.4xlarge ]
+    needs: files-changed
+    if: needs.files-changed.outputs.examples == 'true'
     strategy:
       matrix:
         workspace:
@@ -408,6 +444,8 @@ jobs:
 
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "v1.0.0"
         
       - name: setup sccache + s3
         uses: ./.github/actions/sccache
@@ -460,7 +498,7 @@ jobs:
         run: forge test -vvv
         working-directory: ${{ matrix.workspace }}/contracts
 
-      - name: cargo test
+      - name: RUST_LOG="debug" cargo test
         run: cargo test --all-features --locked -- --nocapture
         working-directory: ${{ matrix.workspace }}
         env:
@@ -469,27 +507,6 @@ jobs:
 
       - name: sccache stats
         run: sccache --show-stats
-
-  files-changed:
-    runs-on: ubuntu-latest
-    outputs:
-      docker: ${{ steps.changes.outputs.docker }}
-      bento: ${{ steps.changes.outputs.bento }}
-
-    steps:
-      - name: checkout code
-        uses: actions/checkout@v4
-
-      - uses: dorny/paths-filter@v3.0.0
-        id: changes
-        with:
-          filters: |
-            docker:
-              - 'dockerfiles/**'
-              - 'compose.yml'
-              - '.env.broker-template'
-            bento:
-              - 'bento/**'
 
   docker:
     runs-on: [ self-hosted, Linux, X64, prod, cpu ]
@@ -531,3 +548,46 @@ jobs:
 
       - name: docker compose build
         run: docker compose --profile broker --env-file ./.env.broker-template -f compose.yml -f ./dockerfiles/compose.ci.yml build
+
+  files-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.changes.outputs.docker }}
+      bento: ${{ steps.changes.outputs.bento }}
+      main:      ${{ steps.changes.outputs.main }}
+      examples:  ${{ steps.changes.outputs.examples }}
+      docs:      ${{ steps.changes.outputs.docs }}
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3.0.0
+        id: changes
+        with:
+          filters: |
+            # Changes to the Docker files. Docker jobs are slow.
+            docker:
+              - 'dockerfiles/**'
+              - 'compose.yml'
+              - '.env.broker-template'
+            # Changes to bento.
+            bento:
+              - 'bento/**'
+            # Changes affect the main codebase (rust + contracts).
+            main:
+              - '*' # run is anything in the root changed.
+              - 'crates/**'
+              - 'contracts/**'
+            # Changes that could effect the examples.
+            examples:
+              - '*' # run is anything in the root changed.
+              - 'crates/**'
+              - 'contracts/**'
+              - 'examples/**'
+            docs:
+              - '*' # run is anything in the root changed.
+              - 'crates/**'
+              - 'contracts/**'
+              - 'documentation/**'
+

@@ -270,8 +270,39 @@ enum ProvingCommands {
         order_stream_url: Option<Url>,
     },
 
-    /// Fulfill a proof request using the RISC Zero zkVM default prover
+    /// Fulfill one or more proof requests using the RISC Zero zkVM default prover.
+    ///
+    /// This command can process multiple requests in a single batch, which is more efficient
+    /// than fulfilling requests individually.
+    ///
+    /// Example usage:
+    ///   --request-ids 0x123,0x456,0x789  # Comma-separated list of request IDs
+    ///   --request-digests 0xabc,0xdef,0x012  # Optional, must match request_ids length and order
+    ///   --tx-hashes 0x111,0x222,0x333  # Optional, must match request_ids length and order
     Fulfill {
+        /// The proof requests identifiers (comma-separated list of hex values)
+        #[arg(long, value_delimiter = ',')]
+        request_ids: Vec<U256>,
+
+        /// The request digests (comma-separated list of hex values).
+        /// If provided, must have the same length and order as request_ids.
+        #[arg(long, value_delimiter = ',')]
+        request_digests: Option<Vec<B256>>,
+
+        /// The tx hash of the requests submissions (comma-separated list of hex values).
+        /// If provided, must have the same length and order as request_ids.
+        #[arg(long, value_delimiter = ',')]
+        tx_hashes: Option<Vec<B256>>,
+
+        /// The order stream service URL.
+        ///
+        /// If provided, the request will be fetched offchain via the provided order stream service URL.
+        #[arg(long, env = "ORDER_STREAM_URL", conflicts_with_all = ["tx_hash"])]
+        order_stream_url: Option<Url>,
+    },
+
+    /// Lock a request in the market
+    Lock {
         /// The proof request identifier
         #[arg(long)]
         request_id: U256,
@@ -537,10 +568,10 @@ where
             Ok(())
         }
         AccountCommands::DepositStake { amount } => {
-            tracing::info!("Depositing {} HP as stake", amount);
+            tracing::info!("Depositing {} HP as stake", format_ether(*amount));
             match boundless_market.deposit_stake_with_permit(*amount, &private_key).await {
                 Ok(_) => {
-                    tracing::info!("Successfully deposited {} HP as stake", amount);
+                    tracing::info!("Successfully deposited {} HP as stake", format_ether(*amount));
                     Ok(())
                 }
                 Err(e) => {
@@ -556,16 +587,16 @@ where
             }
         }
         AccountCommands::WithdrawStake { amount } => {
-            tracing::info!("Withdrawing {} HP from stake", amount);
+            tracing::info!("Withdrawing {} HP from stake", format_ether(*amount));
             boundless_market.withdraw_stake(*amount).await?;
-            tracing::info!("Successfully withdrew {} HP from stake", amount);
+            tracing::info!("Successfully withdrew {} HP from stake", format_ether(*amount));
             Ok(())
         }
         AccountCommands::StakeBalance { address } => {
             let addr = address.unwrap_or(boundless_market.caller());
             tracing::info!("Checking stake balance for address {}", addr);
             let balance = boundless_market.balance_of_stake(addr).await?;
-            tracing::info!("Stake balance for address {}: {} HP", addr, balance);
+            tracing::info!("Stake balance for address {}: {} HP", addr, format_ether(balance));
             Ok(())
         }
     }
@@ -749,8 +780,20 @@ where
             tracing::debug!("Journal: {:?}", journal);
             Ok(())
         }
-        ProvingCommands::Fulfill { request_id, request_digest, tx_hash, order_stream_url } => {
-            tracing::info!("Fulfilling proof request 0x{:x}", request_id);
+        ProvingCommands::Fulfill { request_ids, request_digests, tx_hashes, order_stream_url } => {
+            if request_digests.is_some()
+                && request_ids.len() != request_digests.as_ref().unwrap().len()
+            {
+                bail!("request_ids and request_digests must have the same length");
+            }
+            if tx_hashes.is_some() && request_ids.len() != tx_hashes.as_ref().unwrap().len() {
+                bail!("request_ids and tx_hashes must have the same length");
+            }
+
+            let request_ids_string =
+                request_ids.iter().map(|id| format!("0x{:x}", id)).collect::<Vec<_>>().join(", ");
+            tracing::info!("Fulfilling proof requests {}", request_ids_string);
+
             let (_, market_url) = boundless_market.image_info().await?;
             tracing::debug!("Fetching Assessor ELF from {}", market_url);
             let assessor_elf = fetch_url(&market_url).await?;
@@ -779,6 +822,85 @@ where
                 .build()
                 .await?;
 
+            let fetch_order_jobs = request_ids.iter().enumerate().map(|(i, request_id)| {
+                let client = client.clone();
+                let boundless_market = boundless_market.clone();
+                async move {
+                    let order = client
+                        .fetch_order(
+                            *request_id,
+                            tx_hashes.as_ref().map(|tx_hashes| tx_hashes[i]),
+                            request_digests.as_ref().map(|request_digests| request_digests[i]),
+                        )
+                        .await?;
+                    tracing::debug!("Fetched order details: {:?}", order.request);
+
+                    let sig: Bytes = order.signature.as_bytes().into();
+                    order.request.verify_signature(
+                        &sig,
+                        args.config.boundless_market_address,
+                        boundless_market.get_chain_id().await?,
+                    )?;
+                    let is_locked = boundless_market.is_locked(*request_id).await?;
+                    Ok::<_, anyhow::Error>((order, sig, is_locked))
+                }
+            });
+
+            let results = futures::future::join_all(fetch_order_jobs).await;
+            let mut orders = Vec::new();
+            let mut signatures = Vec::new();
+            let mut requests_to_price = Vec::new();
+
+            for result in results {
+                let (order, sig, is_locked) = result?;
+                // If the request is not locked in, we need to "price" which checks the requirements
+                // and assigns a price. Otherwise, we don't. This vec will be a singleton if not locked
+                // and empty if the request is locked.
+                if !is_locked {
+                    requests_to_price.push(order.request.clone());
+                }
+                orders.push(order);
+                signatures.push(sig);
+            }
+
+            let (fills, root_receipt, assessor_receipt) = prover.fulfill(&orders).await?;
+            let order_fulfilled = OrderFulfilled::new(fills, root_receipt, assessor_receipt)?;
+            tracing::debug!("Submitting root {} to SetVerifier", order_fulfilled.root);
+            set_verifier.submit_merkle_root(order_fulfilled.root, order_fulfilled.seal).await?;
+            tracing::debug!("Successfully submitted root to SetVerifier");
+
+            match boundless_market
+                .price_and_fulfill_batch(
+                    requests_to_price,
+                    signatures,
+                    order_fulfilled.fills,
+                    order_fulfilled.assessorReceipt,
+                    None,
+                )
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("Successfully fulfilled requests {}", request_ids_string);
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::error!("Failed to fulfill requests {}: {}", request_ids_string, e);
+                    bail!("Failed to fulfill request: {}", e)
+                }
+            }
+        }
+        ProvingCommands::Lock { request_id, request_digest, tx_hash, order_stream_url } => {
+            tracing::info!("Locking proof request 0x{:x}", request_id);
+            let client = ClientBuilder::new()
+                .with_private_key(args.config.private_key.clone())
+                .with_rpc_url(args.config.rpc_url.clone())
+                .with_boundless_market_address(args.config.boundless_market_address)
+                .with_set_verifier_address(args.config.set_verifier_address)
+                .with_order_stream_url(order_stream_url.clone())
+                .with_timeout(args.config.tx_timeout)
+                .build()
+                .await?;
+
             let order = client.fetch_order(*request_id, *tx_hash, *request_digest).await?;
             tracing::debug!("Fetched order details: {:?}", order.request);
 
@@ -789,40 +911,9 @@ where
                 boundless_market.get_chain_id().await?,
             )?;
 
-            let (fill, root_receipt, assessor_receipt) = prover.fulfill(order.clone()).await?;
-            let order_fulfilled = OrderFulfilled::new(fill, root_receipt, assessor_receipt)?;
-            tracing::debug!("Submitting root {} to SetVerifier", order_fulfilled.root);
-            set_verifier.submit_merkle_root(order_fulfilled.root, order_fulfilled.seal).await?;
-            tracing::debug!("Successfully submitted root to SetVerifier");
-
-            // If the request is not locked in, we need to "price" which checks the requirements
-            // and assigns a price. Otherwise, we don't. This vec will be a singleton if not locked
-            // and empty if the request is locked.
-            let requests_to_price: Vec<ProofRequest> =
-                (!boundless_market.is_locked(*request_id).await?)
-                    .then_some(order.request)
-                    .into_iter()
-                    .collect();
-
-            match boundless_market
-                .price_and_fulfill_batch(
-                    requests_to_price,
-                    vec![sig],
-                    order_fulfilled.fills,
-                    order_fulfilled.assessorReceipt,
-                    None,
-                )
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Successfully fulfilled request 0x{:x}", request_id);
-                    Ok(())
-                }
-                Err(e) => {
-                    tracing::error!("Failed to fulfill request 0x{:x}: {}", request_id, e);
-                    bail!("Failed to fulfill request: {}", e)
-                }
-            }
+            boundless_market.lock_request(&order.request, &sig, None).await?;
+            tracing::info!("Successfully locked request 0x{:x}", request_id);
+            Ok(())
         }
     }
 }
@@ -931,7 +1022,10 @@ where
         let journal = session_info.journal.bytes;
         ensure!(
             request.requirements.predicate.eval(&journal),
-            "Preflight failed: Predicate evaluation failed; journal does not match requirements"
+            "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
+            hex::encode(&journal),
+            request.requirements.predicate.predicateType,
+            hex::encode(&request.requirements.predicate.data)
         );
         tracing::info!("Preflight check passed");
     } else {
@@ -1051,7 +1145,10 @@ where
         // Verify predicate
         ensure!(
             request.requirements.predicate.eval(&journal),
-            "Preflight failed: Predicate evaluation failed; journal does not match requirements"
+            "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
+            hex::encode(&journal),
+            request.requirements.predicate.predicateType,
+            hex::encode(&request.requirements.predicate.data)
         );
 
         tracing::info!("Preflight check passed");
@@ -1254,15 +1351,15 @@ mod tests {
 
     use alloy::{
         node_bindings::{Anvil, AnvilInstance},
+        primitives::utils::format_units,
         providers::WalletProvider,
     };
     use boundless_market::{
-        contracts::{
-            hit_points::default_allowance,
-            test_utils::{create_test_ctx, deploy_mock_callback, get_mock_callback_count, TestCtx},
-            RequestStatus,
-        },
+        contracts::{hit_points::default_allowance, RequestStatus},
         selector::is_groth16_selector,
+    };
+    use boundless_market_test_utils::{
+        create_test_ctx, deploy_mock_callback, get_mock_callback_count, TestCtx,
     };
     use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
     use guest_set_builder::{SET_BUILDER_ID, SET_BUILDER_PATH};
@@ -1391,14 +1488,44 @@ mod tests {
         };
 
         run(&args).await.unwrap();
+        assert!(logs_contain(&format!(
+            "Depositing {} ETH",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
+        assert!(logs_contain(&format!(
+            "Successfully deposited {} ETH",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
 
         let balance = ctx.prover_market.balance_of(ctx.customer_signer.address()).await.unwrap();
         assert_eq!(balance, default_allowance());
+
+        args.command = Command::Account(Box::new(AccountCommands::Balance {
+            address: Some(ctx.customer_signer.address()),
+        }));
+        run(&args).await.unwrap();
+        assert!(logs_contain(&format!(
+            "Checking balance for address {}",
+            ctx.customer_signer.address()
+        )));
+        assert!(logs_contain(&format!(
+            "Balance for address {}: {} ETH",
+            ctx.customer_signer.address(),
+            format_units(default_allowance(), "ether").unwrap()
+        )));
 
         args.command =
             Command::Account(Box::new(AccountCommands::Withdraw { amount: default_allowance() }));
 
         run(&args).await.unwrap();
+        assert!(logs_contain(&format!(
+            "Withdrawing {} ETH",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
+        assert!(logs_contain(&format!(
+            "Successfully withdrew {} ETH",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
 
         let balance = ctx.prover_market.balance_of(ctx.customer_signer.address()).await.unwrap();
         assert_eq!(balance, U256::from(0));
@@ -1437,16 +1564,46 @@ mod tests {
         };
 
         run(&args).await.unwrap();
+        assert!(logs_contain(&format!(
+            "Depositing {} HP as stake",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
+        assert!(logs_contain(&format!(
+            "Successfully deposited {} HP as stake",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
 
         let balance =
             ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap();
         assert_eq!(balance, default_allowance());
+
+        args.command = Command::Account(Box::new(AccountCommands::StakeBalance {
+            address: Some(ctx.prover_signer.address()),
+        }));
+        run(&args).await.unwrap();
+        assert!(logs_contain(&format!(
+            "Checking stake balance for address {}",
+            ctx.prover_signer.address()
+        )));
+        assert!(logs_contain(&format!(
+            "Stake balance for address {}: {} HP",
+            ctx.prover_signer.address(),
+            format_units(default_allowance(), "ether").unwrap()
+        )));
 
         args.command = Command::Account(Box::new(AccountCommands::WithdrawStake {
             amount: default_allowance(),
         }));
 
         run(&args).await.unwrap();
+        assert!(logs_contain(&format!(
+            "Withdrawing {} HP from stake",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
+        assert!(logs_contain(&format!(
+            "Successfully withdrew {} HP from stake",
+            format_units(default_allowance(), "ether").unwrap()
+        )));
 
         let balance =
             ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap();
@@ -1724,16 +1881,29 @@ mod tests {
 
         assert!(logs_contain(&format!("Successfully executed request 0x{:x}", request.id)));
 
-        let client_sig = request
-            .sign_request(&ctx.customer_signer, ctx.boundless_market_address, anvil.chain_id())
-            .await
-            .unwrap();
+        let prover_config = GlobalConfig {
+            rpc_url: anvil.endpoint_url(),
+            private_key: ctx.prover_signer.clone(),
+            boundless_market_address: ctx.boundless_market_address,
+            verifier_address: ctx.verifier_address,
+            set_verifier_address: ctx.set_verifier_address,
+            tx_timeout: None,
+            log_level: LevelFilter::INFO,
+        };
 
-        // Lock the request
-        ctx.prover_market
-            .lock_request(&request, &Bytes::copy_from_slice(&client_sig.as_bytes()), None)
-            .await
-            .unwrap();
+        // test the Lock command
+        run(&MainArgs {
+            config: prover_config,
+            command: Command::Proving(Box::new(ProvingCommands::Lock {
+                request_id,
+                request_digest: None,
+                tx_hash: None,
+                order_stream_url: None,
+            })),
+        })
+        .await
+        .unwrap();
+        assert!(logs_contain(&format!("Successfully locked request 0x{:x}", request.id)));
 
         // test the Status command
         run(&MainArgs {
@@ -1751,16 +1921,16 @@ mod tests {
         run(&MainArgs {
             config: config.clone(),
             command: Command::Proving(Box::new(ProvingCommands::Fulfill {
-                request_id,
-                request_digest: None,
-                tx_hash: None,
+                request_ids: vec![request_id],
+                request_digests: None,
+                tx_hashes: None,
                 order_stream_url: None,
             })),
         })
         .await
         .unwrap();
 
-        assert!(logs_contain(&format!("Successfully fulfilled request 0x{:x}", request.id)));
+        assert!(logs_contain(&format!("Successfully fulfilled requests 0x{:x}", request.id)));
 
         // test the Status command
         run(&MainArgs {
@@ -1800,6 +1970,55 @@ mod tests {
             "Successfully verified proof for request 0x{:x}",
             request.id
         )));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    #[ignore = "Generates a proof. Slow without RISC0_DEV_MODE=1"]
+    async fn test_proving_multiple_requests() {
+        let (ctx, _anvil, config) = setup_test_env(AccountOwner::Customer).await;
+
+        let mut request_ids = Vec::new();
+        for _ in 0..3 {
+            let request = generate_request(
+                ctx.customer_market.index_from_nonce().await.unwrap(),
+                &ctx.customer_signer.address(),
+            );
+
+            ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
+            request_ids.push(request.id);
+        }
+
+        // test the Fulfill command
+        run(&MainArgs {
+            config: config.clone(),
+            command: Command::Proving(Box::new(ProvingCommands::Fulfill {
+                request_ids: request_ids.clone(),
+                request_digests: None,
+                tx_hashes: None,
+                order_stream_url: None,
+            })),
+        })
+        .await
+        .unwrap();
+
+        let request_ids_str =
+            request_ids.iter().map(|id| format!("0x{:x}", id)).collect::<Vec<_>>().join(", ");
+        assert!(logs_contain(&format!("Successfully fulfilled requests {request_ids_str}")));
+
+        for request_id in request_ids {
+            // test the Status command
+            run(&MainArgs {
+                config: config.clone(),
+                command: Command::Request(Box::new(RequestCommands::Status {
+                    request_id,
+                    expires_at: None,
+                })),
+            })
+            .await
+            .unwrap();
+            assert!(logs_contain(&format!("Request 0x{:x} status: Fulfilled", request_id)));
+        }
     }
 
     #[tokio::test]
@@ -1852,9 +2071,9 @@ mod tests {
         run(&MainArgs {
             config,
             command: Command::Proving(Box::new(ProvingCommands::Fulfill {
-                request_id: request.id,
-                request_digest: None,
-                tx_hash: None,
+                request_ids: vec![request.id],
+                request_digests: None,
+                tx_hashes: None,
                 order_stream_url: None,
             })),
         })
@@ -1906,9 +2125,9 @@ mod tests {
         run(&MainArgs {
             config,
             command: Command::Proving(Box::new(ProvingCommands::Fulfill {
-                request_id: request.id,
-                request_digest: None,
-                tx_hash: None,
+                request_ids: vec![request.id],
+                request_digests: None,
+                tx_hashes: None,
                 order_stream_url: None,
             })),
         })
@@ -1926,7 +2145,7 @@ mod tests {
     #[traced_test]
     #[ignore = "Generates a proof. Slow without RISC0_DEV_MODE=1"]
     async fn test_proving_offchain(pool: PgPool) {
-        let (ctx, _anvil, config, order_stream_url, order_stream_handle) =
+        let (ctx, anvil, config, order_stream_url, order_stream_handle) =
             setup_test_env_with_order_stream(AccountOwner::Customer, pool).await;
 
         // Deposit funds into the market
@@ -1979,20 +2198,44 @@ mod tests {
 
         assert!(logs_contain(&format!("Successfully executed request 0x{:x}", request.id)));
 
+        let prover_config = GlobalConfig {
+            rpc_url: anvil.endpoint_url(),
+            private_key: ctx.prover_signer.clone(),
+            boundless_market_address: ctx.boundless_market_address,
+            verifier_address: ctx.verifier_address,
+            set_verifier_address: ctx.set_verifier_address,
+            tx_timeout: None,
+            log_level: LevelFilter::INFO,
+        };
+
+        // test the Lock command
+        run(&MainArgs {
+            config: prover_config,
+            command: Command::Proving(Box::new(ProvingCommands::Lock {
+                request_id,
+                request_digest: None,
+                tx_hash: None,
+                order_stream_url: Some(order_stream_url.clone()),
+            })),
+        })
+        .await
+        .unwrap();
+        assert!(logs_contain(&format!("Successfully locked request 0x{:x}", request.id)));
+
         // test the Fulfill command
         run(&MainArgs {
             config,
             command: Command::Proving(Box::new(ProvingCommands::Fulfill {
-                request_id,
-                request_digest: None,
-                tx_hash: None,
+                request_ids: vec![request_id],
+                request_digests: None,
+                tx_hashes: None,
                 order_stream_url: Some(order_stream_url),
             })),
         })
         .await
         .unwrap();
 
-        assert!(logs_contain(&format!("Successfully fulfilled request 0x{:x}", request.id)));
+        assert!(logs_contain(&format!("Successfully fulfilled requests 0x{:x}", request.id)));
 
         // Clean up
         order_stream_handle.abort();
