@@ -223,7 +223,7 @@ where
             .map_err(|e| -> OrderMonitorErr {
                 match e {
                     MarketError::LockRevert(e) => {
-                        OrderMonitorErr::LockTxFailed(format!("0x{:x}", e))
+                        OrderMonitorErr::LockTxFailed(format!("Tx hash 0x{:x}", e))
                     }
                     MarketError::Error(e) => {
                         if e.to_string().contains("InsufficientBalance") {
@@ -628,7 +628,7 @@ where
                     _ => panic!("Unsupported fulfillment type: {:?}", order.fulfillment_type),
                 };
 
-                tracing::debug!("Order {} estimated to take {} seconds, and would be completed at {}. It expires at {}", order.id(), proof_time_seconds, completion_time, expiration);
+                tracing::debug!("Order {} estimated to take {} seconds, and would be completed at {} ({} seconds from now). It expires at {} ({} seconds from now)", order.id(), proof_time_seconds, completion_time, completion_time.saturating_sub(now_timestamp()), expiration, expiration.saturating_sub(now_timestamp()));
 
                 if completion_time > expiration {
                     tracing::info!("Order {:x} cannot be completed before its expiration at {}, proof estimated to take {} seconds and complete at {}. Skipping", 
@@ -1374,8 +1374,8 @@ mod tests {
                 maxPrice: U256::from(max_price),
                 biddingStart: now_timestamp(),
                 rampUpPeriod: 1,
-                timeout: 500,
-                lockTimeout: 500,
+                timeout: 1000,
+                lockTimeout: 1000,
                 lockStake: U256::from(0),
             },
         );
