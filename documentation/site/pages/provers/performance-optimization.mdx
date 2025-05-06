@@ -30,34 +30,22 @@ docker ps
 docker stop <BROKER_CONTAINER_ID>
 ```
 
-Alternatively you can modify your `scripts/boundless_service.sh` to remove `--profile broker`.
+Alternatively you can start Bento without running the broker service:
 
-```sh [scripts/boundless_service.sh]
-start_services() {
-    # Trap SIGINT (Ctrl-C) and SIGTERM to execute cleanup
-    trap cleanup SIGINT SIGTERM
-
-    log_info "Starting Docker Compose services using environment file: $ENV_FILE"
-
-    # Start Docker Compose in foreground mode
-    docker compose --profile broker --env-file "$ENV_FILE" up --build -d # [!code --]
-    docker compose --env-file "$ENV_FILE" up --build -d # [!code ++]
-
-    # After docker compose up exits normally (without interruption)
-    log_success "Docker Compose services have been started."
-}
+```sh [Terminal]
+just bento
 ```
 
 ### Defining a Test Harness
 
-It is recommended to benchmark using an example of your actual workload. Using a representative workload will provide more accurate turn around times, and validate your ELF and inputs file for the proofs you plan to generate.
+It is recommended to benchmark using an example of your actual workload. Using a representative workload will provide more accurate turn around times, and validate your program and inputs file for the proofs you plan to generate.
 
 > Before running this, [install Bento CLI](/provers/quick-start#bento-cli-installation)
 
 To try a realistic example:
 
 ```sh [Terminal]
-RUST_LOG=info bento_cli -f /path/to/elf -i /path/to/input`
+RUST_LOG=info bento_cli -f /path/to/program -i /path/to/input`
 ```
 
 If you intend to operate across a variety of different workloads (such as those that may be fed by the [Broker](/provers/broker)), you can also use the following command to generate a synthetic workload:
