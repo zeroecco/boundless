@@ -274,9 +274,7 @@ interface IBoundlessMarket {
     /// @param fills The array of fulfillment information.
     /// @param assessorReceipt The Assessor's guest fulfillment information verified to confirm the
     /// request's requirements are met.
-    function verifyDelivery(Fulfillment[] calldata fills, AssessorReceipt calldata assessorReceipt)
-        external
-        view;
+    function verifyDelivery(Fulfillment[] calldata fills, AssessorReceipt calldata assessorReceipt) external view;
 
     /// @notice Checks the validity of the request and then writes the current auction price to
     /// transient storage.
