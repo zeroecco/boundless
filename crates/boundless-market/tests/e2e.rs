@@ -502,10 +502,14 @@ async fn test_e2e_no_payment() {
 
         let balance_before = ctx.prover_market.balance_of(some_other_address).await.unwrap();
         // fulfill the request.
-        FulfillmentBuilder::new(ctx.prover_market.clone(), vec![fulfillment.clone()], assessor_fill.clone())
-            .send()
-            .await
-            .unwrap();
+        FulfillmentBuilder::new(
+            ctx.prover_market.clone(),
+            vec![fulfillment.clone()],
+            assessor_fill.clone(),
+        )
+        .send()
+        .await
+        .unwrap();
         assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
         let balance_after = ctx.prover_market.balance_of(some_other_address).await.unwrap();
         assert!(balance_before == balance_after);

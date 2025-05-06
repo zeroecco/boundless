@@ -14,8 +14,8 @@ use alloy::{
 use boundless_cli::OrderFulfilled;
 use boundless_market::{
     contracts::{
-        boundless_market::FulfillmentBuilder, Input, Offer, Predicate, PredicateType, ProofRequest, RequestId,
-        Requirements,
+        boundless_market::FulfillmentBuilder, Input, Offer, Predicate, PredicateType, ProofRequest,
+        RequestId, Requirements,
     },
     order_stream_client::Order,
 };
