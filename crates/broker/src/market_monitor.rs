@@ -577,7 +577,7 @@ mod tests {
     };
     use boundless_market::{
         contracts::{
-            boundless_market::{BoundlessMarketService, Fulfill},
+            boundless_market::{BoundlessMarketService, FulfillmentBuilder},
             hit_points::default_allowance,
             AssessorReceipt, Input, InputType, Offer, Predicate, PredicateType, ProofRequest,
             Requirements,
@@ -758,7 +758,7 @@ mod tests {
             callbacks: vec![],
         };
         // fulfill the request
-        Fulfill::new(ctx.prover_market.clone(), vec![fulfillment.clone()], assessor_fill.clone())
+        FulfillmentBuilder::new(ctx.prover_market.clone(), vec![fulfillment.clone()], assessor_fill.clone())
             .send()
             .await
             .unwrap();

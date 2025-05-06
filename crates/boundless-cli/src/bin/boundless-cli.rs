@@ -74,7 +74,7 @@ use url::Url;
 use boundless_market::{
     client::{Client, ClientBuilder},
     contracts::{
-        boundless_market::{BoundlessMarketService, Fulfill},
+        boundless_market::{BoundlessMarketService, FulfillmentBuilder},
         Callback, Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId,
         Requirements, UNSPECIFIED_SELECTOR,
     },
@@ -885,7 +885,7 @@ where
             let (fills, root_receipt, assessor_receipt) = prover.fulfill(&orders).await?;
             let order_fulfilled = OrderFulfilled::new(fills, root_receipt, assessor_receipt)?;
 
-            let fulfill = Fulfill::new(
+            let fulfill = FulfillmentBuilder::new(
                 boundless_market,
                 order_fulfilled.fills,
                 order_fulfilled.assessorReceipt,

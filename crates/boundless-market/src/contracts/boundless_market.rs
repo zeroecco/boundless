@@ -1413,8 +1413,9 @@ pub struct Price {
 }
 
 #[derive(Clone)]
-/// Represents the parameters for a fulfillment.
-pub struct Fulfill<P> {
+#[non_exhaustive]
+/// Builder for creating a fulfillment request.
+pub struct FulfillmentBuilder<P> {
     /// The Boundless market service instance.
     pub boundless_market: BoundlessMarketService<P>,
     /// The parameters for submitting a Merkle Root
@@ -1429,7 +1430,7 @@ pub struct Fulfill<P> {
     pub withdraw: bool,
 }
 
-impl<P: Provider> Fulfill<P> {
+impl<P: Provider> FulfillmentBuilder<P> {
     /// Creates a new instance of the `Fulfill` struct.
     pub fn new(
         boundless_market: BoundlessMarketService<P>,

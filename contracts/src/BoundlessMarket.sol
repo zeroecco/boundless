@@ -229,7 +229,7 @@ contract BoundlessMarket is
     }
 
     /// @inheritdoc IBoundlessMarket
-    function verifyBatchDelivery(Fulfillment[] calldata fills, AssessorReceipt calldata assessorReceipt) public view {
+    function verifyDelivery(Fulfillment[] calldata fills, AssessorReceipt calldata assessorReceipt) public view {
         // TODO(#242): Figure out how much the memory here is costing. If it's significant, we can do some tricks to reduce memory pressure.
         // We can't handle more than 65535 fills in a single batch.
         // This is a limitation of the current Selector implementation,
@@ -304,7 +304,7 @@ contract BoundlessMarket is
         public
         returns (bytes[] memory paymentError)
     {
-        verifyBatchDelivery(fills, assessorReceipt);
+        verifyDelivery(fills, assessorReceipt);
 
         paymentError = new bytes[](fills.length);
 

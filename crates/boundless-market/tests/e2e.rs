@@ -22,7 +22,7 @@ use alloy::{
 use alloy_sol_types::SolCall;
 use boundless_market::{
     contracts::{
-        boundless_market::Fulfill, hit_points::default_allowance, AssessorReceipt,
+        boundless_market::FulfillmentBuilder, hit_points::default_allowance, AssessorReceipt,
         IBoundlessMarket, Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestStatus,
         Requirements,
     },
@@ -255,7 +255,7 @@ async fn test_e2e() {
         callbacks: vec![],
     };
     // fulfill the request
-    Fulfill::new(ctx.prover_market, vec![fulfillment.clone()], assessor_fill.clone())
+    FulfillmentBuilder::new(ctx.prover_market, vec![fulfillment.clone()], assessor_fill.clone())
         .send()
         .await
         .unwrap();
@@ -339,7 +339,7 @@ async fn test_e2e_merged_submit_fulfill() {
         callbacks: vec![],
     };
     // publish the committed root + fulfillments
-    Fulfill::new(ctx.prover_market.clone(), fulfillments.clone(), assessor_fill.clone())
+    FulfillmentBuilder::new(ctx.prover_market.clone(), fulfillments.clone(), assessor_fill.clone())
         .with_submit_root(ctx.set_verifier_address, root, set_verifier_seal)
         .send()
         .await
@@ -410,7 +410,7 @@ async fn test_e2e_price_and_fulfill_batch() {
     };
 
     // Price and fulfill the request
-    Fulfill::new(ctx.prover_market.clone(), fulfillments.clone(), assessor_fill.clone())
+    FulfillmentBuilder::new(ctx.prover_market.clone(), fulfillments.clone(), assessor_fill.clone())
         .with_submit_root(ctx.set_verifier_address, root, set_verifier_seal)
         .with_price(vec![request], vec![customer_sig])
         .send()
@@ -502,7 +502,7 @@ async fn test_e2e_no_payment() {
 
         let balance_before = ctx.prover_market.balance_of(some_other_address).await.unwrap();
         // fulfill the request.
-        Fulfill::new(ctx.prover_market.clone(), vec![fulfillment.clone()], assessor_fill.clone())
+        FulfillmentBuilder::new(ctx.prover_market.clone(), vec![fulfillment.clone()], assessor_fill.clone())
             .send()
             .await
             .unwrap();
@@ -533,7 +533,7 @@ async fn test_e2e_no_payment() {
     };
 
     // fulfill the request, this time getting paid.
-    Fulfill::new(ctx.prover_market, vec![fulfillment.clone()], assessor_fill.clone())
+    FulfillmentBuilder::new(ctx.prover_market, vec![fulfillment.clone()], assessor_fill.clone())
         .send()
         .await
         .unwrap();

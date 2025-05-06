@@ -14,7 +14,7 @@ use alloy::{
 use boundless_cli::OrderFulfilled;
 use boundless_market::{
     contracts::{
-        boundless_market::Fulfill, Input, Offer, Predicate, PredicateType, ProofRequest, RequestId,
+        boundless_market::FulfillmentBuilder, Input, Offer, Predicate, PredicateType, ProofRequest, RequestId,
         Requirements,
     },
     order_stream_client::Order,
@@ -239,7 +239,7 @@ async fn test_slash_fulfilled() {
     }
 
     // Fulfill the order
-    Fulfill::new(
+    FulfillmentBuilder::new(
         ctx.customer_market.clone(),
         order_fulfilled.fills,
         order_fulfilled.assessorReceipt,

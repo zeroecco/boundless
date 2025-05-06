@@ -13,7 +13,7 @@ use alloy::{
 use anyhow::{anyhow, Context, Result};
 use boundless_market::{
     contracts::{
-        boundless_market::{BoundlessMarketService, Fulfill, MarketError},
+        boundless_market::{BoundlessMarketService, FulfillmentBuilder, MarketError},
         encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, ProofRequest,
     },
     selector::is_groth16_selector,
@@ -340,8 +340,9 @@ where
             (config.batcher.single_txn_fulfill, config.batcher.withdraw)
         };
 
-        let mut fulfill = Fulfill::new(self.market.clone(), fulfillments.clone(), assessor_receipt)
-            .with_withdraw(withdraw);
+        let mut fulfill =
+            FulfillmentBuilder::new(self.market.clone(), fulfillments.clone(), assessor_receipt)
+                .with_withdraw(withdraw);
         if single_txn_fulfill {
             fulfill = fulfill.with_submit_root(self.set_verifier_addr, root, batch_seal.into());
         } else {
