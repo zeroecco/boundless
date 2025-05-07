@@ -14,8 +14,8 @@ use alloy::{
 use boundless_cli::OrderFulfilled;
 use boundless_market::{
     contracts::{
-        boundless_market::FulfillmentBuilder, Input, Offer, Predicate, PredicateType, ProofRequest,
-        RequestId, Requirements,
+        boundless_market::{FulfillmentTx, UnlockedRequest},
+        Input, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
     },
     order_stream_client::Order,
 };
@@ -239,16 +239,18 @@ async fn test_slash_fulfilled() {
     }
 
     // Fulfill the order
-    FulfillmentBuilder::new(
-        ctx.customer_market.clone(),
-        order_fulfilled.fills,
-        order_fulfilled.assessorReceipt,
-    )
-    .with_submit_root(ctx.set_verifier_address, order_fulfilled.root, order_fulfilled.seal)
-    .with_price(vec![request], vec![client_sig])
-    .send()
-    .await
-    .unwrap();
+    ctx.customer_market
+        .fulfill(
+            FulfillmentTx::new(order_fulfilled.fills, order_fulfilled.assessorReceipt)
+                .with_submit_root(
+                    ctx.set_verifier_address,
+                    order_fulfilled.root,
+                    order_fulfilled.seal,
+                )
+                .with_unlocked_request(UnlockedRequest::new(request, client_sig)),
+        )
+        .await
+        .unwrap();
 
     // Wait for the slash event with timeout
     tokio::select! {

@@ -6,15 +6,15 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy::{
     network::Ethereum,
-    primitives::{utils::format_ether, Address, Bytes, B256, U256},
+    primitives::{utils::format_ether, Address, B256, U256},
     providers::{Provider, WalletProvider},
     sol_types::{SolStruct, SolValue},
 };
 use anyhow::{anyhow, Context, Result};
 use boundless_market::{
     contracts::{
-        boundless_market::{BoundlessMarketService, FulfillmentBuilder, MarketError},
-        encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, ProofRequest,
+        boundless_market::{BoundlessMarketService, FulfillmentTx, MarketError, UnlockedRequest},
+        encode_seal, AssessorJournal, AssessorReceipt, Fulfillment,
     },
     selector::is_groth16_selector,
 };
@@ -203,7 +203,7 @@ where
             SetInclusionReceiptVerifierParameters { image_id: self.set_builder_img_id };
 
         let mut fulfillments = vec![];
-        let mut requests_to_price: Vec<(ProofRequest, Bytes)> = vec![];
+        let mut requests_to_price: Vec<UnlockedRequest> = vec![];
 
         struct OrderPrice {
             price: U256,
@@ -230,7 +230,8 @@ where
 
                 let mut stake_reward = U256::ZERO;
                 if fulfillment_type == FulfillmentType::FulfillAfterLockExpire {
-                    requests_to_price.push((order_request.clone(), client_sig.clone()));
+                    requests_to_price
+                        .push(UnlockedRequest::new(order_request.clone(), client_sig.clone()));
                     stake_reward = order_request.offer.stake_reward_if_locked_and_not_fulfilled();
                 }
 
@@ -340,11 +341,12 @@ where
             (config.batcher.single_txn_fulfill, config.batcher.withdraw)
         };
 
-        let mut fulfill =
-            FulfillmentBuilder::new(self.market.clone(), fulfillments.clone(), assessor_receipt)
-                .with_withdraw(withdraw);
+        let mut fulfillment_tx = FulfillmentTx::new(fulfillments.clone(), assessor_receipt)
+            .with_withdraw(withdraw)
+            .with_unlocked_requests(requests_to_price);
         if single_txn_fulfill {
-            fulfill = fulfill.with_submit_root(self.set_verifier_addr, root, batch_seal.into());
+            fulfillment_tx =
+                fulfillment_tx.with_submit_root(self.set_verifier_addr, root, batch_seal.into());
         } else {
             let contains_root = match self.set_verifier.contains_root(root).await {
                 Ok(res) => res,
@@ -363,13 +365,8 @@ where
                 tracing::info!("Contract already contains root, skipping to fulfillment");
             }
         };
-        if !requests_to_price.is_empty() {
-            let (requests, client_sigs): (Vec<ProofRequest>, Vec<Bytes>) =
-                requests_to_price.into_iter().unzip();
-            fulfill = fulfill.with_price(requests.clone(), client_sigs.clone());
-        }
 
-        if let Err(err) = fulfill.send().await {
+        if let Err(err) = self.market.fulfill(fulfillment_tx).await {
             let order_ids: Vec<&str> =
                 fulfillments.iter().map(|f| *fulfillment_to_order_id.get(&f.id).unwrap()).collect();
             self.handle_fulfillment_error(err, batch_id, &fulfillments, &order_ids).await?;

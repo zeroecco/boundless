@@ -74,7 +74,7 @@ use url::Url;
 use boundless_market::{
     client::{Client, ClientBuilder},
     contracts::{
-        boundless_market::{BoundlessMarketService, FulfillmentBuilder},
+        boundless_market::{BoundlessMarketService, FulfillmentTx, UnlockedRequest},
         Callback, Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId,
         Requirements, UNSPECIFIED_SELECTOR,
     },
@@ -867,8 +867,7 @@ where
 
             let results = futures::future::join_all(fetch_order_jobs).await;
             let mut orders = Vec::new();
-            let mut signatures = Vec::new();
-            let mut requests_to_price = Vec::new();
+            let mut unlocked_requests = Vec::new();
 
             for result in results {
                 let (order, sig, is_locked) = result?;
@@ -876,30 +875,24 @@ where
                 // and assigns a price. Otherwise, we don't. This vec will be a singleton if not locked
                 // and empty if the request is locked.
                 if !is_locked {
-                    requests_to_price.push(order.request.clone());
+                    unlocked_requests.push(UnlockedRequest::new(order.request.clone(), sig));
                 }
                 orders.push(order);
-                signatures.push(sig);
             }
 
             let (fills, root_receipt, assessor_receipt) = prover.fulfill(&orders).await?;
             let order_fulfilled = OrderFulfilled::new(fills, root_receipt, assessor_receipt)?;
 
-            let fulfill = FulfillmentBuilder::new(
-                boundless_market,
-                order_fulfilled.fills,
-                order_fulfilled.assessorReceipt,
-            )
-            .with_submit_root(
-                args.config.set_verifier_address,
-                order_fulfilled.root,
-                order_fulfilled.seal,
-            )
-            .with_price(requests_to_price, signatures)
-            .with_withdraw(*withdraw)
-            .send()
-            .await;
-            match fulfill {
+            let fulfillment_tx =
+                FulfillmentTx::new(order_fulfilled.fills, order_fulfilled.assessorReceipt)
+                    .with_submit_root(
+                        args.config.set_verifier_address,
+                        order_fulfilled.root,
+                        order_fulfilled.seal,
+                    )
+                    .with_unlocked_requests(unlocked_requests)
+                    .with_withdraw(*withdraw);
+            match boundless_market.fulfill(fulfillment_tx).await {
                 Ok(_) => {
                     tracing::info!("Successfully fulfilled requests {}", request_ids_string);
                     Ok(())
