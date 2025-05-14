@@ -28,8 +28,12 @@ use risc0_zkvm::sha::Digest;
 pub use rpc_retry_policy::CustomRetryPolicy;
 use serde::{Deserialize, Serialize};
 use task::{RetryPolicy, Supervisor};
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 use url::Url;
+
+const ORDER_PICKER_CHANNEL_CAPACITY: usize = 100;
+const LOCKED_EVENT_CHANNEL_CAPACITY: usize = 100;
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
@@ -123,35 +127,23 @@ pub struct Args {
     pub rpc_retry_cu: u64,
 }
 
-/// Status of a order as it moves through the lifecycle
+/// Status of a persistent order as it moves through the lifecycle in the database.
+/// Orders in initial, intermediate, or terminal non-failure states (e.g. New, Pricing, Done, Skipped)
+/// are managed in-memory or removed from the database.
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
 enum OrderStatus {
-    /// New order found on chain, waiting pricing analysis
-    New,
-    /// Order is in the process of being priced
-    Pricing,
     /// Order is ready to lock at target_timestamp and then be fulfilled
     WaitingToLock,
     /// Order is ready to be fulfilled when its lock expires at target_timestamp
     WaitingForLockToExpire,
-    /// Order is ready to commence proving (either locked or filling without locking)
-    PendingProving,
     /// Order is actively ready for proving
     Proving,
-    /// Order is ready for aggregation
-    PendingAgg,
     /// Order is in the process of Aggregation
     Aggregating,
-    /// Unaggregated order is ready for submission
+    /// Unaggregated order is ready for submission (e.g. Groth16 proofs)
     SkipAggregation,
-    /// Pending on chain finalization
-    PendingSubmission,
-    /// Order has been completed
-    Done,
     /// Order failed
     Failed,
-    /// Order was analyzed and marked as skipable
-    Skipped,
 }
 
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
@@ -237,7 +229,7 @@ impl Order {
             boundless_market_address,
             chain_id,
             request,
-            status: OrderStatus::New,
+            status: OrderStatus::WaitingToLock,
             updated_at: Utc::now(),
             target_timestamp: None,
             image_id: None,
@@ -467,6 +459,11 @@ where
                 OrderStreamClient::new(url, self.args.boundless_market_address, chain_id)
             });
 
+        // Create a channel for new orders to be sent to the OrderPicker / from monitors
+        let (new_order_tx, new_order_rx) = // new_order_rx was here, but tx is used first by monitors
+            mpsc::channel::<Order>(ORDER_PICKER_CHANNEL_CAPACITY);
+        let (locked_event_tx, _locked_event_rx) = broadcast::channel(LOCKED_EVENT_CHANNEL_CAPACITY);
+
         // spin up a supervisor for the market monitor
         let market_monitor = Arc::new(market_monitor::MarketMonitor::new(
             loopback_blocks,
@@ -476,6 +473,8 @@ where
             chain_monitor.clone(),
             self.args.private_key.address(),
             client.clone(),
+            new_order_tx.clone(),
+            locked_event_tx.clone(),
         ));
 
         let block_times =
@@ -493,12 +492,12 @@ where
         });
 
         // spin up a supervisor for the offchain market monitor
-        if let Some(client) = client {
+        if let Some(client_clone) = client {
             let offchain_market_monitor =
                 Arc::new(offchain_market_monitor::OffchainMarketMonitor::new(
-                    self.db.clone(),
-                    client.clone(),
+                    client_clone,
                     self.args.private_key.clone(),
+                    new_order_tx.clone(),
                 ));
             let cloned_config = config.clone();
             supervisor_tasks.spawn(async move {
@@ -542,6 +541,7 @@ where
             self.args.boundless_market_address,
             self.provider.clone(),
             chain_monitor.clone(),
+            new_order_rx,
         ));
         let cloned_config = config.clone();
         supervisor_tasks.spawn(async move {
@@ -559,6 +559,7 @@ where
             config.clone(),
             block_times,
             self.args.boundless_market_address,
+            locked_event_tx.clone(),
         )?);
         let cloned_config = config.clone();
         supervisor_tasks.spawn(async move {

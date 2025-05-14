@@ -7,7 +7,9 @@ use crate::{
     config::ConfigLock,
     db::DbObj,
     errors::CodedError,
-    impl_coded_debug, now_timestamp,
+    impl_coded_debug,
+    market_monitor::LockedEvent,
+    now_timestamp,
     task::{RetryRes, RetryTask, SupervisorErr},
     FulfillmentType, Order, OrderStatus,
 };
@@ -22,8 +24,10 @@ use boundless_market::contracts::{
     IBoundlessMarket::IBoundlessMarketErrors,
     RequestStatus, TxnErr,
 };
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 /// Hard limit on the number of orders to concurrently kick off proving work for.
 const MAX_PROVING_BATCH_SIZE: u32 = 10;
@@ -126,11 +130,12 @@ pub struct OrderMonitor<P> {
     market: BoundlessMarketService<Arc<P>>,
     provider: Arc<P>,
     capacity_debug_log: String,
+    locked_event_tx: broadcast::Sender<LockedEvent>,
 }
 
 impl<P> OrderMonitor<P>
 where
-    P: Provider + WalletProvider,
+    P: Provider<Ethereum> + WalletProvider,
 {
     pub fn new(
         db: DbObj,
@@ -139,6 +144,7 @@ where
         config: ConfigLock,
         block_time: u64,
         market_addr: Address,
+        locked_event_tx: broadcast::Sender<LockedEvent>,
     ) -> Result<Self> {
         let txn_timeout_opt = {
             let config = config.lock_all().context("Failed to read config")?;
@@ -170,8 +176,7 @@ where
                     .transpose()?,
             );
         }
-
-        Ok(Self {
+        let monitor = Self {
             db,
             chain_monitor,
             block_time,
@@ -179,7 +184,9 @@ where
             market,
             provider,
             capacity_debug_log: "".to_string(),
-        })
+            locked_event_tx,
+        };
+        Ok(monitor)
     }
 
     async fn lock_order(&self, order: &Order) -> Result<(), OrderMonitorErr> {
@@ -198,16 +205,6 @@ where
             tracing::info!("Request {:x} not open: {order_status:?}, skipping", request_id);
             // TODO: fetch some chain data to find out who / and for how much the order
             // was locked in at
-            return Err(OrderMonitorErr::AlreadyLocked);
-        }
-
-        let is_locked = self
-            .db
-            .is_request_locked(U256::from(order.request.id))
-            .await
-            .context("Failed to check if request is locked")?;
-        if is_locked {
-            tracing::warn!("Request {} already locked: {order_status:?}, skipping", request_id);
             return Err(OrderMonitorErr::AlreadyLocked);
         }
 
@@ -441,10 +438,11 @@ where
                     "Request {:x} was locked by another prover and was fulfilled. Skipping.",
                     order.request.id
                 );
+                // TODO fix this
                 self.db
-                    .set_order_status(&order.id(), OrderStatus::Skipped)
+                    .skip_order(&order.id())
                     .await
-                    .context("Failed to set order status to skipped")?;
+                    .context("Failed to skip order (was fulfilled by other)")?;
             } else {
                 tracing::info!("Request {:x} was locked by another prover but expired unfulfilled, setting status to pending proving", order.request.id);
                 candidate_orders.push(order);
@@ -465,25 +463,9 @@ where
             if is_lock_expired {
                 tracing::info!("Request {:x} was scheduled to be locked by us, but its lock has now expired. Skipping.", order.request.id);
                 self.db
-                    .set_order_status(&order.id(), OrderStatus::Skipped)
+                    .skip_order(&order.id()) // Use skip_order to delete
                     .await
-                    .context("Failed to set order status to skipped")?;
-            } else if let Some((locker, _)) =
-                self.db.get_request_locked(U256::from(order.request.id)).await?
-            {
-                let our_address = self.provider.default_signer_address().to_string().to_lowercase();
-                let locker_address = locker.to_lowercase();
-                if locker_address != our_address {
-                    tracing::info!("Request {:x} was scheduled to be locked by us ({}), but is already locked by another prover ({}). Skipping.", order.request.id, our_address, locker_address);
-                    self.db
-                        .set_order_status(&order.id(), OrderStatus::Skipped)
-                        .await
-                        .context("Failed to set order status to skipped")?;
-                } else {
-                    // Edge case where we locked the order, but due to some reason was not moved to proving state. Should not happen.
-                    tracing::info!("Request {:x} was scheduled to be locked by us, but is already locked by us. Proceeding to prove.", order.request.id);
-                    candidate_orders.push(order);
-                }
+                    .context("Failed to skip order (lock expired before we locked)")?;
             } else {
                 candidate_orders.push(order);
             }
@@ -500,18 +482,19 @@ where
         let mut final_orders: Vec<Order> = Vec::new();
         for order in candidate_orders {
             let now = now_timestamp();
+            // TODO fix these blocks
             if order.request.expires_at() < current_block_timestamp {
                 tracing::debug!("Request {:x} has now expired. Skipping.", order.request.id);
                 self.db
-                    .set_order_status(&order.id(), OrderStatus::Skipped)
+                    .skip_order(&order.id())
                     .await
-                    .context("Failed to set order status to skipped")?;
+                    .context("Failed to skip order (expired)")?;
             } else if order.request.expires_at().saturating_sub(now) < min_deadline {
                 tracing::debug!("Request {:x} deadline at {} is less than the minimum deadline {} seconds required to prove an order. Skipping.", order.request.id, order.request.expires_at(), min_deadline);
                 self.db
-                    .set_order_status(&order.id(), OrderStatus::Skipped)
+                    .skip_order(&order.id())
                     .await
-                    .context("Failed to set order status to skipped")?;
+                    .context("Failed to skip order (insufficient deadline)")?;
             } else {
                 final_orders.push(order);
             }
@@ -658,10 +641,10 @@ where
                         proof_time_seconds,
                         completion_time
                     );
-                    self.db
-                        .set_order_status(&order.id(), OrderStatus::Skipped)
-                        .await
-                        .context("Failed to set order status to skipped")?;
+                    // TODO fix
+                    self.db.skip_order(&order.id()).await.context(
+                        "Failed to skip order (peak KHz limit: completion past expiration)",
+                    )?;
                     continue;
                 }
 
@@ -866,6 +849,7 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
+            broadcast::channel(16).0,
         )
         .unwrap();
 
@@ -1020,6 +1004,7 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
+            broadcast::channel(16).0,
         )
         .unwrap();
 
@@ -1153,6 +1138,7 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
+            broadcast::channel(16).0,
         )
         .unwrap();
 
@@ -1443,6 +1429,7 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
+            broadcast::channel(16).0,
         )
         .unwrap();
 
