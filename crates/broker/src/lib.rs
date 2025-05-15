@@ -32,7 +32,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 use url::Url;
 
-const ORDER_PICKER_CHANNEL_CAPACITY: usize = 100;
+const NEW_ORDER_CHANNEL_CAPACITY: usize = 100;
 const LOCKED_EVENT_CHANNEL_CAPACITY: usize = 100;
 
 pub(crate) mod aggregator;
@@ -132,6 +132,8 @@ pub struct Args {
 /// are managed in-memory or removed from the database.
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
 enum OrderStatus {
+    /// Order is marked as skipped by the order picker.
+    Skipped,
     /// Order is ready to lock at target_timestamp and then be fulfilled
     WaitingToLock,
     /// Order is ready to be fulfilled when its lock expires at target_timestamp
@@ -167,6 +169,7 @@ enum FulfillmentType {
 /// details. Those also result in separate Order objects being created.
 ///
 /// See the id() method for more details on how Orders are identified.
+// TODO trim
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Order {
     /// Address of the boundless market contract. Stored as it is required to compute the order id.
@@ -460,8 +463,7 @@ where
             });
 
         // Create a channel for new orders to be sent to the OrderPicker / from monitors
-        let (new_order_tx, new_order_rx) = // new_order_rx was here, but tx is used first by monitors
-            mpsc::channel::<Order>(ORDER_PICKER_CHANNEL_CAPACITY);
+        let (new_order_tx, new_order_rx) = mpsc::channel::<Order>(NEW_ORDER_CHANNEL_CAPACITY);
         let (locked_event_tx, _locked_event_rx) = broadcast::channel(LOCKED_EVENT_CHANNEL_CAPACITY);
 
         // spin up a supervisor for the market monitor
@@ -469,7 +471,6 @@ where
             loopback_blocks,
             self.args.boundless_market_address,
             self.provider.clone(),
-            self.db.clone(),
             chain_monitor.clone(),
             self.args.private_key.address(),
             client.clone(),
