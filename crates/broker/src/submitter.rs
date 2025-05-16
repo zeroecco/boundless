@@ -736,7 +736,7 @@ mod tests {
 
         let order = Order {
             status: OrderStatus::PendingSubmission,
-            updated_at: Utc::now(),
+            updated_at: Utc::now().timestamp(),
             target_timestamp: Some(0),
             request: order_request,
             image_id: Some(echo_id_str.clone()),

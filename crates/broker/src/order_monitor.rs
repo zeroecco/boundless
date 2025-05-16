@@ -8,7 +8,7 @@ use crate::{
     db::DbObj,
     errors::CodedError,
     impl_coded_debug,
-    market_monitor::LockedEvent,
+    market_monitor::BoundlessEvent,
     now_timestamp,
     task::{RetryRes, RetryTask, SupervisorErr},
     FulfillmentType, Order, OrderStatus,
@@ -130,7 +130,7 @@ pub struct OrderMonitor<P> {
     market: BoundlessMarketService<Arc<P>>,
     provider: Arc<P>,
     capacity_debug_log: String,
-    locked_event_tx: broadcast::Sender<LockedEvent>,
+    locked_event_tx: broadcast::Sender<BoundlessEvent>,
 }
 
 impl<P> OrderMonitor<P>
@@ -144,7 +144,7 @@ where
         config: ConfigLock,
         block_time: u64,
         market_addr: Address,
-        locked_event_tx: broadcast::Sender<LockedEvent>,
+        locked_event_tx: broadcast::Sender<BoundlessEvent>,
     ) -> Result<Self> {
         let txn_timeout_opt = {
             let config = config.lock_all().context("Failed to read config")?;
