@@ -133,6 +133,8 @@ pub struct Args {
 /// are managed in-memory or removed from the database.
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
 enum OrderStatus {
+    // TODO remove
+    Temp,
     /// Order is marked as skipped by the order picker.
     Skipped,
     /// Order is ready to lock at target_timestamp and then be fulfilled
@@ -170,7 +172,6 @@ enum FulfillmentType {
 /// details. Those also result in separate Order objects being created.
 ///
 /// See the id() method for more details on how Orders are identified.
-// TODO trim
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Order {
     /// Address of the boundless market contract. Stored as it is required to compute the order id.
@@ -233,7 +234,7 @@ impl Order {
             boundless_market_address,
             chain_id,
             request,
-            status: OrderStatus::WaitingToLock,
+            status: OrderStatus::Temp,
             updated_at: Utc::now(),
             target_timestamp: None,
             image_id: None,
@@ -556,6 +557,26 @@ where
                 .context("Failed to start order picker")?;
             Ok(())
         });
+        let (proving_tx, proving_rx) = mpsc::channel::<Order>(NEW_ORDER_CHANNEL_CAPACITY);
+        let proving_service = Arc::new(
+            proving::ProvingService::new(
+                self.db.clone(),
+                prover.clone(),
+                config.clone(),
+                proving_rx,
+            )
+            .await
+            .context("Failed to initialize proving service")?,
+        );
+
+        let cloned_config = config.clone();
+        supervisor_tasks.spawn(async move {
+            Supervisor::new(proving_service, cloned_config)
+                .spawn()
+                .await
+                .context("Failed to start proving service")?;
+            Ok(())
+        });
 
         let order_monitor = Arc::new(order_monitor::OrderMonitor::new(
             self.db.clone(),
@@ -565,6 +586,8 @@ where
             block_times,
             self.args.boundless_market_address,
             locked_event_tx.clone(),
+            pricing_rx,
+            proving_tx,
         )?);
         let cloned_config = config.clone();
         supervisor_tasks.spawn(async move {
@@ -572,21 +595,6 @@ where
                 .spawn()
                 .await
                 .context("Failed to start order monitor")?;
-            Ok(())
-        });
-
-        let proving_service = Arc::new(
-            proving::ProvingService::new(self.db.clone(), prover.clone(), config.clone())
-                .await
-                .context("Failed to initialize proving service")?,
-        );
-
-        let cloned_config = config.clone();
-        supervisor_tasks.spawn(async move {
-            Supervisor::new(proving_service, cloned_config)
-                .spawn()
-                .await
-                .context("Failed to start proving service")?;
             Ok(())
         });
 

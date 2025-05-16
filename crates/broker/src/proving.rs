@@ -13,8 +13,10 @@ use crate::{
     Order, OrderStatus,
 };
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use thiserror::Error;
-
+use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 #[derive(Error)]
 pub enum ProvingErr {
     #[error("{code} Unexpected error: {0:?}", code = self.code())]
@@ -36,11 +38,17 @@ pub struct ProvingService {
     db: DbObj,
     prover: ProverObj,
     config: ConfigLock,
+    order_rx: Arc<Mutex<mpsc::Receiver<Order>>>,
 }
 
 impl ProvingService {
-    pub async fn new(db: DbObj, prover: ProverObj, config: ConfigLock) -> Result<Self> {
-        Ok(Self { db, prover, config })
+    pub async fn new(
+        db: DbObj,
+        prover: ProverObj,
+        config: ConfigLock,
+        order_rx: mpsc::Receiver<Order>,
+    ) -> Result<Self> {
+        Ok(Self { db, prover, config, order_rx: Arc::new(Mutex::new(order_rx)) })
     }
 
     pub async fn monitor_proof(
@@ -186,6 +194,9 @@ impl RetryTask for ProvingService {
             // monitors
             proving_service_copy.find_and_monitor_proofs().await.map_err(SupervisorErr::Fault)?;
 
+            // Create a new receiver for the channel
+            let mut order_rx = proving_service_copy.order_rx.lock().await;
+
             // Start monitoring for new proofs
             loop {
                 // TODO: parallel_proofs management
@@ -194,57 +205,48 @@ impl RetryTask for ProvingService {
                 // we could add it to both to support it. Alternatively we could
                 // track it in our local DB but that could de-sync from the proving-backend so
                 // its not ideal
-                let order_res = proving_service_copy
-                    .db
-                    .get_proving_order()
+                let order = order_rx.recv().await.ok_or_else(|| {
+                    SupervisorErr::Fault(ProvingErr::UnexpectedError(anyhow::anyhow!(
+                        "Proving service channel closed unexpectedly"
+                    )))
+                })?;
+
+                let order_id = order.id();
+                let prov_serv = proving_service_copy.clone();
+                tokio::spawn(async move {
+                    let (proof_retry_count, proof_retry_sleep_ms) = {
+                        let config = prov_serv.config.lock_all().unwrap();
+                        (config.prover.proof_retry_count, config.prover.proof_retry_sleep_ms)
+                    };
+
+                    match retry(
+                        proof_retry_count,
+                        proof_retry_sleep_ms,
+                        || async { prov_serv.prove_order(order.clone()).await },
+                        "prove_order",
+                    )
                     .await
-                    .context("Failed to get proving order")
-                    .map_err(ProvingErr::UnexpectedError)
-                    .map_err(SupervisorErr::Recover)?;
-
-                if let Some(order) = order_res {
-                    let order_id = order.id();
-                    let prov_serv = proving_service_copy.clone();
-                    tokio::spawn(async move {
-                        let (proof_retry_count, proof_retry_sleep_ms) = {
-                            let config = prov_serv.config.lock_all().unwrap();
-                            (config.prover.proof_retry_count, config.prover.proof_retry_sleep_ms)
-                        };
-
-                        match retry(
-                            proof_retry_count,
-                            proof_retry_sleep_ms,
-                            || async { prov_serv.prove_order(order.clone()).await },
-                            "prove_order",
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                tracing::info!("Successfully complete order proof {order_id}");
-                            }
-                            Err(err) => {
+                    {
+                        Ok(_) => {
+                            tracing::info!("Successfully complete order proof {order_id}");
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                "FATAL: Order {} failed to prove after {} retries: {err:?}",
+                                order_id,
+                                proof_retry_count
+                            );
+                            if let Err(inner_err) =
+                                prov_serv.db.set_order_failure(&order_id, format!("{err:?}")).await
+                            {
                                 tracing::error!(
-                                    "FATAL: Order {} failed to prove after {} retries: {err:?}",
-                                    order_id,
-                                    proof_retry_count
+                                    "Failed to set order {} failure: {inner_err:?}",
+                                    order_id
                                 );
-                                if let Err(inner_err) = prov_serv
-                                    .db
-                                    .set_order_failure(&order_id, format!("{err:?}"))
-                                    .await
-                                {
-                                    tracing::error!(
-                                        "Failed to set order {} failure: {inner_err:?}",
-                                        order_id
-                                    );
-                                }
                             }
                         }
-                    });
-                }
-
-                // TODO: configuration
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                });
             }
         })
     }
@@ -276,6 +278,9 @@ mod tests {
         let config = ConfigLock::default();
         let prover: ProverObj = Arc::new(DefaultProver::new());
 
+        // Create a channel for receiving orders
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+
         let image_id = Digest::from(ECHO_ID).to_string();
         prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
         let input_id = prover
@@ -284,7 +289,7 @@ mod tests {
             .unwrap();
 
         let proving_service =
-            ProvingService::new(db.clone(), prover, config.clone()).await.unwrap();
+            ProvingService::new(db.clone(), prover, config.clone(), rx).await.unwrap();
 
         let min_price = 2;
         let max_price = 4;
@@ -342,8 +347,10 @@ mod tests {
     async fn resume_proving() {
         let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
         let config = ConfigLock::default();
-
         let prover: ProverObj = Arc::new(DefaultProver::new());
+
+        // Create a channel for receiving orders
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
 
         let image_id = Digest::from(ECHO_ID).to_string();
         prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
@@ -356,7 +363,7 @@ mod tests {
         let proof_id = prover.prove_stark(&image_id, &input_id, vec![]).await.unwrap();
 
         let proving_service =
-            ProvingService::new(db.clone(), prover, config.clone()).await.unwrap();
+            ProvingService::new(db.clone(), prover, config.clone(), rx).await.unwrap();
 
         let order_id = U256::ZERO;
         let min_price = 2;

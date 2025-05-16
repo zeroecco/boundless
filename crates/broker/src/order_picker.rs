@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::{
     chain_monitor::ChainMonitorService,
     config::ConfigLock,
-    db::{DbObj, OrderMetaData},
+    db::DbObj,
     errors::CodedError,
     provers::{ProverError, ProverObj},
     storage::{upload_image_uri, upload_input_uri},
@@ -217,20 +217,12 @@ where
                     tracing::info!("Skipping order {order_id}");
                     // Skip orders are handled directly in the DB
                     // Create a new PersistedOrderData record for the skipped order
-                    let persisted_order = OrderMetaData {
-                        id: order.id(),
-                        status: OrderStatus::Skipped,
-                        updated_at: chrono::Utc::now().timestamp(),
-                        image_id: order.image_id,
-                        input_id: order.input_id,
-                        proof_id: None,
-                        compressed_proof_id: None,
-                        error_msg: None,
-                    };
+                    order.status = OrderStatus::Skipped;
+                    order.updated_at = chrono::Utc::now();
 
                     // Add the skipped order to the database
                     self.db
-                        .add_order(persisted_order)
+                        .add_order(&order)
                         .await
                         .context("Failed to add skipped order to database")?;
                     Ok(false)
@@ -254,22 +246,15 @@ where
     }
 
     // Helper method to send failed orders to the channel
-    async fn persist_failure(&self, order: Order, error_msg: String) -> Result<(), anyhow::Error> {
+    async fn persist_failure(&self, mut order: Order, error_msg: String) -> Result<(), anyhow::Error> {
         // Create a new PersistedOrderData for the failed order
-        let persisted_order = OrderMetaData {
-            id: order.id(),
-            status: OrderStatus::Failed,
-            updated_at: chrono::Utc::now().timestamp(),
-            image_id: order.image_id.clone(),
-            input_id: order.input_id.clone(),
-            proof_id: None,
-            compressed_proof_id: None,
-            error_msg: Some(error_msg.clone()),
-        };
+        order.status = OrderStatus::Failed;
+        order.updated_at = chrono::Utc::now();
+        order.error_msg = Some(error_msg.clone());
 
         // Add the failed order to the database
         self.db
-            .add_order(persisted_order)
+            .add_order(&order)
             .await
             .context("Failed to add failed order to database")?;
 
@@ -1099,7 +1084,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let result = ctx.picker.price_order_and_update_state(order).await;
         assert!(result);
 
@@ -1146,7 +1131,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let result = ctx.picker.price_order_and_update_state(order).await;
         assert!(!result);
 
@@ -1173,7 +1158,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let result = ctx.picker.price_order_and_update_state(order).await;
         assert!(!result);
 
@@ -1203,7 +1188,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let result = ctx.picker.price_order_and_update_state(order).await;
         assert!(!result);
 
@@ -1241,7 +1226,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
 
@@ -1266,7 +1251,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(!locked);
 
@@ -1303,7 +1288,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
 
@@ -1331,7 +1316,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(!locked);
 
@@ -1369,7 +1354,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
 
@@ -1394,7 +1379,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(!locked);
 
@@ -1421,7 +1406,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(!locked);
 
@@ -1445,7 +1430,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
 
         ctx.picker.find_existing_orders().await.unwrap();
 
@@ -1489,7 +1474,7 @@ mod tests {
 
         let order = ctx.generate_next_order(OrderParams { lock_stake, ..Default::default() }).await;
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
         // order is pending lock so stake is counted
@@ -1516,7 +1501,7 @@ mod tests {
         let order = ctx.generate_next_order(Default::default()).await;
         assert_eq!(ctx.picker.estimate_gas_to_lock(&order).await.unwrap(), lockin_gas);
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
 
@@ -1537,7 +1522,7 @@ mod tests {
         assert_eq!(ctx.picker.pending_locked_stake().await.unwrap(), U256::ZERO);
 
         let order = ctx.generate_next_order(Default::default()).await;
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
 
@@ -1546,7 +1531,7 @@ mod tests {
         // add another order
         let order =
             ctx.generate_next_order(OrderParams { order_index: 2, ..Default::default() }).await;
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(locked);
 
@@ -1570,7 +1555,7 @@ mod tests {
         assert_eq!(ctx.picker.pending_locked_stake().await.unwrap(), U256::ZERO);
 
         let order = ctx.generate_next_order(Default::default()).await;
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let priced = ctx.picker.price_order_and_update_db(&order).await;
         assert!(priced);
 
@@ -1613,7 +1598,7 @@ mod tests {
 
         for (i, order) in orders.iter_mut().enumerate() {
             order.request.id = U256::from(i);
-            ctx.db.add_order(order.clone()).await.unwrap();
+            ctx.db.add_order(&order).await.unwrap();
             ctx.picker.price_order_and_update_db(order).await;
         }
 
@@ -1644,7 +1629,7 @@ mod tests {
             TestCtxBuilder::default().with_config(config).with_initial_hp(lock_stake).build().await;
         let order = ctx.generate_next_order(OrderParams { lock_stake, ..Default::default() }).await;
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
         let locked = ctx.picker.price_order_and_update_db(&order).await;
         assert!(!locked);
 
@@ -1677,7 +1662,7 @@ mod tests {
         order.request.offer.lockStake = parse_ether("0.1").unwrap();
         order.fulfillment_type = FulfillmentType::FulfillAfterLockExpire;
         let order_id = order.request.id;
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
 
         assert!(ctx.picker.price_order_and_update_db(&order).await);
 
@@ -1718,7 +1703,7 @@ mod tests {
         order.request.offer.lockStake = parse_ether("0.00001").unwrap();
 
         let request_id = order.request.id;
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
 
         assert!(!ctx.picker.price_order_and_update_db(&order).await);
 
@@ -1765,7 +1750,7 @@ mod tests {
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        ctx.db.add_order(order.clone()).await.unwrap();
+        ctx.db.add_order(&order).await.unwrap();
 
         // Get the fulfill-after-lock data
         let fulfill_data = ctx.price_lock_expired_order(&order).await;
@@ -1811,7 +1796,6 @@ mod tests {
         let persisted_order = persisted_order.unwrap();
         assert_eq!(persisted_order.status, OrderStatus::Failed);
         assert_eq!(persisted_order.error_msg, Some(error_msg.to_string()));
-
     }
 
     #[tokio::test]
