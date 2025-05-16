@@ -34,6 +34,7 @@ use url::Url;
 
 const NEW_ORDER_CHANNEL_CAPACITY: usize = 100;
 const LOCKED_EVENT_CHANNEL_CAPACITY: usize = 100;
+const PRICING_CHANNEL_CAPACITY: usize = 100;
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
@@ -534,6 +535,8 @@ where
             Arc::new(provers::DefaultProver::new())
         };
 
+        let (pricing_tx, pricing_rx) = mpsc::channel(PRICING_CHANNEL_CAPACITY);
+
         // Spin up the order picker to pre-flight and find orders to lock
         let order_picker = Arc::new(order_picker::OrderPicker::new(
             self.db.clone(),
@@ -543,6 +546,7 @@ where
             self.provider.clone(),
             chain_monitor.clone(),
             new_order_rx,
+            pricing_tx,
         ));
         let cloned_config = config.clone();
         supervisor_tasks.spawn(async move {
