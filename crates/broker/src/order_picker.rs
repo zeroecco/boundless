@@ -71,32 +71,13 @@ impl CodedError for OrderPickerErr {
     }
 }
 
-// TODO revisit to see if separate structs are needed
-/// Represents an order that is ready to be locked
-#[derive(Debug, Clone)]
-pub struct OrderToLock {
-    pub order: OrderRequest,
-    pub total_cycles: Option<u64>,
-    pub target_timestamp_secs: u64,
-    pub expiry_secs: u64,
-}
-
-/// Represents an order to fulfill after lock expiry
-#[derive(Debug, Clone)]
-pub struct OrderToFulfillAfterLockExpire {
-    pub order: OrderRequest,
-    pub total_cycles: Option<u64>,
-    pub lock_expire_timestamp_secs: u64,
-    pub expiry_secs: u64,
-}
-
 /// Represents possible order processing outcomes
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum OrderProcessingResult {
     /// Order is ready to be locked
-    Lock(OrderToLock),
+    Lock(OrderRequest),
     /// Order should be fulfilled after lock expiry
-    FulfillAfterLock(OrderToFulfillAfterLockExpire),
+    FulfillAfterLock(OrderRequest),
 }
 
 #[derive(Clone)]
@@ -119,14 +100,14 @@ pub struct OrderPicker<P> {
 enum OrderPricingOutcome {
     // Order should be locked and proving commence after lock is secured
     Lock {
-        total_cycles: Option<u64>,
+        total_cycles: u64,
         target_timestamp_secs: u64,
         // TODO handle checking what time the lock should occur before, when estimating proving time.
         expiry_secs: u64,
     },
     // Do not lock the order, but consider proving and fulfilling it after the lock expires
     ProveAfterLockExpire {
-        total_cycles: Option<u64>,
+        total_cycles: u64,
         lock_expire_timestamp_secs: u64,
         expiry_secs: u64,
     },
@@ -172,6 +153,10 @@ where
         let f = || async {
             match self.price_order(&mut order).await {
                 Ok(Lock { total_cycles, target_timestamp_secs, expiry_secs }) => {
+                    order.total_cycles = Some(total_cycles);
+                    order.target_timestamp = Some(target_timestamp_secs);
+                    order.expire_timestamp = Some(expiry_secs);
+
                     tracing::info!(
                         "Setting order {order_id} to lock at {}, {} seconds from now",
                         target_timestamp_secs,
@@ -180,12 +165,7 @@ where
 
                     // Send the order to the single channel
                     self.order_result_tx
-                        .send(OrderProcessingResult::Lock(OrderToLock {
-                            order,
-                            total_cycles,
-                            target_timestamp_secs,
-                            expiry_secs,
-                        }))
+                        .send(OrderProcessingResult::Lock(order))
                         .await
                         .context("Failed to send to order_result_tx")?;
 
@@ -197,17 +177,13 @@ where
                     expiry_secs,
                 }) => {
                     tracing::info!("Setting order {order_id} to prove after lock expiry at {lock_expire_timestamp_secs}");
+                    order.total_cycles = Some(total_cycles);
+                    order.target_timestamp = Some(lock_expire_timestamp_secs);
+                    order.expire_timestamp = Some(expiry_secs);
 
                     // Send the order to the single channel
                     self.order_result_tx
-                        .send(OrderProcessingResult::FulfillAfterLock(
-                            OrderToFulfillAfterLockExpire {
-                                order,
-                                total_cycles,
-                                lock_expire_timestamp_secs,
-                                expiry_secs,
-                            },
-                        ))
+                        .send(OrderProcessingResult::FulfillAfterLock(order))
                         .await
                         .context("Failed to send to order_result_tx")?;
 
@@ -218,7 +194,7 @@ where
 
                     // Add the skipped order to the database
                     self.db
-                        .skip_request(order)
+                        .insert_skipped_request(order)
                         .await
                         .context("Failed to add skipped order to database")?;
                     Ok(false)
@@ -226,7 +202,7 @@ where
                 Err(err) => {
                     tracing::warn!("Failed to price order {order_id}: {err}");
                     self.db
-                        .skip_request(order)
+                        .insert_skipped_request(order)
                         .await
                         .context("Failed to skip failed priced order")?;
                     Ok(false)
@@ -579,11 +555,7 @@ where
 
         let expiry_secs = order.request.offer.biddingStart + order.request.offer.lockTimeout as u64;
 
-        Ok(Lock {
-            total_cycles: Some(proof_res.stats.total_cycles),
-            target_timestamp_secs,
-            expiry_secs,
-        })
+        Ok(Lock { total_cycles: proof_res.stats.total_cycles, target_timestamp_secs, expiry_secs })
     }
 
     /// Evaluate if a lock expired order is worth picking based on how much of the slashed stake token we can recover
@@ -624,7 +596,7 @@ where
         }
 
         Ok(ProveAfterLockExpire {
-            total_cycles: Some(proof_res.stats.total_cycles),
+            total_cycles: proof_res.stats.total_cycles,
             lock_expire_timestamp_secs: order.request.offer.biddingStart
                 + order.request.offer.lockTimeout as u64,
             expiry_secs: order.request.offer.biddingStart + order.request.offer.timeout as u64,

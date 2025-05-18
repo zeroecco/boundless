@@ -166,7 +166,7 @@ enum FulfillmentType {
 /// Order request from the network.
 ///
 /// This will turn into
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 struct OrderRequest {
     request: ProofRequest,
     client_sig: Bytes,
@@ -175,6 +175,9 @@ struct OrderRequest {
     chain_id: u64,
     image_id: Option<String>,
     input_id: Option<String>,
+    total_cycles: Option<u64>,
+    target_timestamp: Option<u64>,
+    expire_timestamp: Option<u64>,
 }
 
 impl OrderRequest {
@@ -193,6 +196,9 @@ impl OrderRequest {
             chain_id,
             image_id: None,
             input_id: None,
+            total_cycles: None,
+            target_timestamp: None,
+            expire_timestamp: None,
         }
     }
 
@@ -231,8 +237,15 @@ impl OrderRequest {
         }
     }
 
-    fn skip(self) -> Order {
+    fn into_skipped_order(self) -> Order {
         self.into_order(OrderStatus::Skipped)
+    }
+
+    fn into_proving_order(self, lock_price: U256) -> Order {
+        let mut order = self.into_order(OrderStatus::PendingProving);
+        order.lock_price = Some(lock_price);
+        order.proving_started_at = Some(Utc::now().timestamp().try_into().unwrap());
+        order
     }
 }
 

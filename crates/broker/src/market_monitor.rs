@@ -236,10 +236,7 @@ where
                 chain_id,
             );
 
-            new_order_tx
-                .send(new_order.clone())
-                .await
-                .map_err(|_| MarketMonitorErr::ReceiverDropped)?;
+            new_order_tx.send(new_order).await.map_err(|_| MarketMonitorErr::ReceiverDropped)?;
             order_count += 1;
         }
 
@@ -453,17 +450,15 @@ where
             chain_id,
         );
 
-        if let Err(e) = new_order_tx.send(new_order.clone()).await {
+        let order_id = new_order.request.id;
+        if let Err(e) = new_order_tx.send(new_order).await {
             tracing::error!(
                 "Failed to send new on-chain order {:x} to OrderPicker: {}",
-                new_order.request.id,
+                order_id,
                 e
             );
         } else {
-            tracing::debug!(
-                "Sent new on-chain order {:x} to OrderPicker via channel.",
-                new_order.request.id
-            );
+            tracing::debug!("Sent new on-chain order {:x} to OrderPicker via channel.", order_id);
         }
         Ok(())
     }
@@ -610,6 +605,7 @@ mod tests {
         assert_eq!(orders, 1);
 
         order_rx.try_recv().unwrap();
+        assert!(order_rx.try_recv().is_err());
     }
 
     #[tokio::test]

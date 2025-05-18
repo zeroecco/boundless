@@ -195,12 +195,7 @@ where
         Ok(monitor)
     }
 
-    async fn lock_order(&self, mut order: OrderRequest) -> Result<(), OrderMonitorErr> {
-        // TODO assert in some way that the order isn't locked
-        // if order.status != OrderStatus::WaitingToLock {
-        //     return Err(OrderMonitorErr::InvalidStatus(order.status));
-        // }
-
+    async fn lock_order(&self, order: &OrderRequest) -> Result<U256, OrderMonitorErr> {
         let request_id = order.request.id;
 
         let order_status = self
@@ -276,35 +271,24 @@ where
             .price_at(lock_timestamp)
             .context("Failed to calculate lock price")?;
 
-        order.updated_at = chrono::Utc::now();
-        order.status = OrderStatus::Proving;
-        // TODO do we actually care to store this?
-        order.lock_price = Some(lock_price);
-
-        if let Err(db_err) = self.db.add_order(&order).await {
-            tracing::error!("Failed to update order in database: {} - {}", order.id(), db_err);
-            // We don't return an error here to avoid blocking the flow
-        }
-
-        self.db
-            .set_proving_status_lock_and_fulfill_orders(&order.id(), lock_price)
-            .await
-            .with_context(|| {
-                format!(
-                    "FATAL STAKE AT RISK: {} failed to move from locking -> proving status",
-                    order.id()
-                )
-            })?;
-
-        Ok(())
+        Ok(lock_price)
     }
 
-    async fn lock_orders(&self, orders: Vec<Order>) -> Result<()> {
+    async fn lock_orders(&self, orders: Vec<OrderRequest>) -> Result<()> {
         for order in orders {
             let order_id = order.id();
             let request_id = order.request.id;
-            match self.lock_order(order).await {
-                Ok(_) => tracing::info!("Locked request: {request_id}"),
+            match self.lock_order(&order).await {
+                Ok(lock_price) => {
+                    tracing::info!("Locked request: {request_id}");
+                    if let Err(err) = self.db.insert_accepted_request(order, lock_price).await {
+                        tracing::error!(
+                            "FATAL STAKE AT RISK: {} failed to move from locking -> proving status {}",
+                            order_id,
+                            err
+                        );
+                    }
+                }
                 Err(ref err) => {
                     match err {
                         OrderMonitorErr::UnexpectedError(inner) => {
@@ -321,8 +305,7 @@ where
                             );
                         }
                     }
-                    if let Err(err) = self.db.set_order_failure(&order_id, format!("{err:?}")).await
-                    {
+                    if let Err(err) = self.db.insert_skipped_request(order).await {
                         tracing::error!(
                             "Failed to set DB failure state for order: {order_id} - {err:?}",
                         );
@@ -381,10 +364,10 @@ where
         }
     }
 
-    async fn prove_orders(&self, orders: Vec<Order>) -> Result<()> {
+    async fn prove_orders(&self, orders: Vec<OrderRequest>) -> Result<()> {
         for order in orders {
             self.db
-                .set_proving_status_fulfill_after_lock_expire_orders(&order.id())
+                .insert_accepted_request(order, U256::ZERO)
                 .await
                 .context("Failed to set order status to pending proving")?;
         }
@@ -395,8 +378,8 @@ where
         &self,
         current_block_timestamp: u64,
         min_deadline: u64,
-    ) -> Result<Vec<Order>> {
-        let mut candidate_orders: Vec<Order> = Vec::new();
+    ) -> Result<Vec<OrderRequest>> {
+        let mut candidate_orders: Vec<OrderRequest> = Vec::new();
 
         // Find the orders that we intended to prove after their lock expires
         let lock_expired_orders = self
@@ -421,9 +404,8 @@ where
                     "Request {:x} was locked by another prover and was fulfilled. Skipping.",
                     order.request.id
                 );
-                // TODO fix this
                 self.db
-                    .skip_order(&order.id())
+                    .insert_skipped_request(order)
                     .await
                     .context("Failed to skip order (was fulfilled by other)")?;
             } else {
@@ -446,7 +428,7 @@ where
             if is_lock_expired {
                 tracing::info!("Request {:x} was scheduled to be locked by us, but its lock has now expired. Skipping.", order.request.id);
                 self.db
-                    .skip_order(&order.id()) // Use skip_order to delete
+                    .insert_skipped_request(order)
                     .await
                     .context("Failed to skip order (lock expired before we locked)")?;
             } else {
@@ -462,17 +444,20 @@ where
             return Ok(Vec::new());
         }
 
-        let mut final_orders: Vec<Order> = Vec::new();
+        let mut final_orders: Vec<OrderRequest> = Vec::new();
         for order in candidate_orders {
             let now = now_timestamp();
             // TODO fix these blocks
             if order.request.expires_at() < current_block_timestamp {
                 tracing::debug!("Request {:x} has now expired. Skipping.", order.request.id);
-                self.db.skip_order(&order.id()).await.context("Failed to skip order (expired)")?;
+                self.db
+                    .insert_skipped_request(order)
+                    .await
+                    .context("Failed to skip order (expired)")?;
             } else if order.request.expires_at().saturating_sub(now) < min_deadline {
                 tracing::debug!("Request {:x} deadline at {} is less than the minimum deadline {} seconds required to prove an order. Skipping.", order.request.id, order.request.expires_at(), min_deadline);
                 self.db
-                    .skip_order(&order.id())
+                    .insert_skipped_request(order)
                     .await
                     .context("Failed to skip order (insufficient deadline)")?;
             } else {
@@ -525,28 +510,25 @@ where
         sorted_orders
     }
 
-    async fn process_lock_and_fulfill_orders(
-        &self,
-        current_block: u64,
-        orders: &[Order],
-    ) -> Result<()> {
-        self.lock_orders(current_block, orders.to_vec())
-            .await
-            .context("Failed to start locking orders")?;
+    async fn process_lock_and_fulfill_orders(&self, orders: Vec<OrderRequest>) -> Result<()> {
+        self.lock_orders(orders).await.context("Failed to start locking orders")?;
         Ok(())
     }
 
-    async fn process_fulfill_after_lock_expire_orders(&self, orders: &[Order]) -> Result<()> {
-        self.prove_orders(orders.to_vec()).await.context("Failed to start proving orders")?;
+    async fn process_fulfill_after_lock_expire_orders(
+        &self,
+        orders: Vec<OrderRequest>,
+    ) -> Result<()> {
+        self.prove_orders(orders).await.context("Failed to start proving orders")?;
         Ok(())
     }
 
     async fn apply_capacity_limits(
         &mut self,
-        orders: Vec<Order>,
+        orders: Vec<OrderRequest>,
         max_concurrent_proofs: Option<u32>,
         peak_prove_khz: Option<u64>,
-    ) -> Result<Vec<Order>> {
+    ) -> Result<Vec<OrderRequest>> {
         let num_orders = orders.len();
         // Get our current capacity for proving orders given our config and the number of orders that are currently committed to be proven + fulfilled.
         let capacity = self.get_proving_order_capacity(max_concurrent_proofs).await?;
@@ -564,7 +546,7 @@ where
             orders_truncated.truncate(capacity_granted as usize);
         }
 
-        let mut final_orders: Vec<Order> = Vec::new();
+        let mut final_orders: Vec<OrderRequest> = Vec::new();
 
         // Apply peak khz limit if specified
         if peak_prove_khz.is_some() && !orders_truncated.is_empty() {
@@ -578,7 +560,7 @@ where
             // Estimate the time the prover will be available given our current committed orders.
             let started_proving_at = committed_orders
                 .iter()
-                .map(|order| order.proving_started_at.unwrap())
+                .map(|order| order.proving_started_at.unwrap_or(now))
                 .min()
                 .unwrap_or(now);
 
@@ -597,7 +579,7 @@ where
             );
 
             // For each order in consideration, check if it can be completed before its expiration.
-            for mut order in orders_truncated {
+            for order in orders_truncated {
                 if order.total_cycles.is_none() {
                     tracing::warn!("Order {:x} has no total cycles, preflight was skipped? Not considering for peak khz limit", order.request.id);
                     continue;
@@ -622,8 +604,7 @@ where
                         completion_time
                     );
                     // Set order to skipped in DB and continue.
-                    order.status = OrderStatus::Skipped;
-                    self.db.add_order(&order).await.context(
+                    self.db.insert_skipped_request(order).await.context(
                         "Failed to skip order (peak KHz limit: completion past expiration)",
                     )?;
                     continue;
@@ -739,7 +720,7 @@ where
                 // We then process lock and fulfill orders, they may take longer to kick off proving as we confirm the lock transactions.
                 self.process_lock_and_fulfill_orders(
                     block_number,
-                    &categorized_orders.lock_and_prove_orders,
+                    categorized_orders.lock_and_prove_orders,
                 )
                 .await?;
             }
@@ -757,28 +738,25 @@ where
         while let Ok(result) = receiver.try_recv() {
             match result {
                 OrderProcessingResult::Lock(mut order_to_lock) => {
-                    let order_id = order_to_lock.order.id();
+                    let order_id = order_to_lock.id();
                     let current_timestamp = now_timestamp();
 
                     tracing::info!(
                         "Processing order to lock: {}, target timestamp: {}, current timestamp: {}",
                         order_id,
-                        order_to_lock.target_timestamp_secs,
+                        order_to_lock.target_timestamp.unwrap(),
                         current_timestamp
                     );
 
                     // Process lock order
-                    if order_to_lock.target_timestamp_secs <= current_timestamp {
-                        match self.lock_order(order_to_lock.order).await {
+                    if order_to_lock.target_timestamp.unwrap() <= current_timestamp {
+                        match self.lock_order(&order_to_lock).await {
                             Ok(_) => {
-                                tracing::info!(
-                                    "Locked request: {}",
-                                    order_to_lock.order.request.id
-                                );
+                                tracing::info!("Locked request: {}", order_to_lock.request.id);
                             }
                             Err(err) => {
                                 if let Err(handle_err) =
-                                    self.handle_lock_error(order_to_lock.order, &err).await
+                                    self.handle_lock_error(order_to_lock, &err).await
                                 {
                                     tracing::error!(
                                         "Failed to handle lock error for order {}: {}",
@@ -805,20 +783,22 @@ where
                     }
                 }
                 OrderProcessingResult::FulfillAfterLock(order_to_fulfill) => {
-                    let order_id = order_to_fulfill.order.id();
+                    let order_id = order_to_fulfill.id();
                     tracing::info!(
                         "Processing order to prove after lock expiry: {}, lock expiry: {}",
                         order_id,
                         order_to_fulfill.lock_expire_timestamp_secs
                     );
 
-                    if let Err(db_err) = self.db.add_order(&order).await {
-                        tracing::error!(
-                            "Failed to add order for proving: {} - {}",
-                            order_id,
-                            db_err
-                        );
-                    }
+                    // TODO handle fulfill after lock
+                    todo!();
+                    // if let Err(db_err) = self.db.add_order(&order).await {
+                    //     tracing::error!(
+                    //         "Failed to add order for proving: {} - {}",
+                    //         order_id,
+                    //         db_err
+                    //     );
+                    // }
                 }
             }
         }
@@ -829,7 +809,7 @@ where
     // Helper method to handle lock errors consistently
     async fn handle_lock_error(
         &self,
-        mut order: Order,
+        mut order: OrderRequest,
         err: &OrderMonitorErr,
     ) -> Result<(), OrderMonitorErr> {
         let order_id = order.id();
@@ -847,11 +827,8 @@ where
             }
         }
 
-        order.status = OrderStatus::Failed;
-        order.error_msg = Some(format!("failed to lock order: {}", err.code()));
-
         // Try to add the failed order to DB, but just log errors rather than propagating them
-        if let Err(db_err) = self.db.add_order(&order).await {
+        if let Err(db_err) = self.db.insert_skipped_request(order).await {
             tracing::error!("Failed to add failed lock to database: {order_id} - {db_err:?}");
         }
 
@@ -946,7 +923,6 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
-            broadcast::channel(16).0,
             order_result_rx,
         )
         .unwrap();
@@ -1119,7 +1095,6 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
-            broadcast::channel(16).0,
             order_result_rx,
         )
         .unwrap();
@@ -1253,9 +1228,7 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
-            broadcast::channel(16).0,
             mpsc::channel(16).1,
-            mpsc::channel(16).0,
         )
         .unwrap();
 
@@ -1546,9 +1519,7 @@ mod tests {
             config.clone(),
             block_time,
             market_address,
-            broadcast::channel(16).0,
             mpsc::channel(16).1,
-            mpsc::channel(16).0,
         )
         .unwrap();
 

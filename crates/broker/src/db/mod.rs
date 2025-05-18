@@ -117,8 +117,13 @@ pub struct AggregationOrder {
 
 #[async_trait]
 pub trait BrokerDb {
-    async fn add_order(&self, order: &Order) -> Result<(), DbError>;
-    async fn skip_request(&self, order_request: OrderRequest) -> Result<(), DbError>;
+    // async fn add_order(&self, order: &Order) -> Result<(), DbError>;
+    async fn insert_skipped_request(&self, order_request: OrderRequest) -> Result<(), DbError>;
+    async fn insert_accepted_request(
+        &self,
+        order_request: OrderRequest,
+        lock_price: U256,
+    ) -> Result<Order, DbError>;
     // async fn order_exists_with_request_id(&self, request_id: U256) -> Result<bool, DbError>;
     // async fn get_order(&self, id: &str) -> Result<Option<Order>, DbError>;
     // async fn get_submission_order(
@@ -188,23 +193,23 @@ pub trait BrokerDb {
     // async fn set_batch_submitted(&self, batch_id: usize) -> Result<(), DbError>;
     // async fn set_batch_failure(&self, batch_id: usize, err: String) -> Result<(), DbError>;
     // async fn get_current_batch(&self) -> Result<usize, DbError>;
-    // async fn set_request_fulfilled(
-    //     &self,
-    //     request_id: U256,
-    //     block_number: u64,
-    // ) -> Result<(), DbError>;
-    // // Checks the fulfillment table for the given request_id
-    // async fn is_request_fulfilled(&self, request_id: U256) -> Result<bool, DbError>;
-    // async fn set_request_locked(
-    //     &self,
-    //     request_id: U256,
-    //     locker: &str,
-    //     block_number: u64,
-    // ) -> Result<(), DbError>;
-    // // Checks the locked table for the given request_id
-    // async fn is_request_locked(&self, request_id: U256) -> Result<bool, DbError>;
-    // // Checks the locked table for the given request_id
-    // async fn get_request_locked(&self, request_id: U256) -> Result<Option<(String, u64)>, DbError>;
+    async fn set_request_fulfilled(
+        &self,
+        request_id: U256,
+        block_number: u64,
+    ) -> Result<(), DbError>;
+    // Checks the fulfillment table for the given request_id
+    async fn is_request_fulfilled(&self, request_id: U256) -> Result<bool, DbError>;
+    async fn set_request_locked(
+        &self,
+        request_id: U256,
+        locker: &str,
+        block_number: u64,
+    ) -> Result<(), DbError>;
+    // Checks the locked table for the given request_id
+    async fn is_request_locked(&self, request_id: U256) -> Result<bool, DbError>;
+    // Checks the locked table for the given request_id
+    async fn get_request_locked(&self, request_id: U256) -> Result<Option<(String, u64)>, DbError>;
     // /// Update a batch with the results of an aggregation step.
     // ///
     // /// Sets the aggreagtion state, and adds the given orders to the batch, updating the batch fees
@@ -307,18 +312,30 @@ struct DbLockedRequest {
 
 #[async_trait]
 impl BrokerDb for SqliteDb {
-    #[instrument(level = "trace", skip_all, fields(id = %format!("{order}")))]
-    async fn add_order(&self, order: &Order) -> Result<(), DbError> {
-        sqlx::query("INSERT INTO orders (id, data) VALUES ($1, $2)")
-            .bind(order.id())
-            .bind(sqlx::types::Json(&order))
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    // #[instrument(level = "trace", skip_all, fields(id = %format!("{order}")))]
+    // async fn add_order(&self, order: &Order) -> Result<(), DbError> {
+    //     sqlx::query("INSERT INTO orders (id, data) VALUES ($1, $2)")
+    //         .bind(order.id())
+    //         .bind(sqlx::types::Json(&order))
+    //         .execute(&self.pool)
+    //         .await?;
+    //     Ok(())
+    // }
+
+    #[instrument(level = "trace", skip_all, fields(id = %format!("{}", order_request.id())))]
+    async fn insert_skipped_request(&self, order_request: OrderRequest) -> Result<(), DbError> {
+        self.insert_order(&order_request.into_skipped_order()).await
     }
 
-    async fn skip_request(&self, order_request: OrderRequest) -> Result<(), DbError> {
-        self.insert_order(&order_request.into_order(OrderStatus::Skipped)).await
+    #[instrument(level = "trace", skip_all, fields(id = %format!("{}", order_request.id())))]
+    async fn insert_accepted_request(
+        &self,
+        order_request: OrderRequest,
+        lock_price: U256,
+    ) -> Result<Order, DbError> {
+        let order = order_request.into_proving_order(lock_price);
+        self.insert_order(&order).await?;
+        Ok(order)
     }
 
     // #[instrument(level = "trace", skip_all, fields(request_id = %format!("{request_id:x}")))]
@@ -1298,33 +1315,33 @@ impl BrokerDb for SqliteDb {
     //     }
     // }
 
-    // #[instrument(level = "trace", skip(self))]
-    // async fn set_request_fulfilled(
-    //     &self,
-    //     request_id: U256,
-    //     block_number: u64,
-    // ) -> Result<(), DbError> {
-    //     sqlx::query(
-    //         r#"
-    //         INSERT INTO fulfilled_requests (id, block_number) VALUES ($1, $2)"#,
-    //     )
-    //     .bind(format!("0x{:x}", request_id))
-    //     .bind(block_number as i64)
-    //     .execute(&self.pool)
-    //     .await?;
+    #[instrument(level = "trace", skip(self))]
+    async fn set_request_fulfilled(
+        &self,
+        request_id: U256,
+        block_number: u64,
+    ) -> Result<(), DbError> {
+        sqlx::query(
+            r#"
+            INSERT INTO fulfilled_requests (id, block_number) VALUES ($1, $2)"#,
+        )
+        .bind(format!("0x{:x}", request_id))
+        .bind(block_number as i64)
+        .execute(&self.pool)
+        .await?;
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[instrument(level = "trace", skip(self))]
-    // async fn is_request_fulfilled(&self, request_id: U256) -> Result<bool, DbError> {
-    //     let res = sqlx::query(r#"SELECT * FROM fulfilled_requests WHERE id = $1"#)
-    //         .bind(format!("0x{:x}", request_id))
-    //         .fetch_optional(&self.pool)
-    //         .await?;
+    #[instrument(level = "trace", skip(self))]
+    async fn is_request_fulfilled(&self, request_id: U256) -> Result<bool, DbError> {
+        let res = sqlx::query(r#"SELECT * FROM fulfilled_requests WHERE id = $1"#)
+            .bind(format!("0x{:x}", request_id))
+            .fetch_optional(&self.pool)
+            .await?;
 
-    //     Ok(res.is_some())
-    // }
+        Ok(res.is_some())
+    }
 
     // #[instrument(level = "trace", skip(self))]
     // async fn set_request_locked(

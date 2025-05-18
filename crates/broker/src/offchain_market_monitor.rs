@@ -86,7 +86,7 @@ impl OffchainMarketMonitor {
                     );
 
                     new_order_tx
-                        .send(new_order.clone())
+                        .send(new_order)
                         .await
                         .map_err(|_| OffchainMarketMonitorErr::ReceiverDropped)
                 }
