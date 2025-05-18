@@ -2,10 +2,13 @@
 //
 // All rights reserved.
 
+use crate::chain_monitor::ChainHead;
+use crate::order_picker::{OrderProcessingResult, OrderToFulfillAfterLockExpire, OrderToLock};
+use crate::OrderRequest;
 use crate::{
     chain_monitor::ChainMonitorService,
     config::ConfigLock,
-    db::{DbObj, OrderMetaData},
+    db::DbObj,
     errors::CodedError,
     impl_coded_debug,
     market_monitor::BoundlessEvent,
@@ -13,7 +16,6 @@ use crate::{
     task::{RetryRes, RetryTask, SupervisorErr},
     FulfillmentType, Order, OrderStatus,
 };
-use crate::order_picker::{OrderProcessingResult, OrderToLock, OrderToFulfillAfterLockExpire};
 use alloy::{
     network::Ethereum,
     primitives::{
@@ -134,9 +136,7 @@ pub struct OrderMonitor<P> {
     market: BoundlessMarketService<Arc<P>>,
     provider: Arc<P>,
     capacity_debug_log: String,
-    locked_event_tx: broadcast::Sender<BoundlessEvent>,
     order_result_rx: Arc<Mutex<mpsc::Receiver<OrderProcessingResult>>>,
-    proving_tx: mpsc::Sender<Order>,
 }
 
 impl<P> OrderMonitor<P>
@@ -150,9 +150,7 @@ where
         config: ConfigLock,
         block_time: u64,
         market_addr: Address,
-        locked_event_tx: broadcast::Sender<BoundlessEvent>,
         order_result_rx: mpsc::Receiver<OrderProcessingResult>,
-        proving_tx: mpsc::Sender<Order>,
     ) -> Result<Self> {
         let txn_timeout_opt = {
             let config = config.lock_all().context("Failed to read config")?;
@@ -192,17 +190,16 @@ where
             market,
             provider,
             capacity_debug_log: "".to_string(),
-            locked_event_tx,
             order_result_rx: Arc::new(Mutex::new(order_result_rx)),
-            proving_tx,
         };
         Ok(monitor)
     }
 
-    async fn lock_order(&self, order: &Order) -> Result<(), OrderMonitorErr> {
-        if order.status != OrderStatus::WaitingToLock {
-            return Err(OrderMonitorErr::InvalidStatus(order.status));
-        }
+    async fn lock_order(&self, mut order: OrderRequest) -> Result<(), OrderMonitorErr> {
+        // TODO assert in some way that the order isn't locked
+        // if order.status != OrderStatus::WaitingToLock {
+        //     return Err(OrderMonitorErr::InvalidStatus(order.status));
+        // }
 
         let request_id = order.request.id;
 
@@ -279,58 +276,31 @@ where
             .price_at(lock_timestamp)
             .context("Failed to calculate lock price")?;
 
-        // Create a new order with PendingProving status
-        let mut locked_order = order.clone();
-        locked_order.status = OrderStatus::PendingProving;
-        locked_order.lock_price = Some(lock_price);
+        order.updated_at = chrono::Utc::now();
+        order.status = OrderStatus::Proving;
+        // TODO do we actually care to store this?
+        order.lock_price = Some(lock_price);
 
-        // Create order metadata for the locked order going to proving
-        let order_metadata = OrderMetaData {
-            id: order.id(),
-            status: OrderStatus::PendingProving,
-            updated_at: chrono::Utc::now().timestamp(),
-            image_id: order.image_id.clone(),
-            input_id: order.input_id.clone(),
-            proof_id: None,
-            compressed_proof_id: None,
-            error_msg: None,
-        };
-
-        // Add the locked order to DB
-        if let Err(db_err) = self.db.add_order(order_metadata).await {
-            tracing::error!(
-                "Failed to update order in database: {} - {}",
-                order.id(),
-                db_err
-            );
+        if let Err(db_err) = self.db.add_order(&order).await {
+            tracing::error!("Failed to update order in database: {} - {}", order.id(), db_err);
             // We don't return an error here to avoid blocking the flow
         }
 
-        // Send the locked order to the proving service
-        if let Err(tx_err) = self.proving_tx.send(locked_order).await {
-            tracing::error!(
-                "Failed to send order to proving service: {} - {}",
-                order.id(),
-                tx_err
-            );
-            // We don't return an error here since the order is already locked and updated in DB
-        }
-
-        // Emit event for the locked order
-        if let Err(tx_err) = self.locked_event_tx.send(BoundlessEvent::RequestLocked(request_id)) {
-            tracing::warn!(
-                "Failed to broadcast lock event for request {:x}: {}",
-                request_id,
-                tx_err
-            );
-        }
+        self.db
+            .set_proving_status_lock_and_fulfill_orders(&order.id(), lock_price)
+            .await
+            .with_context(|| {
+                format!(
+                    "FATAL STAKE AT RISK: {} failed to move from locking -> proving status",
+                    order.id()
+                )
+            })?;
 
         Ok(())
     }
 
-    async fn lock_orders(&self, current_block: u64, orders: Vec<Order>) -> Result<u64> {
-        let mut order_count = 0;
-        for order in orders.iter() {
+    async fn lock_orders(&self, orders: Vec<Order>) -> Result<()> {
+        for order in orders {
             let order_id = order.id();
             let request_id = order.request.id;
             match self.lock_order(order).await {
@@ -359,42 +329,9 @@ where
                     }
                 }
             }
-            order_count += 1;
         }
 
-        if !orders.is_empty() {
-            self.db.set_last_block(current_block).await?;
-        }
-
-        Ok(order_count)
-    }
-
-    async fn back_scan_locks(&self) -> Result<u64> {
-        let opt_last_block = self.db.get_last_block().await?;
-
-        // back scan if we have an existing block we last updated from
-        // TODO: spawn a side thread to avoid missing new blocks while this is running:
-        let order_count = if opt_last_block.is_some() {
-            let current_block = self.chain_monitor.current_block_number().await?;
-            let current_block_timestamp = self.chain_monitor.current_block_timestamp().await?;
-
-            tracing::debug!(
-                "Checking status of, and locking, orders marked as pending lock at block {current_block} @ {current_block_timestamp}"
-            );
-
-            // Get the orders that we wish to lock as early as the next block.
-            let orders = self
-                .db
-                .get_pending_lock_orders(current_block_timestamp + self.block_time)
-                .await
-                .context("Failed to find pending lock orders")?;
-
-            self.lock_orders(current_block, orders).await.context("Failed to lock orders")?
-        } else {
-            0
-        };
-
-        Ok(order_count)
+        Ok(())
     }
 
     async fn get_proving_order_capacity(
@@ -531,10 +468,7 @@ where
             // TODO fix these blocks
             if order.request.expires_at() < current_block_timestamp {
                 tracing::debug!("Request {:x} has now expired. Skipping.", order.request.id);
-                self.db
-                    .skip_order(&order.id())
-                    .await
-                    .context("Failed to skip order (expired)")?;
+                self.db.skip_order(&order.id()).await.context("Failed to skip order (expired)")?;
             } else if order.request.expires_at().saturating_sub(now) < min_deadline {
                 tracing::debug!("Request {:x} deadline at {} is less than the minimum deadline {} seconds required to prove an order. Skipping.", order.request.id, order.request.expires_at(), min_deadline);
                 self.db
@@ -663,7 +597,7 @@ where
             );
 
             // For each order in consideration, check if it can be completed before its expiration.
-            for order in orders_truncated {
+            for mut order in orders_truncated {
                 if order.total_cycles.is_none() {
                     tracing::warn!("Order {:x} has no total cycles, preflight was skipped? Not considering for peak khz limit", order.request.id);
                     continue;
@@ -687,8 +621,9 @@ where
                         proof_time_seconds,
                         completion_time
                     );
-                    // TODO fix
-                    self.db.skip_order(&order.id()).await.context(
+                    // Set order to skipped in DB and continue.
+                    order.status = OrderStatus::Skipped;
+                    self.db.add_order(&order).await.context(
                         "Failed to skip order (peak KHz limit: completion past expiration)",
                     )?;
                     continue;
@@ -737,8 +672,6 @@ where
     }
 
     pub async fn start_monitor(mut self) -> Result<(), OrderMonitorErr> {
-        self.back_scan_locks().await?;
-
         let mut last_block = 0;
         let mut first_block = 0;
 
@@ -746,14 +679,16 @@ where
             // Process any orders received from OrderPicker
             self.process_order_results().await?;
 
-            let current_block = self.chain_monitor.current_block_number().await?;
-            let current_block_timestamp = self.chain_monitor.current_block_timestamp().await?;
-            if current_block != last_block {
-                last_block = current_block;
+            let ChainHead { block_number, block_timestamp } =
+                self.chain_monitor.current_chain_head().await?;
+            if block_number != last_block {
+                last_block = block_number;
                 if first_block == 0 {
-                    first_block = current_block;
+                    first_block = block_number;
                 }
-                tracing::trace!("Order monitor processing block {current_block} at timestamp {current_block_timestamp}");
+                tracing::trace!(
+                    "Order monitor processing block {block_number} at timestamp {block_timestamp}"
+                );
 
                 let (min_deadline, peak_prove_khz, max_concurrent_proofs) = {
                     let config = self.config.lock_all().context("Failed to read config")?;
@@ -765,13 +700,12 @@ where
                 };
 
                 // Get orders that are valid and ready for locking/proving, skipping orders that are now invalid for proving, due to expiring, being locked by another prover, etc.
-                let valid_orders =
-                    self.get_valid_orders(current_block_timestamp, min_deadline).await?;
+                let valid_orders = self.get_valid_orders(block_timestamp, min_deadline).await?;
 
                 if valid_orders.is_empty() {
                     tracing::trace!(
                         "No orders to lock and/or prove as of block timestamp {}",
-                        current_block_timestamp
+                        block_timestamp
                     );
                     continue;
                 }
@@ -792,8 +726,8 @@ where
                 let categorized_orders = self.categorize_orders(final_orders);
 
                 tracing::debug!("After processing block {}[timestamp {}], we will now start locking and/or proving {} orders: {:?}", 
-                    current_block,
-                    current_block_timestamp,
+                    block_number,
+                    block_timestamp,
                     categorized_orders.len(),
                     categorized_orders
                 );
@@ -804,7 +738,7 @@ where
                     .await?;
                 // We then process lock and fulfill orders, they may take longer to kick off proving as we confirm the lock transactions.
                 self.process_lock_and_fulfill_orders(
-                    current_block,
+                    block_number,
                     &categorized_orders.lock_and_prove_orders,
                 )
                 .await?;
@@ -819,28 +753,33 @@ where
     async fn process_order_results(&mut self) -> Result<(), OrderMonitorErr> {
         // Try to receive all available messages without blocking
         let mut receiver = self.order_result_rx.lock().await;
-        
+
         while let Ok(result) = receiver.try_recv() {
             match result {
-                OrderProcessingResult::Lock(order_to_lock) => {
+                OrderProcessingResult::Lock(mut order_to_lock) => {
                     let order_id = order_to_lock.order.id();
                     let current_timestamp = now_timestamp();
-                    
+
                     tracing::info!(
                         "Processing order to lock: {}, target timestamp: {}, current timestamp: {}",
                         order_id,
                         order_to_lock.target_timestamp_secs,
                         current_timestamp
                     );
-                    
+
                     // Process lock order
                     if order_to_lock.target_timestamp_secs <= current_timestamp {
-                        match self.lock_order(&order_to_lock.order).await {
+                        match self.lock_order(order_to_lock.order).await {
                             Ok(_) => {
-                                tracing::info!("Locked request: {}", order_to_lock.order.request.id);
-                            },
+                                tracing::info!(
+                                    "Locked request: {}",
+                                    order_to_lock.order.request.id
+                                );
+                            }
                             Err(err) => {
-                                if let Err(handle_err) = self.handle_lock_error(&order_to_lock.order, &err).await {
+                                if let Err(handle_err) =
+                                    self.handle_lock_error(order_to_lock.order, &err).await
+                                {
                                     tracing::error!(
                                         "Failed to handle lock error for order {}: {}",
                                         order_id,
@@ -850,28 +789,21 @@ where
                             }
                         }
                     } else {
-                        // Create order metadata for the future lock
-                        let order_metadata = OrderMetaData {
-                            id: order_id.clone(),
-                            status: OrderStatus::WaitingToLock,
-                            updated_at: chrono::Utc::now().timestamp(),
-                            image_id: order_to_lock.order.image_id.clone(),
-                            input_id: order_to_lock.order.input_id.clone(),
-                            proof_id: None,
-                            compressed_proof_id: None,
-                            error_msg: None,
-                        };
-                        
-                        // Store the order for later locking - log errors but don't propagate
-                        if let Err(db_err) = self.db.add_order(order_metadata).await {
-                            tracing::error!(
-                                "Failed to add order {} for future locking: {}", 
-                                order_id, 
-                                db_err
-                            );
-                        }
+                        // TODO handle case of waiting to lock at given timestamp
+                        // let order
+                        // order_to_lock.status = OrderStatus::WaitingToLock;
+                        // order_to_lock.updated_at = chrono::Utc::now();
+
+                        // // Store the order for later locking - log errors but don't propagate
+                        // if let Err(db_err) = self.db.add_order(order_metadata).await {
+                        //     tracing::error!(
+                        //         "Failed to add order {} for future locking: {}",
+                        //         order_id,
+                        //         db_err
+                        //     );
+                        // }
                     }
-                },
+                }
                 OrderProcessingResult::FulfillAfterLock(order_to_fulfill) => {
                     let order_id = order_to_fulfill.order.id();
                     tracing::info!(
@@ -879,74 +811,50 @@ where
                         order_id,
                         order_to_fulfill.lock_expire_timestamp_secs
                     );
-                    
-                    // Create order metadata for fulfill after lock
-                    let order_metadata = OrderMetaData {
-                        id: order_id.clone(),
-                        status: OrderStatus::PendingProving,
-                        updated_at: chrono::Utc::now().timestamp(),
-                        image_id: order_to_fulfill.order.image_id.clone(),
-                        input_id: order_to_fulfill.order.input_id.clone(),
-                        proof_id: None,
-                        compressed_proof_id: None,
-                        error_msg: None,
-                    };
-                    
-                    // Add to DB and log errors but don't propagate them
-                    if let Err(db_err) = self.db.add_order(order_metadata).await {
+
+                    if let Err(db_err) = self.db.add_order(&order).await {
                         tracing::error!(
-                            "Failed to add order for proving: {} - {}", 
-                            order_id, 
+                            "Failed to add order for proving: {} - {}",
+                            order_id,
                             db_err
                         );
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     // Helper method to handle lock errors consistently
-    async fn handle_lock_error(&self, order: &Order, err: &OrderMonitorErr) -> Result<(), OrderMonitorErr> {
+    async fn handle_lock_error(
+        &self,
+        mut order: Order,
+        err: &OrderMonitorErr,
+    ) -> Result<(), OrderMonitorErr> {
         let order_id = order.id();
-        let request_id = order.request.id;
-        
+
         match err {
             OrderMonitorErr::UnexpectedError(inner) => {
-                tracing::error!(
-                    "Failed to lock order: {order_id} - {} - {inner:?}",
-                    err.code()
-                );
+                tracing::error!("Failed to lock order: {order_id} - {} - {inner:?}", err.code());
             }
             // Only warn on known / classified errors
             _ => {
                 tracing::warn!(
-                    "Soft failed to lock request: {request_id} - {} - {err:?}",
+                    "Soft failed to lock request: {order_id} - {} - {err:?}",
                     err.code()
                 );
             }
         }
-        
-        // Create order metadata for the failed order
-        let order_metadata = OrderMetaData {
-            id: order_id.clone(),
-            status: OrderStatus::Failed,
-            updated_at: chrono::Utc::now().timestamp(),
-            image_id: order.image_id.clone(),
-            input_id: order.input_id.clone(),
-            proof_id: None,
-            compressed_proof_id: None,
-            error_msg: Some(format!("{err:?}")),
-        };
+
+        order.status = OrderStatus::Failed;
+        order.error_msg = Some(format!("failed to lock order: {}", err.code()));
 
         // Try to add the failed order to DB, but just log errors rather than propagating them
-        if let Err(db_err) = self.db.add_order(order_metadata).await {
-            tracing::error!(
-                "Failed to add failed order to database: {order_id} - {db_err:?}"
-            );
+        if let Err(db_err) = self.db.add_order(&order).await {
+            tracing::error!("Failed to add failed lock to database: {order_id} - {db_err:?}");
         }
-            
+
         Ok(())
     }
 }
@@ -1009,7 +917,8 @@ mod tests {
         alloy::providers::RootProvider,
     >;
 
-    async fn setup_test() -> (OrderMonitor<TestProvider>, DbObj, Address, ConfigLock, mpsc::Receiver<Order>) {
+    async fn setup_test(
+    ) -> (OrderMonitor<TestProvider>, DbObj, Address, ConfigLock, mpsc::Receiver<Order>) {
         let anvil = Anvil::new().spawn();
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
         let provider = Arc::new(
@@ -1026,11 +935,10 @@ mod tests {
         let block_time = 2;
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
-        
+
         // Create required channels for tests
         let (order_result_tx, order_result_rx) = mpsc::channel(16);
-        let (proving_tx, proving_rx) = mpsc::channel(16);
-        
+
         let monitor = OrderMonitor::new(
             db.clone(),
             provider.clone(),
@@ -1040,7 +948,6 @@ mod tests {
             market_address,
             broadcast::channel(16).0,
             order_result_rx,
-            proving_tx,
         )
         .unwrap();
 
@@ -1204,7 +1111,6 @@ mod tests {
 
         // Create required channels for the monitor
         let (_, order_result_rx) = mpsc::channel(16);
-        let (proving_tx, proving_rx) = mpsc::channel(16);
 
         let monitor = OrderMonitor::new(
             db.clone(),
@@ -1215,7 +1121,6 @@ mod tests {
             market_address,
             broadcast::channel(16).0,
             order_result_rx,
-            proving_tx,
         )
         .unwrap();
 
@@ -1335,7 +1240,7 @@ mod tests {
 
         let _request_id = boundless_market.submit_request(&order.request, &signer).await.unwrap();
 
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         db.set_last_block(0).await.unwrap();
 
@@ -1404,7 +1309,7 @@ mod tests {
             50,
             50,
         );
-        db.add_order(expired_order.clone()).await.unwrap();
+        db.add_order(&expired_order).await.unwrap();
 
         let result = monitor.get_valid_orders(current_timestamp, 0).await.unwrap();
 
@@ -1430,7 +1335,7 @@ mod tests {
             45,
             45,
         );
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
         // Create an order with insufficient deadline
         let order = create_test_order(
             market_address,
@@ -1440,7 +1345,7 @@ mod tests {
             1,
             45,
         );
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         let result = monitor.get_valid_orders(current_timestamp, 100).await.unwrap();
 
@@ -1465,7 +1370,7 @@ mod tests {
             100,
             200,
         );
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
         db.set_request_locked(
             U256::from(order.request.id),
             &Address::ZERO.to_string(),
@@ -1630,7 +1535,7 @@ mod tests {
 
         let _request_id = boundless_market.submit_request(&order.request, &signer).await.unwrap();
 
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
         tokio::spawn(chain_monitor.spawn());
@@ -1677,7 +1582,7 @@ mod tests {
             100,
             200,
         );
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         monitor.process_fulfill_after_lock_expire_orders(&[order.clone()]).await.unwrap();
 
@@ -1743,7 +1648,7 @@ mod tests {
         );
         committed_order.status = OrderStatus::Proving;
         committed_order.proving_started_at = Some(current_timestamp);
-        db.add_order(committed_order).await.unwrap();
+        db.add_order(&committed_order).await.unwrap();
 
         // Test with limited capacity (3 slots)
         let result = monitor.apply_capacity_limits(orders.clone(), Some(3), None).await.unwrap();
@@ -1797,7 +1702,7 @@ mod tests {
         committed_order.status = OrderStatus::Proving;
         committed_order.total_cycles = Some(10000000000000000);
         committed_order.proving_started_at = Some(current_timestamp);
-        db.add_order(committed_order).await.unwrap();
+        db.add_order(&committed_order).await.unwrap();
 
         let result = monitor.apply_capacity_limits(orders.clone(), None, Some(1)).await.unwrap();
 
@@ -1824,7 +1729,7 @@ mod tests {
         );
         order1.total_cycles = Some(1000000000000);
         orders.push(order1.clone());
-        db.add_order(order1).await.unwrap();
+        db.add_order(&order1).await.unwrap();
         // Order 2: Longer expiration
         let mut order2 = create_test_order(
             market_address,
@@ -1836,7 +1741,7 @@ mod tests {
         );
         order2.total_cycles = Some(2000);
         orders.push(order2.clone());
-        db.add_order(order2).await.unwrap();
+        db.add_order(&order2).await.unwrap();
 
         // Test with peak khz limit
         let result = monitor.apply_capacity_limits(orders.clone(), None, Some(1)).await.unwrap();
@@ -1854,7 +1759,7 @@ mod tests {
     #[traced_test]
     async fn test_process_order_from_channel() {
         let (mut monitor, db, market_address, _, proving_rx) = setup_test().await;
-        
+
         // Create an order
         let current_timestamp = now_timestamp();
         let chain_id = 1;
@@ -1866,15 +1771,15 @@ mod tests {
             100,
             200,
         );
-        
+
         // Add image and input IDs
         order.image_id = Some("test_image_id".to_string());
         order.input_id = Some("test_input_id".to_string());
-        
+
         // Create a channel to send orders to the monitor
         let (test_tx, test_rx) = mpsc::channel(16);
         monitor.order_result_rx = Arc::new(Mutex::new(test_rx));
-        
+
         // Create an OrderToLock to send
         let order_to_lock = OrderToLock {
             order: order.clone(),
@@ -1882,23 +1787,23 @@ mod tests {
             target_timestamp_secs: now_timestamp() - 10, // Past timestamp to trigger immediate lock
             expiry_secs: now_timestamp() + 200,
         };
-        
+
         // Mock the lock_order method to avoid actual chain interaction
         // We'll do this by creating a custom implementation that will be called
-        
+
         // Send the order through the channel
         test_tx.send(OrderProcessingResult::Lock(order_to_lock)).await.unwrap();
-        
+
         // Process orders from the channel - this should trigger the lock process
         monitor.process_order_results().await.unwrap();
-        
+
         // Now try to verify an order was sent to the proving service from the mocked lock
         match proving_rx.try_recv() {
             Ok(proved_order) => {
                 assert_eq!(proved_order.id(), order.id());
                 assert_eq!(proved_order.status, OrderStatus::PendingProving);
                 assert!(proved_order.lock_price.is_some());
-            },
+            }
             Err(err) => {
                 // This should not happen in the happy path
                 panic!("Expected order to be sent to proving service, but got error: {:?}", err);

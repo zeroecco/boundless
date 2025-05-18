@@ -15,7 +15,8 @@ use thiserror::Error;
 
 use crate::{
     errors::{impl_coded_debug, CodedError},
-    AggregationState, Batch, BatchStatus, FulfillmentType, Order, OrderStatus, ProofRequest,
+    AggregationState, Batch, BatchStatus, FulfillmentType, Order, OrderRequest, OrderStatus,
+    ProofRequest,
 };
 use tracing::instrument;
 
@@ -117,6 +118,7 @@ pub struct AggregationOrder {
 #[async_trait]
 pub trait BrokerDb {
     async fn add_order(&self, order: &Order) -> Result<(), DbError>;
+    async fn skip_request(&self, order_request: OrderRequest) -> Result<(), DbError>;
     // async fn order_exists_with_request_id(&self, request_id: U256) -> Result<bool, DbError>;
     // async fn get_order(&self, id: &str) -> Result<Option<Order>, DbError>;
     // async fn get_submission_order(
@@ -162,8 +164,8 @@ pub trait BrokerDb {
     // async fn set_last_block(&self, block_numb: u64) -> Result<(), DbError>;
     // async fn get_pending_lock_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError>;
     // async fn get_pending_fulfill_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError>;
-    // /// Get all orders that are committed to be prove and be fulfilled.
-    // async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
+    /// Get all orders that are committed to be prove and be fulfilled.
+    async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
     // async fn get_proving_order(&self) -> Result<Option<Order>, DbError>;
     // async fn get_active_proofs(&self) -> Result<Vec<Order>, DbError>;
     // async fn set_order_proof_id(&self, order_id: &str, proof_id: &str) -> Result<(), DbError>;
@@ -270,6 +272,15 @@ impl SqliteDb {
 
         Ok(res as usize)
     }
+
+    async fn insert_order(&self, order: &Order) -> Result<(), DbError> {
+        sqlx::query("INSERT INTO orders (id, data) VALUES ($1, $2)")
+            .bind(order.id())
+            .bind(sqlx::types::Json(&order))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -304,6 +315,10 @@ impl BrokerDb for SqliteDb {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    async fn skip_request(&self, order_request: OrderRequest) -> Result<(), DbError> {
+        self.insert_order(&order_request.into_order(OrderStatus::Skipped)).await
     }
 
     // #[instrument(level = "trace", skip_all, fields(request_id = %format!("{request_id:x}")))]
@@ -764,23 +779,23 @@ impl BrokerDb for SqliteDb {
     //     orders.into_iter().map(|elm| Ok(elm.data)).collect()
     // }
 
-    // #[instrument(level = "trace", skip_all)]
-    // async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError> {
-    //     let orders: Vec<DbOrder> = sqlx::query_as(
-    //         "SELECT * FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6)",
-    //     )
-    //     .bind(OrderStatus::PendingProving)
-    //     .bind(OrderStatus::Proving)
-    //     .bind(OrderStatus::PendingAgg)
-    //     .bind(OrderStatus::Aggregating)
-    //     .bind(OrderStatus::SkipAggregation)
-    //     .bind(OrderStatus::PendingSubmission)
-    //     .fetch_all(&self.pool)
-    //     .await?;
+    #[instrument(level = "trace", skip_all)]
+    async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError> {
+        let orders: Vec<DbOrder> = sqlx::query_as(
+            "SELECT * FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(OrderStatus::PendingProving)
+        .bind(OrderStatus::Proving)
+        .bind(OrderStatus::PendingAgg)
+        .bind(OrderStatus::Aggregating)
+        .bind(OrderStatus::SkipAggregation)
+        .bind(OrderStatus::PendingSubmission)
+        .fetch_all(&self.pool)
+        .await?;
 
-    //     // Break if any order-id's are invalid and raise
-    //     orders.into_iter().map(|elm| Ok(elm.data)).collect()
-    // }
+        // Break if any order-id's are invalid and raise
+        orders.into_iter().map(|elm| Ok(elm.data)).collect()
+    }
 
     // #[instrument(level = "trace", skip_all)]
     // async fn get_proving_order(&self) -> Result<Option<Order>, DbError> {
@@ -1525,14 +1540,14 @@ mod tests {
         order1.request.offer.lockTimeout = 100;
         order1.request.offer.timeout = 200;
         order1.request.id = U256::from(1);
-        db.add_order(&order1).await.unwrap();
+        db.insert_order(&order1).await.unwrap();
 
         let mut order2 = create_order();
         order2.status = OrderStatus::New;
         order2.request.offer.lockTimeout = 150;
         order2.request.offer.timeout = 250;
         order2.request.id = U256::from(2);
-        db.add_order(&order2).await.unwrap();
+        db.insert_order(&order2).await.unwrap();
         (db, order1, order2)
     }
 

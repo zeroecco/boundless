@@ -179,7 +179,7 @@ proptest! {
                             DbOperation::AddOrder(request_id) => {
                                 let order = generate_test_order(request_id);
                                 let id = order.id();
-                                db.add_order(order).await.unwrap();
+                                db.add_order(&order).await.unwrap();
                                 state.added_orders.push(id);
                             },
                             DbOperation::OperateOnExistingOrder(operation) => {

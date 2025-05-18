@@ -135,20 +135,24 @@ pub struct Args {
 enum OrderStatus {
     // TODO remove
     Temp,
-    /// Order is marked as skipped by the order picker.
-    Skipped,
-    /// Order is ready to lock at target_timestamp and then be fulfilled
-    WaitingToLock,
-    /// Order is ready to be fulfilled when its lock expires at target_timestamp
-    WaitingForLockToExpire,
+    /// Order is ready to commence proving (either locked or filling without locking)
+    PendingProving,
     /// Order is actively ready for proving
     Proving,
+    /// Order is ready for aggregation
+    PendingAgg,
     /// Order is in the process of Aggregation
     Aggregating,
-    /// Unaggregated order is ready for submission (e.g. Groth16 proofs)
+    /// Unaggregated order is ready for submission
     SkipAggregation,
+    /// Pending on chain finalization
+    PendingSubmission,
+    /// Order has been completed
+    Done,
     /// Order failed
     Failed,
+    /// Order was analyzed and marked as skipable
+    Skipped,
 }
 
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
@@ -157,6 +161,79 @@ enum FulfillmentType {
     FulfillAfterLockExpire,
     // Currently not supported
     FulfillWithoutLocking,
+}
+
+/// Order request from the network.
+///
+/// This will turn into
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct OrderRequest {
+    request: ProofRequest,
+    client_sig: Bytes,
+    fulfillment_type: FulfillmentType,
+    boundless_market_address: Address,
+    chain_id: u64,
+    image_id: Option<String>,
+    input_id: Option<String>,
+}
+
+impl OrderRequest {
+    pub fn new(
+        request: ProofRequest,
+        client_sig: Bytes,
+        fulfillment_type: FulfillmentType,
+        boundless_market_address: Address,
+        chain_id: u64,
+    ) -> Self {
+        Self {
+            request,
+            client_sig,
+            fulfillment_type,
+            boundless_market_address,
+            chain_id,
+            image_id: None,
+            input_id: None,
+        }
+    }
+
+    // An Order is identified by the request_id, the fulfillment type, and the hash of the proof request.
+    // This structure supports multiple different ProofRequests with the same request_id, and different
+    // fulfillment types.
+    pub fn id(&self) -> String {
+        // TODO deduplicate logic with Order::id()
+        format!(
+            "0x{:x}-{}-{:?}",
+            self.request.id,
+            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap(),
+            self.fulfillment_type
+        )
+    }
+
+    fn into_order(self, status: OrderStatus) -> Order {
+        Order {
+            boundless_market_address: self.boundless_market_address,
+            chain_id: self.chain_id,
+            fulfillment_type: self.fulfillment_type,
+            request: self.request,
+            status,
+            client_sig: self.client_sig,
+            updated_at: Utc::now(),
+            image_id: self.image_id,
+            input_id: self.input_id,
+            total_cycles: None,
+            target_timestamp: None,
+            proving_started_at: None,
+            proof_id: None,
+            compressed_proof_id: None,
+            expire_timestamp: None,
+            lock_price: None,
+            error_msg: None,
+        }
+    }
+
+    fn skip(self) -> Order {
+        self.into_order(OrderStatus::Skipped)
+    }
 }
 
 /// An Order represents a proof request and a specific method of fulfillment.
@@ -223,33 +300,33 @@ struct Order {
 }
 
 impl Order {
-    pub fn new(
-        request: ProofRequest,
-        client_sig: Bytes,
-        fulfillment_type: FulfillmentType,
-        boundless_market_address: Address,
-        chain_id: u64,
-    ) -> Self {
-        Self {
-            boundless_market_address,
-            chain_id,
-            request,
-            status: OrderStatus::Temp,
-            updated_at: Utc::now(),
-            target_timestamp: None,
-            image_id: None,
-            input_id: None,
-            proof_id: None,
-            compressed_proof_id: None,
-            expire_timestamp: None,
-            client_sig,
-            lock_price: None,
-            fulfillment_type,
-            error_msg: None,
-            total_cycles: None,
-            proving_started_at: None,
-        }
-    }
+    // pub fn new(
+    //     request: ProofRequest,
+    //     client_sig: Bytes,
+    //     fulfillment_type: FulfillmentType,
+    //     boundless_market_address: Address,
+    //     chain_id: u64,
+    // ) -> Self {
+    //     Self {
+    //         boundless_market_address,
+    //         chain_id,
+    //         request,
+    //         status: OrderStatus::Temp,
+    //         updated_at: Utc::now(),
+    //         target_timestamp: None,
+    //         image_id: None,
+    //         input_id: None,
+    //         proof_id: None,
+    //         compressed_proof_id: None,
+    //         expire_timestamp: None,
+    //         client_sig,
+    //         lock_price: None,
+    //         fulfillment_type,
+    //         error_msg: None,
+    //         total_cycles: None,
+    //         proving_started_at: None,
+    //     }
+    // }
 
     // An Order is identified by the request_id, the fulfillment type, and the hash of the proof request.
     // This structure supports multiple different ProofRequests with the same request_id, and different
@@ -465,7 +542,7 @@ where
             });
 
         // Create a channel for new orders to be sent to the OrderPicker / from monitors
-        let (new_order_tx, new_order_rx) = mpsc::channel::<Order>(NEW_ORDER_CHANNEL_CAPACITY);
+        let (new_order_tx, new_order_rx) = mpsc::channel(NEW_ORDER_CHANNEL_CAPACITY);
         let (locked_event_tx, _locked_event_rx) = broadcast::channel(LOCKED_EVENT_CHANNEL_CAPACITY);
 
         // spin up a supervisor for the market monitor
@@ -557,16 +634,10 @@ where
                 .context("Failed to start order picker")?;
             Ok(())
         });
-        let (proving_tx, proving_rx) = mpsc::channel::<Order>(NEW_ORDER_CHANNEL_CAPACITY);
         let proving_service = Arc::new(
-            proving::ProvingService::new(
-                self.db.clone(),
-                prover.clone(),
-                config.clone(),
-                proving_rx,
-            )
-            .await
-            .context("Failed to initialize proving service")?,
+            proving::ProvingService::new(self.db.clone(), prover.clone(), config.clone())
+                .await
+                .context("Failed to initialize proving service")?,
         );
 
         let cloned_config = config.clone();
@@ -585,9 +656,7 @@ where
             config.clone(),
             block_times,
             self.args.boundless_market_address,
-            locked_event_tx.clone(),
             pricing_rx,
-            proving_tx,
         )?);
         let cloned_config = config.clone();
         supervisor_tasks.spawn(async move {

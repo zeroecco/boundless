@@ -27,7 +27,7 @@ use crate::{
     chain_monitor::ChainMonitorService,
     errors::{impl_coded_debug, CodedError},
     task::{RetryRes, RetryTask, SupervisorErr},
-    FulfillmentType, Order,
+    FulfillmentType, OrderRequest,
 };
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -79,7 +79,7 @@ pub struct MarketMonitor<P> {
     chain_monitor: Arc<ChainMonitorService<P>>,
     prover_addr: Address,
     order_stream: Option<OrderStreamClient>,
-    new_order_tx: tokio::sync::mpsc::Sender<Order>,
+    new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
     event_tx: broadcast::Sender<BoundlessEvent>,
 }
 
@@ -103,7 +103,7 @@ where
         chain_monitor: Arc<ChainMonitorService<P>>,
         prover_addr: Address,
         order_stream: Option<OrderStreamClient>,
-        new_order_tx: tokio::sync::mpsc::Sender<Order>,
+        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
         locked_event_tx: broadcast::Sender<BoundlessEvent>,
     ) -> Self {
         Self {
@@ -147,7 +147,7 @@ where
         market_addr: Address,
         provider: Arc<P>,
         chain_monitor: Arc<ChainMonitorService<P>>,
-        new_order_tx: &tokio::sync::mpsc::Sender<Order>,
+        new_order_tx: &tokio::sync::mpsc::Sender<OrderRequest>,
     ) -> Result<u64, MarketMonitorErr> {
         let current_block = chain_monitor.current_block_number().await?;
         let chain_id = provider.get_chain_id().await.context("Failed to get chain id")?;
@@ -228,7 +228,7 @@ where
                 fulfillment_type
             );
 
-            let new_order = Order::new(
+            let new_order = OrderRequest::new(
                 calldata.request.clone(),
                 calldata.clientSignature.clone(),
                 fulfillment_type,
@@ -251,7 +251,7 @@ where
     async fn monitor_orders(
         market_addr: Address,
         provider: Arc<P>,
-        new_order_tx: tokio::sync::mpsc::Sender<Order>,
+        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
     ) -> Result<(), MarketMonitorErr> {
         let chain_id = provider.get_chain_id().await.context("Failed to get chain id")?;
 
@@ -395,7 +395,7 @@ where
         provider: Arc<P>,
         market_addr: Address,
         chain_id: u64,
-        new_order_tx: &tokio::sync::mpsc::Sender<Order>,
+        new_order_tx: &tokio::sync::mpsc::Sender<OrderRequest>,
     ) -> Result<()> {
         tracing::info!("Detected new request {:x}", event.requestId);
 
@@ -445,7 +445,7 @@ where
             return Ok(()); // Return early without propagating the error if signature verification fails.
         }
 
-        let new_order = Order::new(
+        let new_order = OrderRequest::new(
             calldata.request.clone(),
             calldata.clientSignature.clone(),
             FulfillmentType::LockAndFulfill,

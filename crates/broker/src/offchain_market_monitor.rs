@@ -12,7 +12,7 @@ use crate::{
     errors::CodedError,
     impl_coded_debug,
     task::{RetryRes, RetryTask, SupervisorErr},
-    FulfillmentType, Order,
+    FulfillmentType, OrderRequest,
 };
 use thiserror::Error;
 
@@ -43,14 +43,14 @@ impl CodedError for OffchainMarketMonitorErr {
 pub struct OffchainMarketMonitor {
     client: OrderStreamClient,
     signer: PrivateKeySigner,
-    new_order_tx: tokio::sync::mpsc::Sender<Order>,
+    new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
 }
 
 impl OffchainMarketMonitor {
     pub fn new(
         client: OrderStreamClient,
         signer: PrivateKeySigner,
-        new_order_tx: tokio::sync::mpsc::Sender<Order>,
+        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
     ) -> Self {
         Self { client, signer, new_order_tx }
     }
@@ -58,7 +58,7 @@ impl OffchainMarketMonitor {
     async fn monitor_orders(
         client: OrderStreamClient,
         signer: &impl Signer,
-        new_order_tx: tokio::sync::mpsc::Sender<Order>,
+        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
     ) -> Result<(), OffchainMarketMonitorErr> {
         tracing::debug!("Connecting to off-chain market: {}", client.base_url);
         let socket =
@@ -77,7 +77,7 @@ impl OffchainMarketMonitor {
                         order_data.order.request.id
                     );
 
-                    let new_order = Order::new(
+                    let new_order = OrderRequest::new(
                         order_data.order.request,
                         order_data.order.signature.as_bytes().into(),
                         FulfillmentType::LockAndFulfill,

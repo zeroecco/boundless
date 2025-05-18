@@ -667,7 +667,7 @@ mod tests {
             total_cycles: None,
             proving_started_at: None,
         };
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         // Second order
         let order_request = ProofRequest::new(
@@ -714,7 +714,7 @@ mod tests {
             total_cycles: None,
             proving_started_at: None,
         };
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         aggregator.aggregate().await.unwrap();
 
@@ -829,7 +829,7 @@ mod tests {
             total_cycles: None,
             proving_started_at: None,
         };
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         // Aggregate the first order. Should not finalize.
         aggregator.aggregate().await.unwrap();
@@ -891,7 +891,7 @@ mod tests {
             total_cycles: None,
             proving_started_at: None,
         };
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         aggregator.aggregate().await.unwrap();
 
@@ -1002,7 +1002,7 @@ mod tests {
             total_cycles: None,
             proving_started_at: None,
         };
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         aggregator.aggregate().await.unwrap();
 
@@ -1116,7 +1116,7 @@ mod tests {
             total_cycles: None,
             proving_started_at: None,
         };
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
 
         provider.anvil_mine(Some(51), Some(2)).await.unwrap();
 
@@ -1240,7 +1240,7 @@ mod tests {
         };
 
         // add first order and aggregate
-        db.add_order(order.clone()).await.unwrap();
+        db.add_order(&order).await.unwrap();
         aggregator.aggregate().await.unwrap();
         assert!(logs_contain("journal size below limit 20 < 30"));
 
@@ -1277,7 +1277,7 @@ mod tests {
             proving_started_at: None,
         };
 
-        db.add_order(order2.clone()).await.unwrap();
+        db.add_order(&order2).await.unwrap();
         aggregator.aggregate().await.unwrap();
         assert!(logs_contain("journal size target hit 40 >= 30"));
 

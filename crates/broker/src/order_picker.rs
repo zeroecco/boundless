@@ -12,7 +12,7 @@ use crate::{
     provers::{ProverError, ProverObj},
     storage::{upload_image_uri, upload_input_uri},
     task::{RetryRes, RetryTask, SupervisorErr},
-    FulfillmentType, Order, OrderStatus,
+    FulfillmentType, OrderRequest,
 };
 use crate::{now_timestamp, provers::ProofResult};
 use alloy::{
@@ -75,7 +75,7 @@ impl CodedError for OrderPickerErr {
 /// Represents an order that is ready to be locked
 #[derive(Debug, Clone)]
 pub struct OrderToLock {
-    pub order: Order,
+    pub order: OrderRequest,
     pub total_cycles: Option<u64>,
     pub target_timestamp_secs: u64,
     pub expiry_secs: u64,
@@ -84,7 +84,7 @@ pub struct OrderToLock {
 /// Represents an order to fulfill after lock expiry
 #[derive(Debug, Clone)]
 pub struct OrderToFulfillAfterLockExpire {
-    pub order: Order,
+    pub order: OrderRequest,
     pub total_cycles: Option<u64>,
     pub lock_expire_timestamp_secs: u64,
     pub expiry_secs: u64,
@@ -109,7 +109,7 @@ pub struct OrderPicker<P> {
     market: BoundlessMarketService<Arc<P>>,
     supported_selectors: SupportedSelectors,
     // TODO ideal not to wrap in mutex, but otherwise would require supervisor refactor, try to find alternative
-    new_order_rx: Arc<Mutex<mpsc::Receiver<Order>>>,
+    new_order_rx: Arc<Mutex<mpsc::Receiver<OrderRequest>>>,
     // Channel to send processed orders (single channel with enum)
     order_result_tx: mpsc::Sender<OrderProcessingResult>,
 }
@@ -145,7 +145,7 @@ where
         market_addr: Address,
         provider: Arc<P>,
         chain_monitor: Arc<ChainMonitorService<P>>,
-        new_order_rx: mpsc::Receiver<Order>,
+        new_order_rx: mpsc::Receiver<OrderRequest>,
         order_result_tx: mpsc::Sender<OrderProcessingResult>,
     ) -> Self {
         let market = BoundlessMarketService::new(
@@ -167,7 +167,7 @@ where
         }
     }
 
-    async fn price_order_and_update_state(&self, mut order: Order) -> bool {
+    async fn price_order_and_update_state(&self, mut order: OrderRequest) -> bool {
         let order_id = order.id();
         let f = || async {
             match self.price_order(&mut order).await {
@@ -202,7 +202,7 @@ where
                     self.order_result_tx
                         .send(OrderProcessingResult::FulfillAfterLock(
                             OrderToFulfillAfterLockExpire {
-                                order: order.clone(),
+                                order,
                                 total_cycles,
                                 lock_expire_timestamp_secs,
                                 expiry_secs,
@@ -215,21 +215,20 @@ where
                 }
                 Ok(Skip) => {
                     tracing::info!("Skipping order {order_id}");
-                    // Skip orders are handled directly in the DB
-                    // Create a new PersistedOrderData record for the skipped order
-                    order.status = OrderStatus::Skipped;
-                    order.updated_at = chrono::Utc::now();
 
                     // Add the skipped order to the database
                     self.db
-                        .add_order(&order)
+                        .skip_request(order)
                         .await
                         .context("Failed to add skipped order to database")?;
                     Ok(false)
                 }
                 Err(err) => {
-                    tracing::error!("Failed to price order {order_id}: {err}");
-                    self.persist_failure(order, err.to_string()).await?;
+                    tracing::warn!("Failed to price order {order_id}: {err}");
+                    self.db
+                        .skip_request(order)
+                        .await
+                        .context("Failed to skip failed priced order")?;
                     Ok(false)
                 }
             }
@@ -245,24 +244,10 @@ where
         }
     }
 
-    // Helper method to send failed orders to the channel
-    async fn persist_failure(&self, mut order: Order, error_msg: String) -> Result<(), anyhow::Error> {
-        // Create a new PersistedOrderData for the failed order
-        order.status = OrderStatus::Failed;
-        order.updated_at = chrono::Utc::now();
-        order.error_msg = Some(error_msg.clone());
-
-        // Add the failed order to the database
-        self.db
-            .add_order(&order)
-            .await
-            .context("Failed to add failed order to database")?;
-
-        // No longer sending to the channel since failed orders are directly added to the DB
-        Ok(())
-    }
-
-    async fn price_order(&self, order: &mut Order) -> Result<OrderPricingOutcome, OrderPickerErr> {
+    async fn price_order(
+        &self,
+        order: &mut OrderRequest,
+    ) -> Result<OrderPricingOutcome, OrderPickerErr> {
         let order_id = order.id();
         let request_id = order.request.id;
         tracing::debug!("Pricing order {order_id} with request id {request_id:x}");
@@ -386,11 +371,11 @@ where
         };
 
         // TODO: Move URI handling like this into the prover impls
-        let image_id = upload_image_uri(&self.prover, order, &self.config)
+        let image_id = upload_image_uri(&self.prover, &order.request, &self.config)
             .await
             .map_err(OrderPickerErr::FetchImageErr)?;
 
-        let input_id = upload_input_uri(&self.prover, order, &self.config)
+        let input_id = upload_input_uri(&self.prover, &order.request, &self.config)
             .await
             .map_err(OrderPickerErr::FetchInputErr)?;
 
@@ -520,7 +505,7 @@ where
 
     async fn evaluate_order(
         &self,
-        order: &Order,
+        order: &OrderRequest,
         proof_res: &ProofResult,
         order_gas_cost: U256,
         lock_expired: bool,
@@ -535,7 +520,7 @@ where
     /// Evaluate if a regular lockable order is worth picking based on the price and the configured min mcycle price
     async fn evaluate_lockable_order(
         &self,
-        order: &Order,
+        order: &OrderRequest,
         proof_res: &ProofResult,
         order_gas_cost: U256,
     ) -> Result<OrderPricingOutcome, OrderPickerErr> {
@@ -605,7 +590,7 @@ where
     /// and the configured min mcycle price in stake tokens
     async fn evaluate_lock_expired_order(
         &self,
-        order: &Order,
+        order: &OrderRequest,
         proof_res: &ProofResult,
     ) -> Result<OrderPricingOutcome, OrderPickerErr> {
         let config_min_mcycle_price_stake_tokens = {
@@ -663,7 +648,7 @@ where
 
     /// Estimate of gas for locking a single order
     /// Currently just uses the config estimate but this may change in the future
-    async fn estimate_gas_to_lock(&self, order: &Order) -> Result<u64> {
+    async fn estimate_gas_to_lock(&self, order: &OrderRequest) -> Result<u64> {
         let mut estimate =
             self.config.lock_all().context("Failed to read config")?.market.lockin_gas_estimate;
 
@@ -676,7 +661,7 @@ where
 
     /// Estimate of gas for to fulfill a single order
     /// Currently just uses the config estimate but this may change in the future
-    async fn estimate_gas_to_fulfill(&self, order: &Order) -> Result<u64> {
+    async fn estimate_gas_to_fulfill(&self, order: &OrderRequest) -> Result<u64> {
         // TODO: Add gas costs for orders with large journals.
         let (base, groth16) = {
             let config = self.config.lock_all().context("Failed to read config")?;
@@ -1074,9 +1059,9 @@ mod tests {
         // Add the image_id and input_id to allow channel-based processing to succeed
         let image_url = ctx.storage_provider.upload_program(ECHO_ELF).await.unwrap();
         let image_id =
-            upload_image_uri(&ctx.picker.prover, &order, &ctx.picker.config).await.unwrap();
+            upload_image_uri(&ctx.picker.prover, &order.request, &ctx.picker.config).await.unwrap();
         let input_id =
-            upload_input_uri(&ctx.picker.prover, &order, &ctx.picker.config).await.unwrap();
+            upload_input_uri(&ctx.picker.prover, &order.request, &ctx.picker.config).await.unwrap();
 
         order.image_id = Some(image_id.clone());
         order.input_id = Some(input_id.clone());
@@ -1117,9 +1102,9 @@ mod tests {
         // Add the image_id and input_id to allow channel-based processing to succeed
         let image_url = ctx.storage_provider.upload_program(ECHO_ELF).await.unwrap();
         let image_id =
-            upload_image_uri(&ctx.picker.prover, &order, &ctx.picker.config).await.unwrap();
+            upload_image_uri(&ctx.picker.prover, &order.request, &ctx.picker.config).await.unwrap();
         let input_id =
-            upload_input_uri(&ctx.picker.prover, &order, &ctx.picker.config).await.unwrap();
+            upload_input_uri(&ctx.picker.prover, &order.request, &ctx.picker.config).await.unwrap();
 
         order.image_id = Some(image_id);
         order.input_id = Some(input_id);
@@ -1737,9 +1722,9 @@ mod tests {
         // Add the image_id and input_id
         let image_url = ctx.storage_provider.upload_program(ECHO_ELF).await.unwrap();
         let image_id =
-            upload_image_uri(&ctx.picker.prover, &order, &ctx.picker.config).await.unwrap();
+            upload_image_uri(&ctx.picker.prover, &order.request, &ctx.picker.config).await.unwrap();
         let input_id =
-            upload_input_uri(&ctx.picker.prover, &order, &ctx.picker.config).await.unwrap();
+            upload_input_uri(&ctx.picker.prover, &order.request, &ctx.picker.config).await.unwrap();
 
         order.image_id = Some(image_id.clone());
         order.input_id = Some(input_id.clone());
