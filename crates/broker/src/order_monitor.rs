@@ -19,7 +19,8 @@ use alloy::{
 use anyhow::{Context, Result};
 use boundless_market::contracts::{
     boundless_market::{BoundlessMarketService, MarketError},
-    RequestStatus,
+    IBoundlessMarket::IBoundlessMarketErrors,
+    RequestStatus, TxnErr,
 };
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
@@ -32,6 +33,9 @@ pub enum OrderMonitorErr {
     #[error("{code} Failed to lock order: {0}", code = self.code())]
     LockTxFailed(String),
 
+    #[error("{code} Failed to confirm lock tx: {0}", code = self.code())]
+    LockTxNotConfirmed(String),
+
     #[error("{code} Invalid order status for locking: {0:?}", code = self.code())]
     InvalidStatus(OrderStatus),
 
@@ -41,7 +45,7 @@ pub enum OrderMonitorErr {
     #[error("{code} Order already locked", code = self.code())]
     AlreadyLocked,
 
-    #[error("{code} Unexpected error: {0}", code = self.code())]
+    #[error("{code} Unexpected error: {0:?}", code = self.code())]
     UnexpectedError(#[from] anyhow::Error),
 }
 
@@ -50,6 +54,7 @@ impl_coded_debug!(OrderMonitorErr);
 impl CodedError for OrderMonitorErr {
     fn code(&self) -> &str {
         match self {
+            OrderMonitorErr::LockTxNotConfirmed(_) => "[B-OM-006]",
             OrderMonitorErr::LockTxFailed(_) => "[B-OM-007]",
             OrderMonitorErr::InvalidStatus(_) => "[B-OM-008]",
             OrderMonitorErr::AlreadyLocked => "[B-OM-009]",
@@ -120,6 +125,7 @@ pub struct OrderMonitor<P> {
     config: ConfigLock,
     market: BoundlessMarketService<Arc<P>>,
     provider: Arc<P>,
+    prover_addr: Address,
     capacity_debug_log: String,
 }
 
@@ -133,6 +139,7 @@ where
         chain_monitor: Arc<ChainMonitorService<P>>,
         config: ConfigLock,
         block_time: u64,
+        prover_addr: Address,
         market_addr: Address,
     ) -> Result<Self> {
         let txn_timeout_opt = {
@@ -173,6 +180,7 @@ where
             config,
             market,
             provider,
+            prover_addr,
             capacity_debug_log: "".to_string(),
         })
     }
@@ -222,12 +230,41 @@ where
             .await
             .map_err(|e| -> OrderMonitorErr {
                 match e {
+                    MarketError::TxnError(txn_err) => match txn_err {
+                        TxnErr::BoundlessMarketErr(IBoundlessMarketErrors::RequestIsLocked(_)) => {
+                            OrderMonitorErr::AlreadyLocked
+                        }
+                        _ => OrderMonitorErr::LockTxFailed(txn_err.to_string()),
+                    },
+                    MarketError::RequestAlreadyLocked(_e) => OrderMonitorErr::AlreadyLocked,
+                    MarketError::TxnConfirmationError(e) => {
+                        OrderMonitorErr::LockTxNotConfirmed(e.to_string())
+                    }
                     MarketError::LockRevert(e) => {
+                        // Note: lock revert could be for any number of reasons;
+                        // 1/ someone may have locked in the block before us,
+                        // 2/ the lock may have expired,
+                        // 3/ the request may have been fulfilled,
+                        // 4/ the requestor may have withdrawn their funds
+                        // Currently we don't have a way to determine the cause of the revert.
                         OrderMonitorErr::LockTxFailed(format!("Tx hash 0x{:x}", e))
                     }
                     MarketError::Error(e) => {
+                        // Insufficient balance error is thrown both when the requestor has insufficient balance,
+                        // Requestor having insufficient balance can happen and is out of our control. The prover
+                        // having insufficient balance is unexpected as we should have checked for that before
+                        // committing to locking the order.
+                        let prover_addr_str =
+                            self.prover_addr.to_string().to_lowercase().replace("0x", "");
                         if e.to_string().contains("InsufficientBalance") {
-                            OrderMonitorErr::InsufficientBalance
+                            if e.to_string().contains(&prover_addr_str) {
+                                OrderMonitorErr::InsufficientBalance
+                            } else {
+                                OrderMonitorErr::LockTxFailed(format!(
+                                    "Requestor has insufficient balance at lock time: {}",
+                                    e
+                                ))
+                            }
                         } else {
                             OrderMonitorErr::UnexpectedError(e)
                         }
@@ -792,9 +829,10 @@ mod tests {
     use boundless_market::contracts::{
         Input, InputType, Offer, Predicate, PredicateType, ProofRequest, RequestId, Requirements,
     };
-    use boundless_market_test_utils::{deploy_boundless_market, deploy_hit_points};
+    use boundless_market_test_utils::{
+        deploy_boundless_market, deploy_hit_points, ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH,
+    };
     use chrono::Utc;
-    use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
     use risc0_zkvm::Digest;
     use std::{future::Future, sync::Arc};
     use tokio::task::JoinSet;
@@ -843,6 +881,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
         )
         .unwrap();
@@ -997,6 +1036,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
         )
         .unwrap();
@@ -1130,6 +1170,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
         )
         .unwrap();
@@ -1420,6 +1461,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
         )
         .unwrap();

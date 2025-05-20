@@ -12,7 +12,7 @@ release = false
 
 [dependencies]
 alloy = { workspace = true, features = ["network", "providers", "transports", "sol-types", "contract", "signers", "signer-local", "rpc", "rpc-types"] }
-alloy-chains = "=0.1.67"
+alloy-chains = "0.2.0"
 anyhow = { workspace = true }
 async-channel = "2.3"
 async-trait = { workspace = true }
@@ -27,9 +27,6 @@ chrono = { workspace = true }
 clap = { workspace = true }
 futures = "0.3"
 futures-util = { workspace = true }
-# TEMP:
-guest-assessor = { workspace = true }
-guest-set-builder = { workspace = true }
 hex = { workspace = true }
 http-cache-reqwest = "0.15.1"
 notify = "6.1"
@@ -57,8 +54,6 @@ aws-smithy-http-client = { version = "1.0", features = ["test-util"] }
 boundless-market = { workspace = true }
 broker = { path = ".", features = ["test-utils"] }
 elsa = "1.11"
-guest-assessor = { workspace = true }
-guest-util = { workspace = true }
 hex = { workspace = true }
 http = "1.0"
 httpmock = "0.7"

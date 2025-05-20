@@ -310,7 +310,7 @@ impl DefaultProver {
         let assessor_image_id = compute_image_id(&self.assessor_program)?;
         let assessor_claim = ReceiptClaim::ok(assessor_image_id, assessor_journal.clone());
         let assessor_receipt_journal: AssessorJournal =
-            AssessorJournal::abi_decode(&assessor_journal, true)?;
+            AssessorJournal::abi_decode(&assessor_journal)?;
 
         receipts.push(assessor_receipt);
         claims.push(assessor_claim.clone());
@@ -394,22 +394,20 @@ async fn compress_with_bonsai(succinct_receipt: &Receipt) -> Result<Receipt> {
 mod tests {
     use super::*;
     use alloy::{
-        primitives::{FixedBytes, PrimitiveSignature},
+        primitives::{FixedBytes, Signature},
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
         eip712_domain, Input, Offer, Predicate, ProofRequest, RequestId, Requirements,
         UNSPECIFIED_SELECTOR,
     };
-    use guest_assessor::ASSESSOR_GUEST_ELF;
-    use guest_set_builder::SET_BUILDER_ELF;
-    use guest_util::{ECHO_ID, ECHO_PATH};
+    use boundless_market_test_utils::{ASSESSOR_GUEST_ELF, ECHO_ID, ECHO_PATH, SET_BUILDER_ELF};
     use risc0_ethereum_contracts::selector::Selector;
 
     async fn setup_proving_request_and_signature(
         signer: &PrivateKeySigner,
         selector: Option<Selector>,
-    ) -> (ProofRequest, PrimitiveSignature) {
+    ) -> (ProofRequest, Signature) {
         let request = ProofRequest::new(
             RequestId::new(signer.address(), 0),
             Requirements::new(Digest::from(ECHO_ID), Predicate::prefix_match(vec![1]))

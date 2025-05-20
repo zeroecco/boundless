@@ -102,15 +102,25 @@ check-format:
 
 # Run Cargo clippy
 check-clippy:
-    RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
-    cargo clippy --workspace --all-targets -F boundless-order-generator/zeth
-    cd examples/counter && forge build && RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
+    RUSTFLAGS=-Dwarnings RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
     cargo clippy --workspace --all-targets
-    cd examples/composition && forge build && RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
+
+    cd examples/counter && forge build && \
+    RUSTFLAGS=-Dwarnings RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
     cargo clippy --workspace --all-targets
-    cd examples/counter-with-callback && forge build && RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
+
+    cd examples/composition && forge build && \
+    RUSTFLAGS=-Dwarnings RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
     cargo clippy --workspace --all-targets
-    cd examples/smart-contract-requestor && forge build && RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
+
+    cd examples/counter-with-callback && \
+    forge build && \
+    RUSTFLAGS=-Dwarnings RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
+    cargo clippy --workspace --all-targets
+
+    cd examples/smart-contract-requestor && \
+    forge build && \
+    RUSTFLAGS=-Dwarnings ISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
     cargo clippy --workspace --all-targets
 
 # Format all code
@@ -234,28 +244,30 @@ localnet action="up": check-deps
         exit 1
     fi
 
-env NETWORK:
-	#!/usr/bin/env bash
-	FILE=".env.{{NETWORK}}"
-	if [ -f "$FILE" ]; then
-		grep -v '^#' "$FILE" | tr -d '"' | xargs -I {} echo export {}
-	else
-		echo "Error: $FILE file not found." >&2
-		exit 1
-	fi
-
 # Update cargo dependencies
 cargo-update:
     cargo update
     cd examples/counter && cargo update
 
+# Load environment variables from a .env.NETWORK file
+env NETWORK:
+    #!/usr/bin/env bash
+    FILE=".env.{{NETWORK}}"
+    if [ -f "$FILE" ]; then
+        echo "# Run this command with 'source <(just env {{NETWORK}})' to load variables into your shell"
+        grep -v '^#' "$FILE" | tr -d '"' | xargs -I {} echo export {}
+    else
+        echo "Error: $FILE file not found." >&2
+        exit 1
+    fi
+
 # Start the bento service
-bento action="up" env_file="./.env.broker" compose_flags="":
+bento action="up" env_file="" compose_flags="" detached="true":
     #!/usr/bin/env bash
     if [ -n "{{env_file}}" ]; then
-        ENV_FILE="{{env_file}}"
+        ENV_FILE_ARG="--env-file {{env_file}}"
     else
-        ENV_FILE="./.env.broker"
+        ENV_FILE_ARG=""
     fi
 
     if ! command -v docker &> /dev/null; then
@@ -269,44 +281,45 @@ bento action="up" env_file="./.env.broker" compose_flags="":
     fi
 
     if [ "{{action}}" = "up" ]; then
-        if [ "$ENV_FILE" = "./.env.broker" ] && [ ! -f "$ENV_FILE" ]; then
-            echo "Creating $ENV_FILE from template..."
-            if [ -f ".env.broker-template" ]; then
-                cp .env.broker-template "$ENV_FILE"
-                echo "Please review and update values in $ENV_FILE before running the service again."
-            else
-                echo "Error: .env.broker-template not found."
-                exit 1
-            fi
-        fi
-
-        if [ ! -f "$ENV_FILE" ]; then
-            echo "Error: Environment file $ENV_FILE does not exist."
+        if [ -n "{{env_file}}" ] && [ ! -f "{{env_file}}" ]; then
+            echo "Error: Environment file {{env_file}} does not exist."
             exit 1
         fi
 
-        echo "Starting Docker Compose services using environment file: $ENV_FILE"
-        docker compose {{compose_flags}} --env-file "$ENV_FILE" up --build -d
+        echo "Starting Docker Compose services"
+        if [ -n "{{env_file}}" ]; then
+            echo "Using environment file: {{env_file}}"
+        else
+            echo "Using default values from compose.yml"
+        fi
+        
+        if [ "{{detached}}" = "true" ]; then
+            DETACHED_FLAG="-d"
+        else
+            DETACHED_FLAG=""
+        fi
+        
+        docker compose {{compose_flags}} $ENV_FILE_ARG up --build $DETACHED_FLAG
         echo "Docker Compose services have been started."
     elif [ "{{action}}" = "down" ]; then
-        echo "Stopping Docker Compose services using environment file: $ENV_FILE"
-        if docker compose {{compose_flags}} --env-file "$ENV_FILE" down; then
+        echo "Stopping Docker Compose services"
+        if docker compose {{compose_flags}} $ENV_FILE_ARG down; then
             echo "Docker Compose services have been stopped and removed."
         else
             echo "Error: Failed to stop Docker Compose services."
             exit 1
         fi
     elif [ "{{action}}" = "clean" ]; then
-        echo "Stopping and cleaning Docker Compose services using environment file: $ENV_FILE"
-        if docker compose {{compose_flags}} --env-file "$ENV_FILE" down -v; then
+        echo "Stopping and cleaning Docker Compose services"
+        if docker compose {{compose_flags}} $ENV_FILE_ARG down -v; then
             echo "Docker Compose services have been stopped and volumes have been removed."
         else
             echo "Error: Failed to clean Docker Compose services."
             exit 1
         fi
     elif [ "{{action}}" = "logs" ]; then
-        echo "Docker logs using environment file: $ENV_FILE"
-        docker compose {{compose_flags}} --env-file "$ENV_FILE" logs -f
+        echo "Docker logs"
+        docker compose {{compose_flags}} $ENV_FILE_ARG logs -f
     else
         echo "Unknown action: {{action}}"
         echo "Available actions: up, down, clean, logs"
@@ -314,8 +327,8 @@ bento action="up" env_file="./.env.broker" compose_flags="":
     fi
 
 # Run the broker service with a bento cluster for proving.
-broker action="up" env_file="./.env.broker":
-    just bento "{{action}}" "{{env_file}}" "--profile broker"
+broker action="up" env_file="" detached="true":
+    just bento "{{action}}" "{{env_file}}" "--profile broker" "{{detached}}"
 
 # Run the setup script
 bento-setup:

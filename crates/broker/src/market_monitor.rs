@@ -36,10 +36,10 @@ const BLOCK_TIME_SAMPLE_SIZE: u64 = 10;
 
 #[derive(Error)]
 pub enum MarketMonitorErr {
-    #[error("{code} Event polling failed: {0}", code = self.code())]
+    #[error("{code} Event polling failed: {0:?}", code = self.code())]
     EventPollingErr(anyhow::Error),
 
-    #[error("{code} Unexpected error: {0}", code = self.code())]
+    #[error("{code} Unexpected error: {0:?}", code = self.code())]
     UnexpectedErr(#[from] anyhow::Error),
 }
 
@@ -173,7 +173,7 @@ where
                 .await
                 .context("Failed to get transaction by hash")?
                 .context("Missing transaction data")?;
-            let calldata = IBoundlessMarket::submitRequestCall::abi_decode(tx_data.input(), true)
+            let calldata = IBoundlessMarket::submitRequestCall::abi_decode(tx_data.input())
                 .context("Failed to decode calldata")?;
             let order_exists = match db.order_exists_with_request_id(request_id).await {
                 Ok(val) => val,
@@ -456,7 +456,7 @@ where
         let tx_data =
             provider.get_transaction_by_hash(tx_hash).await?.context("Missing transaction data")?;
 
-        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(tx_data.input(), true)
+        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(tx_data.input())
             .context("Failed to decode calldata")?;
 
         // Check the request id flag to determine if the request is smart contract signed. If so we verify the
@@ -477,8 +477,7 @@ where
                 .call()
                 .await
             {
-                Ok(res) => {
-                    let magic_value = res.magicValue;
+                Ok(magic_value) => {
                     if magic_value != ERC1271_MAGIC_VALUE {
                         tracing::warn!("Invalid ERC1271 signature for request 0x{:x}, contract: {} returned magic value: 0x{:x}", calldata.request.id, request_id.addr, magic_value);
                         return Ok(());
@@ -595,11 +594,9 @@ mod tests {
         input::InputBuilder,
     };
     use boundless_market_test_utils::{
-        create_test_ctx, deploy_boundless_market, mock_singleton, TestCtx,
+        create_test_ctx, deploy_boundless_market, mock_singleton, TestCtx, ASSESSOR_GUEST_ID,
+        ASSESSOR_GUEST_PATH, ECHO_ID,
     };
-    use guest_assessor::{ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH};
-    use guest_set_builder::{SET_BUILDER_ID, SET_BUILDER_PATH};
-    use guest_util::ECHO_ID;
     use risc0_zkvm::sha::Digest;
 
     #[tokio::test]
@@ -700,15 +697,7 @@ mod tests {
         // Setup anvil
         let anvil = Anvil::new().spawn();
 
-        let ctx = create_test_ctx(
-            &anvil,
-            SET_BUILDER_ID,
-            format!("file://{SET_BUILDER_PATH}"),
-            ASSESSOR_GUEST_ID,
-            format!("file://{ASSESSOR_GUEST_PATH}"),
-        )
-        .await
-        .unwrap();
+        let ctx = create_test_ctx(&anvil).await.unwrap();
 
         let eip712_domain = eip712_domain! {
             name: "IBoundlessMarket",
@@ -737,7 +726,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let inputs = tx_data.input();
-        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs, true).unwrap();
+        let calldata = IBoundlessMarket::submitRequestCall::abi_decode(inputs).unwrap();
 
         let request = calldata.request;
         let customer_sig = calldata.clientSignature;
