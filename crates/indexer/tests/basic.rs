@@ -341,16 +341,9 @@ async fn test_monitoring() {
         .unwrap();
     let order_fulfilled =
         OrderFulfilled::new(fill.clone(), root_receipt, assessor_receipt).unwrap();
-    ctx.prover_market
-        .submit_merkle_and_fulfill(
-            ctx.set_verifier_address,
-            order_fulfilled.root,
-            order_fulfilled.seal,
-            order_fulfilled.fills,
-            order_fulfilled.assessorReceipt,
-        )
-        .await
-        .unwrap();
+    let fulfillment = FulfillmentTx::new(order_fulfilled.fills, order_fulfilled.assessorReceipt)
+        .with_submit_root(ctx.set_verifier_address, order_fulfilled.root, order_fulfilled.seal);
+    ctx.prover_market.fulfill(fulfillment).await.unwrap();
 
     // Wait for the events to be indexed
     tokio::time::sleep(Duration::from_secs(2)).await;
