@@ -512,38 +512,6 @@ impl BrokerDb for SqliteDb {
         Ok(())
     }
 
-    // #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
-    // async fn set_image_input_ids(
-    //     &self,
-    //     id: &str,
-    //     image_id: &str,
-    //     input_id: &str,
-    // ) -> Result<(), DbError> {
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data = json_set(
-    //                    json_set(
-    //                    json_set(data,
-    //                    '$.image_id', $1),
-    //                    '$.input_id', $2),
-    //                    '$.updated_at', $3)
-    //         WHERE
-    //             id = $4"#,
-    //     )
-    //     .bind(image_id)
-    //     .bind(input_id)
-    //     .bind(Utc::now().timestamp())
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
 
     #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
     async fn set_aggregation_status(&self, id: &str, status: OrderStatus) -> Result<(), DbError> {
@@ -1080,20 +1048,6 @@ mod tests {
         db.insert_accepted_request(&order, U256::ZERO).await.unwrap();
     }
 
-    // #[sqlx::test]
-    // async fn order_not_exists(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     assert!(!db.order_exists_with_request_id(U256::ZERO).await.unwrap());
-    // }
-
-    // #[sqlx::test]
-    // async fn order_exists(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     let order = create_order();
-    //     db.add_order(&order).await.unwrap();
-
-    //     assert!(db.order_exists_with_request_id(order.request.id).await.unwrap());
-    // }
 
     #[sqlx::test]
     async fn get_order(pool: SqlitePool) {
@@ -1124,117 +1078,6 @@ mod tests {
         assert_eq!(submit_order.5, order.fulfillment_type);
     }
 
-    // #[sqlx::test]
-    // async fn update_orders_for_pricing(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     let id = U256::ZERO;
-    //     let mut order = create_order();
-    //     db.add_order(&order).await.unwrap();
-    //     order.request.id = id + U256::from(2);
-    //     db.add_order(&order).await.unwrap();
-    //     order.request.id = id + U256::from(3);
-    //     db.add_order(&order).await.unwrap();
-
-    //     let price_order = db.update_orders_for_pricing(1).await.unwrap();
-    //     assert_eq!(price_order.len(), 1);
-    //     assert_eq!(price_order[0].status, OrderStatus::Pricing);
-    //     assert_ne!(price_order[0].updated_at, order.updated_at);
-
-    //     // Request the next two orders, which should skip the first
-    //     let price_order = db.update_orders_for_pricing(2).await.unwrap();
-    //     assert_eq!(price_order.len(), 2);
-    //     assert_eq!(price_order[0].status, OrderStatus::Pricing);
-    //     assert_eq!(price_order[1].status, OrderStatus::Pricing);
-    // }
-
-    // #[sqlx::test]
-    // async fn set_order_fulfill_after_lock_expire(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     let order = create_order();
-    //     db.add_order(&order).await.unwrap();
-    //     let lock_timestamp = 10;
-    //     let expire_timestamp = 20;
-    //     db.set_order_fulfill_after_lock_expire(&order.id(), lock_timestamp, expire_timestamp, None)
-    //         .await
-    //         .unwrap();
-    //     let db_order = db.get_order(&order.id()).await.unwrap().unwrap();
-    //     assert_eq!(db_order.status, OrderStatus::WaitingForLockToExpire);
-    //     assert_eq!(db_order.target_timestamp, Some(lock_timestamp));
-    //     assert_eq!(db_order.expire_timestamp, Some(expire_timestamp));
-    // }
-
-    // #[sqlx::test]
-    // #[should_panic(expected = "Order key 10 not found")]
-    // async fn set_order_fulfill_after_lock_expire_fail(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     let order = create_order();
-    //     db.add_order(&order).await.unwrap();
-    //     let bad_id = U256::from(10);
-    //     db.set_order_fulfill_after_lock_expire(&bad_id.to_string(), 1, 1, None).await.unwrap();
-    // }
-
-    // #[sqlx::test]
-    // async fn set_proving_status(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     let order = create_order();
-    //     db.add_order(&order).await.unwrap();
-
-    //     let lock_price = U256::from(20);
-
-    //     db.set_proving_status_lock_and_fulfill_orders(&order.id(), lock_price).await.unwrap();
-
-    //     let db_order = db.get_order(&order.id()).await.unwrap().unwrap();
-    //     assert_eq!(db_order.status, OrderStatus::PendingProving);
-    //     assert_eq!(db_order.lock_price, Some(lock_price));
-    // }
-
-    // #[sqlx::test]
-    // async fn get_fulfill_after_lock_expire_orders(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-
-    //     // Create orders with different target timestamps
-    //     let mut order1 = create_order();
-    //     order1.status = OrderStatus::WaitingForLockToExpire;
-    //     order1.request.id = U256::from(1);
-    //     order1.target_timestamp = Some(10);
-    //     db.add_order(&order1).await.unwrap();
-
-    //     let mut order2 = create_order();
-    //     order2.request.id = U256::from(2);
-    //     order2.status = OrderStatus::WaitingForLockToExpire;
-    //     order2.target_timestamp = Some(20);
-    //     db.add_order(&order2).await.unwrap();
-
-    //     // Test with timestamp before both orders
-    //     let orders = db.get_fulfill_after_lock_expire_orders(5).await.unwrap();
-    //     assert_eq!(orders.len(), 0);
-
-    //     // Test with timestamp between orders
-    //     let orders = db.get_fulfill_after_lock_expire_orders(15).await.unwrap();
-    //     assert_eq!(orders.len(), 1);
-    //     assert_eq!(orders[0].id(), order1.id());
-
-    //     // Test with timestamp after both orders
-    //     let orders = db.get_fulfill_after_lock_expire_orders(25).await.unwrap();
-    //     assert_eq!(orders.len(), 2);
-    //     assert_eq!(orders[0].id(), order1.id());
-    //     assert_eq!(orders[1].id(), order2.id());
-    // }
-
-    // #[sqlx::test]
-    // async fn set_proving_status_fulfill_after_lock_expire_orders(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-    //     let mut order = create_order();
-    //     order.status = OrderStatus::Pricing;
-    //     db.add_order(&order).await.unwrap();
-
-    //     // Order should not be updated if we query before the target timestamp.
-    //     db.set_proving_status_fulfill_after_lock_expire_orders(&order.id()).await.unwrap();
-
-    //     let db_order = db.get_order(&order.id()).await.unwrap().unwrap();
-    //     assert_eq!(db_order.status, OrderStatus::PendingProving);
-    //     assert_eq!(db_order.lock_price, Some(U256::ZERO));
-    // }
 
     #[sqlx::test]
     async fn set_order_failure(pool: SqlitePool) {
@@ -1342,25 +1185,6 @@ mod tests {
         assert_eq!(proving_orders[0].id(), order.id());
     }
 
-    // #[sqlx::test]
-    // async fn set_image_input_ids(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-
-    //     let id = U256::ZERO;
-    //     let mut order = create_order();
-    //     order.status = OrderStatus::PendingProving;
-    //     order.request.id = id;
-    //     db.add_order(&order).await.unwrap();
-
-    //     let image_id = "test_img";
-    //     let input_id = "test_input";
-    //     db.set_image_input_ids(&order.id(), image_id, input_id).await.unwrap();
-
-    //     let db_order = db.get_order(&order.id()).await.unwrap().unwrap();
-
-    //     assert_eq!(db_order.image_id, Some(image_id.into()));
-    //     assert_eq!(db_order.input_id, Some(input_id.into()));
-    // }
 
     #[sqlx::test]
     async fn set_aggregation_status(pool: SqlitePool) {
