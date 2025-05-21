@@ -82,6 +82,6 @@ boundless-market = "0x581C7e8018f0888364c698f97F64eB069723131F"
 stake-token = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
 # Guests info
-deployment-commit = "44f2da9dfa3d97c0486a187f8921d456706ee9a6" # v0.9.0 main
+deployment-commit = "435e8c40aa832f2bac98ba54a809431e9f120ea7" # v0.9.0 main
 assessor-image-id = "0x9b914519efb6109de0507a63d5f32e8695bbe0efda1ec152df6fde5eb030a73b"
 assessor-guest-url = "https://gateway.pinata.cloud/ipfs/bafybeif5523ugt54zotjpiqhaeiu4fhz2wrvcwa7m35vqmqahnhjxsvrky"
