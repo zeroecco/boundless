@@ -119,6 +119,7 @@ pub struct OrderMonitor<P> {
     config: ConfigLock,
     market: BoundlessMarketService<Arc<P>>,
     provider: Arc<P>,
+    prover_addr: Address,
     priced_order_rx: Arc<Mutex<mpsc::Receiver<OrderRequest>>>,
     lock_and_prove_cache: Arc<Cache<String, Arc<OrderRequest>>>,
     prove_cache: Arc<Cache<String, Arc<OrderRequest>>>,
@@ -176,6 +177,7 @@ where
             config,
             market,
             provider,
+            prover_addr,
             priced_order_rx: Arc::new(Mutex::new(priced_orders_rx)),
             lock_and_prove_cache: Arc::new(Cache::builder().expire_after(OrderExpiry).build()),
             prove_cache: Arc::new(Cache::builder().expire_after(OrderExpiry).build()),
@@ -205,7 +207,6 @@ where
             .await
             .context("Failed to check if request is locked")?;
         if is_locked {
-            tracing::warn!("Request 0x{:x} already locked: {order_status:?}, skipping", request_id);
             tracing::warn!("Request 0x{:x} already locked: {order_status:?}, skipping", request_id);
             return Err(OrderMonitorErr::AlreadyLocked);
         }
@@ -1600,4 +1601,5 @@ mod tests {
         assert_eq!(result[0].id(), order2_id);
         assert_eq!(db.get_order(&order1_id).await.unwrap().unwrap().status, OrderStatus::Skipped);
     }
+
 }

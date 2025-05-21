@@ -633,12 +633,14 @@ where
             Ok(())
         });
 
+        let prover_addr = self.args.private_key.address();
         let order_monitor = Arc::new(order_monitor::OrderMonitor::new(
             self.db.clone(),
             self.provider.clone(),
             chain_monitor.clone(),
             config.clone(),
             block_times,
+            prover_addr,
             self.args.boundless_market_address,
             pricing_rx,
         )?);
@@ -654,7 +656,6 @@ where
         let set_builder_img_id = self.fetch_and_upload_set_builder_image(&prover).await?;
         let assessor_img_id = self.fetch_and_upload_assessor_image(&prover).await?;
 
-        let prover_addr = self.args.private_key.address();
         let aggregator = Arc::new(
             aggregator::AggregatorService::new(
                 self.db.clone(),
