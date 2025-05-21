@@ -125,7 +125,6 @@ pub trait BrokerDb {
     async fn get_order_compressed_proof_id(&self, id: &str) -> Result<String, DbError>;
     async fn set_order_failure(&self, id: &str, failure_str: &'static str) -> Result<(), DbError>;
     async fn set_order_complete(&self, id: &str) -> Result<(), DbError>;
-    async fn get_pending_fulfill_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError>;
     /// Get all orders that are committed to be prove and be fulfilled.
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
     async fn get_proving_order(&self) -> Result<Option<Order>, DbError>;
@@ -384,25 +383,6 @@ impl BrokerDb for SqliteDb {
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn get_pending_fulfill_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError> {
-        let orders: Vec<DbOrder> = sqlx::query_as(
-            "SELECT * FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6) AND data->>'target_timestamp' <= $7",
-        )
-        .bind(OrderStatus::PendingProving)
-        .bind(OrderStatus::Proving)
-        .bind(OrderStatus::PendingAgg)
-        .bind(OrderStatus::Aggregating)
-        .bind(OrderStatus::SkipAggregation)
-        .bind(OrderStatus::PendingSubmission)
-        .bind(end_timestamp as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        // Break if any order-id's are invalid and raise
-        orders.into_iter().map(|elm| Ok(elm.data)).collect()
-    }
-
-    #[instrument(level = "trace", skip_all)]
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError> {
         let orders: Vec<DbOrder> = sqlx::query_as(
             "SELECT * FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6)",
@@ -511,7 +491,6 @@ impl BrokerDb for SqliteDb {
 
         Ok(())
     }
-
 
     #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
     async fn set_aggregation_status(&self, id: &str, status: OrderStatus) -> Result<(), DbError> {
@@ -1048,7 +1027,6 @@ mod tests {
         db.insert_accepted_request(&order, U256::ZERO).await.unwrap();
     }
 
-
     #[sqlx::test]
     async fn get_order(pool: SqlitePool) {
         let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
@@ -1077,7 +1055,6 @@ mod tests {
         assert_eq!(submit_order.4, order.lock_price.unwrap());
         assert_eq!(submit_order.5, order.fulfillment_type);
     }
-
 
     #[sqlx::test]
     async fn set_order_failure(pool: SqlitePool) {
@@ -1184,7 +1161,6 @@ mod tests {
         assert_eq!(proving_orders.len(), 1);
         assert_eq!(proving_orders[0].id(), order.id());
     }
-
 
     #[sqlx::test]
     async fn set_aggregation_status(pool: SqlitePool) {

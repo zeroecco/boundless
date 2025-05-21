@@ -11,11 +11,14 @@ use crate::{
     errors::CodedError,
     impl_coded_debug, now_timestamp,
     task::{RetryRes, RetryTask, SupervisorErr},
-    FulfillmentType, Order,
+    utils, FulfillmentType, Order,
 };
 use alloy::{
     network::Ethereum,
-    primitives::{utils::parse_ether, Address, U256},
+    primitives::{
+        utils::{format_ether, parse_ether},
+        Address, U256,
+    },
     providers::{Provider, WalletProvider},
 };
 use anyhow::{Context, Result};
@@ -24,6 +27,8 @@ use boundless_market::contracts::{
     IBoundlessMarket::IBoundlessMarketErrors,
     RequestStatus, TxnErr,
 };
+use boundless_market::selector::SupportedSelectors;
+use futures;
 use moka::{future::Cache, Expiry};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -118,6 +123,7 @@ pub struct OrderMonitor<P> {
     priced_order_rx: Arc<Mutex<mpsc::Receiver<OrderRequest>>>,
     lock_and_prove_cache: Arc<Cache<String, Arc<OrderRequest>>>,
     prove_cache: Arc<Cache<String, Arc<OrderRequest>>>,
+    supported_selectors: SupportedSelectors,
 }
 
 impl<P> OrderMonitor<P>
@@ -173,6 +179,7 @@ where
             priced_order_rx: Arc::new(Mutex::new(priced_orders_rx)),
             lock_and_prove_cache: Arc::new(Cache::builder().expire_after(OrderExpiry).build()),
             prove_cache: Arc::new(Cache::new(DEFAULT_CACHE_CAPACITY)),
+            supported_selectors: SupportedSelectors::default(),
         };
         Ok(monitor)
     }
@@ -450,7 +457,92 @@ where
     }
 
     async fn lock_and_prove_orders(&self, orders: &[Arc<OrderRequest>]) -> Result<()> {
+        // Get current gas price and available balance
+        let gas_price =
+            self.chain_monitor.current_gas_price().await.context("Failed to get gas price")?;
+        let available_balance_wei = self
+            .provider
+            .get_balance(self.provider.default_signer_address())
+            .await
+            .context("Failed to get current wallet balance")?;
+
+        // Calculate gas units required for committed orders
+        let committed_orders = self.db.get_committed_orders().await?;
+        let committed_gas_units =
+            futures::future::try_join_all(committed_orders.iter().map(|order| {
+                utils::estimate_gas_to_fulfill(
+                    &self.config,
+                    &self.supported_selectors,
+                    &order.request,
+                )
+            }))
+            .await?
+            .iter()
+            .sum::<u64>();
+
+        // Calculate cost in wei
+        let committed_cost_wei = U256::from(gas_price) * U256::from(committed_gas_units);
+
+        // Log committed order gas requirements
+        if !committed_orders.is_empty() {
+            tracing::debug!(
+                "Cost for {} committed orders: {} ether",
+                committed_orders.len(),
+                format_ether(committed_cost_wei),
+            );
+        }
+
+        // Ensure we have enough for committed orders
+        if committed_cost_wei > available_balance_wei {
+            tracing::error!(
+                "Insufficient balance for committed orders. Required: {} ether, Available: {} ether",
+                format_ether(committed_cost_wei),
+                format_ether(available_balance_wei)
+            );
+            return Ok(());
+        }
+
+        // Calculate remaining balance after accounting for committed orders
+        let mut remaining_balance_wei = available_balance_wei - committed_cost_wei;
+        let mut processed_any = false;
+
+        // Process new orders
         for order in orders {
+            // Calculate gas units needed for this order (lock + fulfill)
+            let order_gas_units = if order.fulfillment_type == FulfillmentType::LockAndFulfill {
+                utils::estimate_gas_to_lock(&self.config, order).await?
+                    + utils::estimate_gas_to_fulfill(
+                        &self.config,
+                        &self.supported_selectors,
+                        &order.request,
+                    )
+                    .await?
+            } else {
+                utils::estimate_gas_to_fulfill(
+                    &self.config,
+                    &self.supported_selectors,
+                    &order.request,
+                )
+                .await?
+            };
+
+            let order_cost_wei = U256::from(gas_price) * U256::from(order_gas_units);
+
+            // Skip if not enough balance
+            if order_cost_wei > remaining_balance_wei {
+                tracing::warn!(
+                    "Insufficient balance for order {}. Required: {} ether, Remaining: {} ether",
+                    order.id(),
+                    format_ether(order_cost_wei),
+                    format_ether(remaining_balance_wei)
+                );
+                continue;
+            }
+
+            // Earmark balance for this order
+            remaining_balance_wei -= order_cost_wei;
+
+            // Process the order
             let order_id = order.id();
             if order.fulfillment_type == FulfillmentType::LockAndFulfill {
                 let request_id = order.request.id;
@@ -473,7 +565,6 @@ where
                                     err.code()
                                 );
                             }
-                            // Only warn on known / classified errors
                             _ => {
                                 tracing::warn!(
                                     "Soft failed to lock request: {request_id} - {} - {err:?}",
@@ -483,9 +574,13 @@ where
                         }
                         if let Err(err) = self.db.insert_skipped_request(order).await {
                             tracing::error!(
-                                "Failed to set DB failure state for order: {order_id} - {err:?}",
+                                "Failed to set DB failure state for order: {order_id} - {err:?}"
                             );
                         }
+
+                        // Note: not adding the gas back to the pool if failed to be safe because
+                        // either the lock failure could be a false negative and also the lock gas
+                        // might have been used even if lock failed.
                     }
                 }
                 self.lock_and_prove_cache.invalidate(&order_id).await;
@@ -495,8 +590,23 @@ where
                     .await
                     .context("Failed to set order status to pending proving")?;
                 self.prove_cache.invalidate(&order_id).await;
+                processed_any = true;
             }
         }
+
+        // Log results
+        if !processed_any {
+            tracing::warn!(
+                "No new orders processed due to balance limits. Remaining: {} ether",
+                format_ether(remaining_balance_wei)
+            );
+        } else {
+            tracing::debug!(
+                "Successfully processed orders. Remaining: {} ether",
+                format_ether(remaining_balance_wei)
+            );
+        }
+
         Ok(())
     }
 

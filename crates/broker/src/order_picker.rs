@@ -12,13 +12,12 @@ use crate::{
     provers::{ProverError, ProverObj},
     storage::{upload_image_uri, upload_input_uri},
     task::{RetryRes, RetryTask, SupervisorErr},
-    FulfillmentType, OrderRequest,
+    utils, FulfillmentType, OrderRequest,
 };
 use crate::{now_timestamp, provers::ProofResult};
 use alloy::{
     network::Ethereum,
     primitives::{
-        aliases::U96,
         utils::{format_ether, format_units, parse_ether},
         Address, U256,
     },
@@ -26,8 +25,8 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use boundless_market::{
-    contracts::{boundless_market::BoundlessMarketService, ProofRequest, RequestError},
-    selector::{ProofType, SupportedSelectors},
+    contracts::{boundless_market::BoundlessMarketService, RequestError},
+    selector::SupportedSelectors,
 };
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex, Semaphore};
@@ -36,9 +35,6 @@ use OrderPricingOutcome::{Lock, ProveAfterLockExpire, Skip};
 
 /// Maximum number of orders to concurrently work on pricing. Used to limit pricing tasks spawned.
 const MAX_PRICING_BATCH_SIZE: u32 = 10;
-
-/// Gas allocated to verifying a smart contract signature. Copied from BoundlessMarket.sol.
-const ERC1271_MAX_GAS_FOR_CHECK: u64 = 100000;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -290,11 +286,23 @@ where
             self.chain_monitor.current_gas_price().await.context("Failed to get gas price")?;
         let order_gas = if lock_expired {
             // No need to include lock gas if its a lock expired order
-            U256::from(self.estimate_gas_to_fulfill(&order.request).await?)
+            U256::from(
+                utils::estimate_gas_to_fulfill(
+                    &self.config,
+                    &self.supported_selectors,
+                    &order.request,
+                )
+                .await?,
+            )
         } else {
             U256::from(
-                self.estimate_gas_to_lock(order).await?
-                    + self.estimate_gas_to_fulfill(&order.request).await?,
+                utils::estimate_gas_to_lock(&self.config, order).await?
+                    + utils::estimate_gas_to_fulfill(
+                        &self.config,
+                        &self.supported_selectors,
+                        &order.request,
+                    )
+                    .await?,
             )
         };
         let order_gas_cost = U256::from(gas_price) * order_gas;
@@ -592,61 +600,16 @@ where
         })
     }
 
-    /// Estimate of gas for locking a single order
-    /// Currently just uses the config estimate but this may change in the future
-    async fn estimate_gas_to_lock(&self, order: &OrderRequest) -> Result<u64> {
-        let mut estimate =
-            self.config.lock_all().context("Failed to read config")?.market.lockin_gas_estimate;
-
-        if order.request.is_smart_contract_signed() {
-            estimate += ERC1271_MAX_GAS_FOR_CHECK;
-        }
-
-        Ok(estimate)
-    }
-
-    /// Estimate of gas for to fulfill a single order
-    /// Currently just uses the config estimate but this may change in the future
-    async fn estimate_gas_to_fulfill(&self, request: &ProofRequest) -> Result<u64> {
-        // TODO: Add gas costs for orders with large journals.
-        let (base, groth16) = {
-            let config = self.config.lock_all().context("Failed to read config")?;
-            (config.market.fulfill_gas_estimate, config.market.groth16_verify_gas_estimate)
-        };
-
-        let mut estimate = base;
-
-        // Add gas for orders that make use of the callbacks feature.
-        estimate += u64::try_from(
-            request
-                .requirements
-                .callback
-                .as_option()
-                .map(|callback| callback.gasLimit)
-                .unwrap_or(U96::ZERO),
-        )?;
-
-        estimate += match self
-            .supported_selectors
-            .proof_type(request.requirements.selector)
-            .context("unsupported selector")?
-        {
-            ProofType::Any | ProofType::Inclusion => 0,
-            ProofType::Groth16 => groth16,
-            proof_type => {
-                tracing::warn!("Unknown proof type in gas cost estimation: {proof_type:?}");
-                0
-            }
-        };
-
-        Ok(estimate)
-    }
-
     /// Estimate of gas for fulfilling any orders either pending lock or locked
     async fn estimate_gas_to_fulfill_pending(&self) -> Result<u64> {
         let mut gas = 0;
-        for order in self.db.get_pending_fulfill_orders(i64::MAX as u64).await? {
-            let gas_estimate = self.estimate_gas_to_fulfill(&order.request).await?;
+        for order in self.db.get_committed_orders().await? {
+            let gas_estimate = utils::estimate_gas_to_fulfill(
+                &self.config,
+                &self.supported_selectors,
+                &order.request,
+            )
+            .await?;
             gas += gas_estimate;
         }
         tracing::debug!("Total gas estimate to fulfill pending orders: {}", gas);
