@@ -72,11 +72,6 @@ impl<P: Provider> ChainMonitorService<P> {
         self.current_chain_head().await.map(|head| head.block_number)
     }
 
-    /// Returns the latest block timestamp, triggering an update if enough time has passed
-    pub(crate) async fn current_block_timestamp(&self) -> Result<u64> {
-        self.current_chain_head().await.map(|head| head.block_timestamp)
-    }
-
     pub(crate) async fn current_chain_head(&self) -> Result<ChainHead> {
         if Instant::now() > *self.next_update.read().await {
             let mut rx = self.head_update.subscribe();

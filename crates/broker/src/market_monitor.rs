@@ -22,15 +22,16 @@ use boundless_market::{
     order_stream_client::Client as OrderStreamClient,
 };
 use futures_util::StreamExt;
+use tokio::sync::mpsc;
 
 use crate::{
     chain_monitor::ChainMonitorService,
+    db::{DbError, DbObj},
     errors::{impl_coded_debug, CodedError},
     task::{RetryRes, RetryTask, SupervisorErr},
     FulfillmentType, OrderRequest,
 };
 use thiserror::Error;
-use tokio::sync::broadcast;
 
 const BLOCK_TIME_SAMPLE_SIZE: u64 = 10;
 
@@ -58,29 +59,15 @@ impl CodedError for MarketMonitorErr {
 
 impl_coded_debug!(MarketMonitorErr);
 
-#[derive(Debug, Clone)]
-pub enum BoundlessEvent {
-    Locked {
-        request_id: U256,
-        prover: Address,
-        // TODO double check this is necessary
-        block_number: u64,
-    },
-    Fulfilled {
-        request_id: U256,
-        block_number: u64,
-    },
-}
-
 pub struct MarketMonitor<P> {
     lookback_blocks: u64,
     market_addr: Address,
     provider: Arc<P>,
+    db: DbObj,
     chain_monitor: Arc<ChainMonitorService<P>>,
     prover_addr: Address,
     order_stream: Option<OrderStreamClient>,
     new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
-    event_tx: broadcast::Sender<BoundlessEvent>,
 }
 
 sol! {
@@ -96,25 +83,26 @@ impl<P> MarketMonitor<P>
 where
     P: Provider<Ethereum> + 'static + Clone,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         lookback_blocks: u64,
         market_addr: Address,
         provider: Arc<P>,
+        db: DbObj,
         chain_monitor: Arc<ChainMonitorService<P>>,
         prover_addr: Address,
         order_stream: Option<OrderStreamClient>,
         new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
-        locked_event_tx: broadcast::Sender<BoundlessEvent>,
     ) -> Self {
         Self {
             lookback_blocks,
             market_addr,
             provider,
+            db,
             chain_monitor,
             prover_addr,
             order_stream,
             new_order_tx,
-            event_tx: locked_event_tx,
         }
     }
 
@@ -248,7 +236,7 @@ where
     async fn monitor_orders(
         market_addr: Address,
         provider: Arc<P>,
-        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
+        new_order_tx: mpsc::Sender<OrderRequest>,
     ) -> Result<(), MarketMonitorErr> {
         let chain_id = provider.get_chain_id().await.context("Failed to get chain id")?;
 
@@ -295,13 +283,16 @@ where
     }
 
     /// Monitors the RequestLocked events and updates the database accordingly.
-    // TODO remove unnecessary params
     async fn monitor_order_locks(
         market_addr: Address,
+        prover_addr: Address,
         provider: Arc<P>,
-        event_tx: broadcast::Sender<BoundlessEvent>,
+        db: DbObj,
+        new_order_tx: mpsc::Sender<OrderRequest>,
+        order_stream: Option<OrderStreamClient>,
     ) -> Result<(), MarketMonitorErr> {
         let market = BoundlessMarketService::new(market_addr, provider.clone(), Address::ZERO);
+        let chain_id = provider.get_chain_id().await.context("Failed to get chain id")?;
         let event = market
             .instance()
             .RequestLocked_filter()
@@ -320,15 +311,59 @@ where
                             event.requestId,
                             event.prover,
                         );
-                        let locked_event = BoundlessEvent::Locked {
-                            request_id: U256::from(event.requestId),
-                            prover: event.prover,
-                            block_number: log.block_number.unwrap(),
-                        };
-                        if let Err(e) = event_tx.send(locked_event.clone()) {
-                            tracing::error!("Failed to broadcast lock event: {:?}", e);
-                        } else {
-                            tracing::debug!("Broadcasted order locked: {:x}", event.requestId);
+                        if let Err(e) = db
+                            .set_request_locked(
+                                U256::from(event.requestId),
+                                &event.prover.to_string(),
+                                log.block_number.unwrap(),
+                            )
+                            .await
+                        {
+                            match e {
+                                DbError::SqlUniqueViolation(_) => {
+                                    tracing::warn!("Duplicate request locked detected {:x}: {e:?}", event.requestId);
+                                }
+                                _ => {
+                                    tracing::error!("Failed to store request locked for request {:x} in db: {e:?}", event.requestId);
+                                }
+                            }
+                        }
+
+                        // If the request was not locked by the prover, we create an order to evaluate the request
+                        // for fulfilling after the lock expires.
+                        if event.prover != prover_addr {
+                            // Try to get from market first. If the request was submitted via the order stream, we will be unable to find it there.
+                            // In that case we check the order stream.
+                            let mut order: Option<OrderRequest> = None;
+                            if let Ok((proof_request, signature)) = market.get_submitted_request(event.requestId, None).await {
+                                order = Some(OrderRequest::new(
+                                    proof_request,
+                                    signature,
+                                    FulfillmentType::FulfillAfterLockExpire,
+                                    market_addr,
+                                    chain_id,
+                                ));
+                            } else if let Some(order_stream) = &order_stream {
+                                if let Ok(order_stream_order) = order_stream.fetch_order(event.requestId, None).await {
+                                    let proof_request = order_stream_order.request;
+                                    let signature = order_stream_order.signature;
+                                    order = Some(OrderRequest::new(
+                                        proof_request,
+                                        signature.as_bytes().into(),
+                                        FulfillmentType::FulfillAfterLockExpire,
+                                        market_addr,
+                                        chain_id,
+                                    ));
+                                }
+                            }
+
+                            if let Some(order) = order {
+                                if let Err(e) = new_order_tx.send(order).await {
+                                    tracing::error!("Failed to send order locked by another prover, {:x}: {e:?}", event.requestId);
+                                }
+                            } else {
+                                tracing::warn!("Failed to get order from market or order stream for locked request {:x}. Unable to evaluate for fulfillment after lock expires.", event.requestId);
+                            }
                         }
                     }
                     Err(err) => {
@@ -347,7 +382,7 @@ where
     async fn monitor_order_fulfillments(
         market_addr: Address,
         provider: Arc<P>,
-        event_tx: broadcast::Sender<BoundlessEvent>,
+        db: DbObj,
     ) -> Result<(), MarketMonitorErr> {
         let market = BoundlessMarketService::new(market_addr, provider.clone(), Address::ZERO);
         let event = market
@@ -364,14 +399,24 @@ where
                 match log_res {
                     Ok((event, log)) => {
                         tracing::debug!("Detected request fulfilled {:x}", event.requestId);
-                        let fulfilled_event = BoundlessEvent::Fulfilled {
-                            request_id: U256::from(event.requestId),
-                            block_number: log.block_number.unwrap(),
-                        };
-                        if let Err(e) = event_tx.send(fulfilled_event.clone()) {
-                            tracing::error!("Failed to broadcast fulfillment event: {:?}", e);
-                        } else {
-                            tracing::debug!("Broadcasted order fulfilled: {:x}", event.requestId);
+                        if let Err(e) = db
+                            .set_request_fulfilled(
+                                U256::from(event.requestId),
+                                log.block_number.unwrap(),
+                            )
+                            .await
+                        {
+                            match e {
+                                DbError::SqlUniqueViolation(_) => {
+                                    tracing::warn!("Duplicate fulfillment event detected: {e:?}");
+                                }
+                                _ => {
+                                    tracing::error!(
+                                        "Failed to store fulfillment for request id {:x}: {e:?}",
+                                        event.requestId
+                                    );
+                                }
+                            }
                         }
                     }
                     Err(err) => {
@@ -473,9 +518,11 @@ where
         let lookback_blocks = self.lookback_blocks;
         let market_addr = self.market_addr;
         let provider = self.provider.clone();
+        let prover_addr = self.prover_addr;
         let chain_monitor = self.chain_monitor.clone();
         let new_order_tx = self.new_order_tx.clone();
-        let event_tx = self.event_tx.clone();
+        let db = self.db.clone();
+        let order_stream = self.order_stream.clone();
 
         Box::pin(async move {
             tracing::info!("Starting up market monitor");
@@ -494,15 +541,15 @@ where
             })?;
 
             tokio::select! {
-                Err(err) = Self::monitor_orders(market_addr, provider.clone(), new_order_tx) => {
+                Err(err) = Self::monitor_orders(market_addr, provider.clone(), new_order_tx.clone()) => {
                     tracing::warn!("Monitor for new orders failed, restarting.");
                     Err(SupervisorErr::Recover(err))
                 }
-                Err(err) = Self::monitor_order_fulfillments(market_addr, provider.clone(), event_tx.clone()) => {
+                Err(err) = Self::monitor_order_fulfillments(market_addr, provider.clone(), db.clone()) => {
                     tracing::warn!("Monitor for order fulfillments failed, restarting.");
                     Err(SupervisorErr::Recover(err))
                 }
-                Err(err) = Self::monitor_order_locks(market_addr, provider.clone(), event_tx) => {
+                Err(err) = Self::monitor_order_locks(market_addr, prover_addr, provider.clone(), db, new_order_tx, order_stream) => {
                     tracing::warn!("Monitor for order locks failed, restarting.");
                     Err(SupervisorErr::Recover(err))
                 }
@@ -597,7 +644,7 @@ mod tests {
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
         tokio::spawn(chain_monitor.spawn());
 
-        let (order_tx, order_rx) = tokio::sync::mpsc::channel(16);
+        let (order_tx, mut order_rx) = tokio::sync::mpsc::channel(16);
         let orders =
             MarketMonitor::find_open_orders(2, market_address, provider, chain_monitor, &order_tx)
                 .await
@@ -625,16 +672,16 @@ mod tests {
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
         tokio::spawn(chain_monitor.spawn());
         let (order_tx, _order_rx) = tokio::sync::mpsc::channel(16);
-        let (locked_event_tx, _locked_event_rx) = broadcast::channel(16);
+        let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
         let market_monitor = MarketMonitor::new(
             1,
             Address::ZERO,
             provider,
+            db,
             chain_monitor,
             Address::ZERO,
             None,
             order_tx,
-            locked_event_tx,
         );
 
         let block_time = market_monitor.get_block_time().await.unwrap();

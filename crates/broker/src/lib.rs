@@ -28,12 +28,11 @@ use risc0_zkvm::sha::Digest;
 pub use rpc_retry_policy::CustomRetryPolicy;
 use serde::{Deserialize, Serialize};
 use task::{RetryPolicy, Supervisor};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use url::Url;
 
 const NEW_ORDER_CHANNEL_CAPACITY: usize = 100;
-const LOCKED_EVENT_CHANNEL_CAPACITY: usize = 100;
 const PRICING_CHANNEL_CAPACITY: usize = 100;
 
 pub(crate) mod aggregator;
@@ -133,8 +132,6 @@ pub struct Args {
 /// are managed in-memory or removed from the database.
 #[derive(Clone, Copy, sqlx::Type, Debug, PartialEq, Serialize, Deserialize)]
 enum OrderStatus {
-    // TODO remove
-    Temp,
     /// Order is ready to commence proving (either locked or filling without locking)
     PendingProving,
     /// Order is actively ready for proving
@@ -215,34 +212,35 @@ impl OrderRequest {
         )
     }
 
-    fn into_order(self, status: OrderStatus) -> Order {
+    fn to_order(&self, status: OrderStatus) -> Order {
         Order {
             boundless_market_address: self.boundless_market_address,
             chain_id: self.chain_id,
             fulfillment_type: self.fulfillment_type,
-            request: self.request,
+            request: self.request.clone(),
             status,
-            client_sig: self.client_sig,
+            client_sig: self.client_sig.clone(),
             updated_at: Utc::now(),
-            image_id: self.image_id,
-            input_id: self.input_id,
-            total_cycles: None,
-            target_timestamp: None,
+            image_id: self.image_id.clone(),
+            input_id: self.input_id.clone(),
+            total_cycles: self.total_cycles,
+            // TODO can likely remove this timestamp from Order
+            target_timestamp: self.target_timestamp,
+            expire_timestamp: self.expire_timestamp,
             proving_started_at: None,
             proof_id: None,
             compressed_proof_id: None,
-            expire_timestamp: None,
             lock_price: None,
             error_msg: None,
         }
     }
 
-    fn into_skipped_order(self) -> Order {
-        self.into_order(OrderStatus::Skipped)
+    fn to_skipped_order(&self) -> Order {
+        self.to_order(OrderStatus::Skipped)
     }
 
-    fn into_proving_order(self, lock_price: U256) -> Order {
-        let mut order = self.into_order(OrderStatus::PendingProving);
+    fn to_proving_order(&self, lock_price: U256) -> Order {
+        let mut order = self.to_order(OrderStatus::PendingProving);
         order.lock_price = Some(lock_price);
         order.proving_started_at = Some(Utc::now().timestamp().try_into().unwrap());
         order
@@ -313,34 +311,6 @@ struct Order {
 }
 
 impl Order {
-    // pub fn new(
-    //     request: ProofRequest,
-    //     client_sig: Bytes,
-    //     fulfillment_type: FulfillmentType,
-    //     boundless_market_address: Address,
-    //     chain_id: u64,
-    // ) -> Self {
-    //     Self {
-    //         boundless_market_address,
-    //         chain_id,
-    //         request,
-    //         status: OrderStatus::Temp,
-    //         updated_at: Utc::now(),
-    //         target_timestamp: None,
-    //         image_id: None,
-    //         input_id: None,
-    //         proof_id: None,
-    //         compressed_proof_id: None,
-    //         expire_timestamp: None,
-    //         client_sig,
-    //         lock_price: None,
-    //         fulfillment_type,
-    //         error_msg: None,
-    //         total_cycles: None,
-    //         proving_started_at: None,
-    //     }
-    // }
-
     // An Order is identified by the request_id, the fulfillment type, and the hash of the proof request.
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
@@ -556,18 +526,17 @@ where
 
         // Create a channel for new orders to be sent to the OrderPicker / from monitors
         let (new_order_tx, new_order_rx) = mpsc::channel(NEW_ORDER_CHANNEL_CAPACITY);
-        let (locked_event_tx, _locked_event_rx) = broadcast::channel(LOCKED_EVENT_CHANNEL_CAPACITY);
 
         // spin up a supervisor for the market monitor
         let market_monitor = Arc::new(market_monitor::MarketMonitor::new(
             loopback_blocks,
             self.args.boundless_market_address,
             self.provider.clone(),
+            self.db.clone(),
             chain_monitor.clone(),
             self.args.private_key.address(),
             client.clone(),
             new_order_tx.clone(),
-            locked_event_tx.clone(),
         ));
 
         let block_times =
