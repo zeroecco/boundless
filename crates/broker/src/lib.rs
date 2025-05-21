@@ -7,7 +7,7 @@ use std::{path::PathBuf, sync::Arc, time::SystemTime};
 use crate::storage::create_uri_handler;
 use alloy::{
     network::Ethereum,
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, Bytes, FixedBytes, U256},
     providers::{Provider, WalletProvider},
     signers::local::PrivateKeySigner,
 };
@@ -161,6 +161,15 @@ enum FulfillmentType {
     FulfillWithoutLocking,
 }
 
+/// Helper function to format an order ID consistently
+fn format_order_id(
+    request_id: &U256,
+    signing_hash: &FixedBytes<32>,
+    fulfillment_type: &FulfillmentType,
+) -> String {
+    format!("0x{:x}-{}-{:?}", request_id, signing_hash, fulfillment_type)
+}
+
 /// Order request from the network.
 ///
 /// This will turn into
@@ -204,13 +213,8 @@ impl OrderRequest {
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
     pub fn id(&self) -> String {
-        // TODO deduplicate logic with Order::id()
-        format!(
-            "0x{:x}-{}-{:?}",
-            self.request.id,
-            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap(),
-            self.fulfillment_type
-        )
+        let signing_hash = self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
+        format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
     }
 
     fn to_order(&self, status: OrderStatus) -> Order {
@@ -316,12 +320,8 @@ impl Order {
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
     pub fn id(&self) -> String {
-        format!(
-            "0x{:x}-{}-{:?}",
-            self.request.id,
-            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap(),
-            self.fulfillment_type
-        )
+        let signing_hash = self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
+        format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
     }
 
     pub fn is_groth16(&self) -> bool {
