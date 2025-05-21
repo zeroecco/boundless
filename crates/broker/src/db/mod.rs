@@ -111,57 +111,20 @@ pub struct AggregationOrder {
 
 #[async_trait]
 pub trait BrokerDb {
-    // async fn add_order(&self, order: &Order) -> Result<(), DbError>;
     async fn insert_skipped_request(&self, order_request: &OrderRequest) -> Result<(), DbError>;
     async fn insert_accepted_request(
         &self,
         order_request: &OrderRequest,
         lock_price: U256,
     ) -> Result<Order, DbError>;
-    // async fn order_exists_with_request_id(&self, request_id: U256) -> Result<bool, DbError>;
     async fn get_order(&self, id: &str) -> Result<Option<Order>, DbError>;
     async fn get_submission_order(
         &self,
         id: &str,
     ) -> Result<(ProofRequest, Bytes, String, B256, U256, FulfillmentType), DbError>;
     async fn get_order_compressed_proof_id(&self, id: &str) -> Result<String, DbError>;
-    // async fn update_orders_for_pricing(&self, limit: u32) -> Result<Vec<Order>, DbError>;
-    // async fn get_active_pricing_orders(&self) -> Result<Vec<Order>, DbError>;
-    // async fn set_order_lock(
-    //     &self,
-    //     id: &str,
-    //     lock_timestamp: u64,
-    //     expire_timestamp: u64,
-    //     total_cycles: Option<u64>,
-    // ) -> Result<(), DbError>;
-    // async fn set_order_fulfill_after_lock_expire(
-    //     &self,
-    //     id: &str,
-    //     lock_expire_timestamp: u64,
-    //     expire_timestamp: u64,
-    //     total_cycles: Option<u64>,
-    // ) -> Result<(), DbError>;
-    // async fn set_proving_status_lock_and_fulfill_orders(
-    //     &self,
-    //     id: &str,
-    //     lock_price: U256,
-    // ) -> Result<(), DbError>;
-    // async fn get_fulfill_after_lock_expire_orders(
-    //     &self,
-    //     end_timestamp: u64,
-    // ) -> Result<Vec<Order>, DbError>;
-    // async fn set_proving_status_fulfill_after_lock_expire_orders(
-    //     &self,
-    //     id: &str,
-    // ) -> Result<(), DbError>;
     async fn set_order_failure(&self, id: &str, failure_str: &'static str) -> Result<(), DbError>;
     async fn set_order_complete(&self, id: &str) -> Result<(), DbError>;
-    // #[allow(dead_code)]
-    // async fn set_order_status(&self, id: &str, status: OrderStatus) -> Result<(), DbError>;
-    // async fn skip_order(&self, id: &str) -> Result<(), DbError>;
-    // async fn get_last_block(&self) -> Result<Option<u64>, DbError>;
-    // async fn set_last_block(&self, block_numb: u64) -> Result<(), DbError>;
-    // async fn get_pending_lock_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError>;
     async fn get_pending_fulfill_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError>;
     /// Get all orders that are committed to be prove and be fulfilled.
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
@@ -173,12 +136,6 @@ pub trait BrokerDb {
         order_id: &str,
         proof_id: &str,
     ) -> Result<(), DbError>;
-    // async fn set_image_input_ids(
-    //     &self,
-    //     id: &str,
-    //     image_id: &str,
-    //     input_id: &str,
-    // ) -> Result<(), DbError>;
     async fn set_aggregation_status(&self, id: &str, status: OrderStatus) -> Result<(), DbError>;
     async fn get_aggregation_proofs(&self) -> Result<Vec<AggregationOrder>, DbError>;
     async fn get_groth16_proofs(&self) -> Result<Vec<AggregationOrder>, DbError>;
@@ -333,15 +290,6 @@ impl BrokerDb for SqliteDb {
         Ok(order)
     }
 
-    // #[instrument(level = "trace", skip_all, fields(request_id = %format!("{request_id:x}")))]
-    // async fn order_exists_with_request_id(&self, request_id: U256) -> Result<bool, DbError> {
-    //     let res: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM orders WHERE id LIKE $1")
-    //         .bind(format!("0x{request_id:x}%"))
-    //         .fetch_one(&self.pool)
-    //         .await?;
-    //     Ok(res > 0)
-    // }
-
     #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
     async fn get_order(&self, id: &str) -> Result<Option<Order>, DbError> {
         let order: Option<DbOrder> = sqlx::query_as("SELECT * FROM orders WHERE id = $1 LIMIT 1")
@@ -381,245 +329,6 @@ impl BrokerDb for SqliteDb {
             Err(DbError::OrderNotFound(id.to_string()))
         }
     }
-
-    // #[instrument(level = "trace", skip_all, fields(limit = %limit))]
-    // async fn update_orders_for_pricing(&self, limit: u32) -> Result<Vec<Order>, DbError> {
-    //     let orders: Vec<DbOrder> = sqlx::query_as(
-    //         r#"
-    //         WITH orders_to_update AS (
-    //             SELECT id, data->>'status' as current_status
-    //             FROM orders
-    //             WHERE (data->>'status' = $1)
-    //             LIMIT $2
-    //         )
-    //         UPDATE orders
-    //         SET data =
-    //                 json_set(
-    //                 json_set(data,
-    //                 '$.status', $3),
-    //                 '$.updated_at', $4
-    //         )
-    //         WHERE id IN (SELECT id FROM orders_to_update)
-    //         RETURNING *
-    //         "#,
-    //     )
-    //     .bind(OrderStatus::New)
-    //     .bind(i64::from(limit))
-    //     .bind(OrderStatus::Pricing)
-    //     .bind(Utc::now().timestamp())
-    //     .fetch_all(&self.pool)
-    //     .await?;
-
-    //     let result: Result<Vec<_>, _> = orders.into_iter().map(|order| Ok(order.data)).collect();
-
-    //     result
-    // }
-
-    // #[instrument(level = "trace", skip_all)]
-    // async fn get_active_pricing_orders(&self) -> Result<Vec<Order>, DbError> {
-    //     let orders: Vec<DbOrder> =
-    //         sqlx::query_as("SELECT * FROM orders WHERE data->>'status' = $1")
-    //             .bind(OrderStatus::Pricing)
-    //             .fetch_all(&self.pool)
-    //             .await?;
-
-    //     let orders: Result<Vec<_>, _> = orders.into_iter().map(|elm| Ok(elm.data)).collect();
-
-    //     orders
-    // }
-
-    // #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
-    // async fn set_order_lock(
-    //     &self,
-    //     id: &str,
-    //     lock_timestamp: u64,
-    //     expire_timestamp: u64,
-    //     total_cycles: Option<u64>,
-    // ) -> Result<(), DbError> {
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data = json_set(
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(data,
-    //                    '$.status', $1),
-    //                    '$.target_timestamp', $2),
-    //                    '$.expire_timestamp', $3),
-    //                    '$.updated_at', $4),
-    //                    '$.total_cycles', $5)
-    //         WHERE
-    //             id = $6"#,
-    //     )
-    //     .bind(OrderStatus::WaitingToLock)
-    //     // TODO: can we work out how to correctly
-    //     // use bind + a json field with out string formatting
-    //     // the sql query?
-    //     .bind(
-    //         i64::try_from(lock_timestamp)
-    //             .map_err(|_| DbError::BadBlockNumb(lock_timestamp.to_string()))?,
-    //     )
-    //     .bind(
-    //         i64::try_from(expire_timestamp)
-    //             .map_err(|_| DbError::BadBlockNumb(expire_timestamp.to_string()))?,
-    //     )
-    //     .bind(Utc::now().timestamp())
-    //     .bind(
-    //         i64::try_from(total_cycles.unwrap_or(0))
-    //             .map_err(|_| DbError::BadBlockNumb(expire_timestamp.to_string()))?,
-    //     )
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
-
-    // #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
-    // async fn set_order_fulfill_after_lock_expire(
-    //     &self,
-    //     id: &str,
-    //     lock_expire_timestamp: u64,
-    //     expire_timestamp: u64,
-    //     total_cycles: Option<u64>,
-    // ) -> Result<(), DbError> {
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data =
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(data,
-    //                    '$.status', $1),
-    //                    '$.target_timestamp', $2),
-    //                    '$.expire_timestamp', $3),
-    //                    '$.updated_at', $4),
-    //                    '$.total_cycles', $5)
-    //         WHERE
-    //             id = $6"#,
-    //     )
-    //     .bind(OrderStatus::WaitingForLockToExpire)
-    //     .bind(
-    //         i64::try_from(lock_expire_timestamp)
-    //             .map_err(|_| DbError::BadBlockNumb(lock_expire_timestamp.to_string()))?,
-    //     )
-    //     .bind(
-    //         i64::try_from(expire_timestamp)
-    //             .map_err(|_| DbError::BadBlockNumb(expire_timestamp.to_string()))?,
-    //     )
-    //     .bind(Utc::now().timestamp())
-    //     .bind(
-    //         i64::try_from(total_cycles.unwrap_or(0))
-    //             .map_err(|_| DbError::BadBlockNumb(expire_timestamp.to_string()))?,
-    //     )
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
-
-    // #[instrument(level = "trace", skip(self, id), fields(id = %format!("{id}")))]
-    // // Gets orders that we intend to lock and fulfill, and updates their status to PendingProving.
-    // async fn set_proving_status_lock_and_fulfill_orders(
-    //     &self,
-    //     id: &str,
-    //     lock_price: U256,
-    // ) -> Result<(), DbError> {
-    //     let now = Utc::now().timestamp();
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data = json_set(
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(data,
-    //                    '$.status', $1),
-    //                    '$.updated_at', $2),
-    //                    '$.lock_price', $3),
-    //                    '$.proving_started_at', $4)
-    //         WHERE
-    //             id = $5"#,
-    //     )
-    //     .bind(OrderStatus::PendingProving)
-    //     .bind(now)
-    //     .bind(lock_price.to_string())
-    //     .bind(now)
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
-
-    // async fn get_fulfill_after_lock_expire_orders(
-    //     &self,
-    //     end_timestamp: u64,
-    // ) -> Result<Vec<Order>, DbError> {
-    //     let orders: Vec<DbOrder> = sqlx::query_as(
-    //         "SELECT * FROM orders WHERE data->>'status' = $1 AND data->>'target_timestamp' <= $2",
-    //     )
-    //     .bind(OrderStatus::WaitingForLockToExpire)
-    //     .bind(end_timestamp as i64)
-    //     .fetch_all(&self.pool)
-    //     .await?;
-
-    //     let result: Result<Vec<_>, _> = orders.into_iter().map(|order| Ok(order.data)).collect();
-
-    //     result
-    // }
-
-    // #[instrument(level = "trace", skip_all)]
-    // // Gets orders that we intend to fulfill after their lock expires, and updates their status to PendingProving.
-    // async fn set_proving_status_fulfill_after_lock_expire_orders(
-    //     &self,
-    //     id: &str,
-    // ) -> Result<(), DbError> {
-    //     let now = Utc::now().timestamp();
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data = json_set(
-    //                    json_set(
-    //                    json_set(
-    //                    json_set(data,
-    //                    '$.status', $1),
-    //                    '$.updated_at', $2),
-    //                    '$.lock_price', $3),
-    //                    '$.proving_started_at', $4)
-    //         WHERE
-    //             id = $5
-    //         "#,
-    //     )
-    //     .bind(OrderStatus::PendingProving)
-    //     .bind(now)
-    //     .bind(U256::ZERO.to_string())
-    //     .bind(now)
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
 
     #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
     async fn set_order_failure(&self, id: &str, failure_str: &'static str) -> Result<(), DbError> {
@@ -673,102 +382,6 @@ impl BrokerDb for SqliteDb {
 
         Ok(())
     }
-
-    // #[instrument(level = "trace", skip_all, fields(id = %format!("{id} {status:?}")))]
-    // async fn set_order_status(&self, id: &str, status: OrderStatus) -> Result<(), DbError> {
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data = json_set(
-    //                    json_set(data,
-    //                    '$.status', $1),
-    //                    '$.updated_at', $2)
-    //         WHERE
-    //             id = $3"#,
-    //     )
-    //     .bind(status)
-    //     .bind(Utc::now().timestamp())
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
-
-    // #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
-    // async fn skip_order(&self, id: &str) -> Result<(), DbError> {
-    //     let res = sqlx::query(
-    //         r#"
-    //         UPDATE orders
-    //         SET data = json_set(
-    //                    json_set(data,
-    //                    '$.status', $1),
-    //                    '$.updated_at', $2)
-    //         WHERE
-    //             id = $3"#,
-    //     )
-    //     .bind(OrderStatus::Skipped)
-    //     .bind(Utc::now().timestamp())
-    //     .bind(id)
-    //     .execute(&self.pool)
-    //     .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::OrderNotFound(id.to_string()));
-    //     }
-
-    //     Ok(())
-    // }
-
-    // #[instrument(level = "trace", skip_all)]
-    // async fn get_last_block(&self) -> Result<Option<u64>, DbError> {
-    //     // TODO: query_as, seems to not work correctly here
-    //     let res = sqlx::query("SELECT block FROM last_block WHERE id = $1")
-    //         .bind(SQL_BLOCK_KEY)
-    //         .fetch_optional(&self.pool)
-    //         .await?;
-
-    //     let Some(row) = res else {
-    //         return Ok(None);
-    //     };
-
-    //     let block_str: String = row.try_get("block")?;
-
-    //     Ok(Some(block_str.parse().map_err(|_err| DbError::BadBlockNumb(block_str))?))
-    // }
-
-    // #[instrument(level = "trace", skip(self))]
-    // async fn set_last_block(&self, block_numb: u64) -> Result<(), DbError> {
-    //     let res = sqlx::query("REPLACE INTO last_block (id, block) VALUES ($1, $2)")
-    //         .bind(SQL_BLOCK_KEY)
-    //         .bind(block_numb.to_string())
-    //         .execute(&self.pool)
-    //         .await?;
-
-    //     if res.rows_affected() == 0 {
-    //         return Err(DbError::SetBlockFail);
-    //     }
-
-    //     Ok(())
-    // }
-
-    // #[instrument(level = "trace", skip_all)]
-    // async fn get_pending_lock_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError> {
-    //     let orders: Vec<DbOrder> = sqlx::query_as(
-    //         "SELECT * FROM orders WHERE data->>'status' = $1 AND data->>'target_timestamp' <= $2",
-    //     )
-    //     .bind(OrderStatus::WaitingToLock)
-    //     .bind(end_timestamp as i64)
-    //     .fetch_all(&self.pool)
-    //     .await?;
-
-    //     // Break if any order-id's are invalid and raise
-    //     orders.into_iter().map(|elm| Ok(elm.data)).collect()
-    // }
 
     #[instrument(level = "trace", skip_all)]
     async fn get_pending_fulfill_orders(&self, end_timestamp: u64) -> Result<Vec<Order>, DbError> {
