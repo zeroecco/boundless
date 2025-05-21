@@ -1,3 +1,7 @@
+// Copyright (c) 2025 RISC Zero, Inc.
+//
+// All rights reserved.
+
 use alloy::primitives::aliases::U96;
 use anyhow::{Context, Result};
 use boundless_market::{
