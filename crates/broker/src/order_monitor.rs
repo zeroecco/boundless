@@ -37,7 +37,6 @@ use tokio::sync::{mpsc, Mutex};
 
 /// Hard limit on the number of orders to concurrently kick off proving work for.
 const MAX_PROVING_BATCH_SIZE: u32 = 10;
-const DEFAULT_CACHE_CAPACITY: u64 = 1000;
 
 #[derive(Error)]
 pub enum OrderMonitorErr {
@@ -136,6 +135,7 @@ where
         chain_monitor: Arc<ChainMonitorService<P>>,
         config: ConfigLock,
         block_time: u64,
+        prover_addr: Address,
         market_addr: Address,
         priced_orders_rx: mpsc::Receiver<OrderRequest>,
     ) -> Result<Self> {
@@ -178,7 +178,7 @@ where
             provider,
             priced_order_rx: Arc::new(Mutex::new(priced_orders_rx)),
             lock_and_prove_cache: Arc::new(Cache::builder().expire_after(OrderExpiry).build()),
-            prove_cache: Arc::new(Cache::new(DEFAULT_CACHE_CAPACITY)),
+            prove_cache: Arc::new(Cache::builder().expire_after(OrderExpiry).build()),
             supported_selectors: SupportedSelectors::default(),
         };
         Ok(monitor)
@@ -206,6 +206,7 @@ where
             .context("Failed to check if request is locked")?;
         if is_locked {
             tracing::warn!("Request 0x{:x} already locked: {order_status:?}, skipping", request_id);
+            tracing::warn!("Request 0x{:x} already locked: {order_status:?}, skipping", request_id);
             return Err(OrderMonitorErr::AlreadyLocked);
         }
 
@@ -215,7 +216,7 @@ where
         };
 
         tracing::info!(
-            "Locking request: {} for stake: {}",
+            "Locking request: 0x{:x} for stake: {}",
             request_id,
             order.request.offer.lockStake
         );
@@ -245,8 +246,21 @@ where
                         OrderMonitorErr::LockTxFailed(format!("Tx hash 0x{:x}", e))
                     }
                     MarketError::Error(e) => {
+                        // Insufficient balance error is thrown both when the requestor has insufficient balance,
+                        // Requestor having insufficient balance can happen and is out of our control. The prover
+                        // having insufficient balance is unexpected as we should have checked for that before
+                        // committing to locking the order.
+                        let prover_addr_str =
+                            self.prover_addr.to_string().to_lowercase().replace("0x", "");
                         if e.to_string().contains("InsufficientBalance") {
-                            OrderMonitorErr::InsufficientBalance
+                            if e.to_string().contains(&prover_addr_str) {
+                                OrderMonitorErr::InsufficientBalance
+                            } else {
+                                OrderMonitorErr::LockTxFailed(format!(
+                                    "Requestor has insufficient balance at lock time: {}",
+                                    e
+                                ))
+                            }
                         } else {
                             OrderMonitorErr::UnexpectedError(e)
                         }
@@ -301,7 +315,7 @@ where
             .iter()
             .map(|order| {
                 (
-                    format!("{:x}", order.request.id),
+                    format!("0x{:x}", order.request.id),
                     order.status,
                     order.fulfillment_type,
                     format!(
@@ -351,7 +365,7 @@ where
                 .context("Failed to check if request is fulfilled")?;
             if is_fulfilled {
                 tracing::info!(
-                    "Request {:x} was locked by another prover and was fulfilled. Skipping.",
+                    "Request 0x{:x} was locked by another prover and was fulfilled. Skipping.",
                     order.request.id
                 );
                 self.db
@@ -366,7 +380,7 @@ where
                     .context("Failed to skip order (expired)")?;
                 self.prove_cache.invalidate(&order.id()).await;
             } else {
-                tracing::info!("Request {:x} was locked by another prover but expired unfulfilled, setting status to pending proving", order.request.id);
+                tracing::info!("Request 0x{:x} was locked by another prover but expired unfulfilled, setting status to pending proving", order.request.id);
                 candidate_orders.push(order);
             }
         }
@@ -668,7 +682,7 @@ where
             // For each order in consideration, check if it can be completed before its expiration.
             for order in orders_truncated {
                 if order.total_cycles.is_none() {
-                    tracing::warn!("Order {:x} has no total cycles, preflight was skipped? Not considering for peak khz limit", order.request.id);
+                    tracing::warn!("Order 0x{:x} has no total cycles, preflight was skipped? Not considering for peak khz limit", order.request.id);
                     continue;
                 }
 
@@ -684,7 +698,7 @@ where
                 tracing::debug!("Order {} estimated to take {} seconds, and would be completed at {} ({} seconds from now). It expires at {} ({} seconds from now)", order.id(), proof_time_seconds, completion_time, completion_time.saturating_sub(now_timestamp()), expiration, expiration.saturating_sub(now_timestamp()));
 
                 if completion_time > expiration {
-                    tracing::info!("Order {:x} cannot be completed before its expiration at {}, proof estimated to take {} seconds and complete at {}. Skipping", 
+                    tracing::info!("Order 0x{:x} cannot be completed before its expiration at {}, proof estimated to take {} seconds and complete at {}. Skipping", 
                         order.request.id,
                         expiration,
                         proof_time_seconds,
@@ -908,6 +922,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
             priced_order_rx,
         )
@@ -1069,6 +1084,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
             priced_order_rx,
         )
@@ -1369,6 +1385,7 @@ mod tests {
             chain_monitor.clone(),
             config.clone(),
             block_time,
+            signer.address(),
             market_address,
             priced_order_rx,
         )

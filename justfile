@@ -103,7 +103,7 @@ check-format:
 # Run Cargo clippy
 check-clippy:
     RUSTFLAGS=-Dwarnings RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
-    cargo clippy --workspace --all-targets -F boundless-order-generator/zeth
+    cargo clippy --workspace --all-targets
 
     cd examples/counter && forge build && \
     RUSTFLAGS=-Dwarnings RISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
@@ -192,15 +192,18 @@ localnet action="up": check-deps
         echo "Deploying contracts..."
         DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY CHAIN_KEY=$CHAIN_KEY RISC0_DEV_MODE=$RISC0_DEV_MODE BOUNDLESS_MARKET_OWNER=$ADMIN_ADDRESS forge script contracts/scripts/Deploy.s.sol --rpc-url http://localhost:$ANVIL_PORT --broadcast -vv || { echo "Failed to deploy contracts"; just localnet down; exit 1; }
         echo "Fetching contract addresses..."
+        VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroVerifierRouter") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
         SET_VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroSetVerifier") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
         BOUNDLESS_MARKET_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "ERC1967Proxy") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
         HIT_POINTS_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "HitPoints") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
         echo "Contract deployed at addresses:"
+        echo "VERIFIER_ADDRESS=$VERIFIER_ADDRESS"
         echo "SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS"
         echo "BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS"
         echo "HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS"
         echo "Updating .env.localnet file..."
         # Update the environment variables in .env.localnet
+        sed -i.bak "s/^VERIFIER_ADDRESS=.*/VERIFIER_ADDRESS=$VERIFIER_ADDRESS/" .env.localnet
         sed -i.bak "s/^SET_VERIFIER_ADDRESS=.*/SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS/" .env.localnet
         sed -i.bak "s/^BOUNDLESS_MARKET_ADDRESS=.*/BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS/" .env.localnet
         # Add HIT_POINTS_ADDRESS to .env.localnet
@@ -262,7 +265,7 @@ env NETWORK:
     fi
 
 # Start the bento service
-bento action="up" env_file="" compose_flags="":
+bento action="up" env_file="" compose_flags="" detached="true":
     #!/usr/bin/env bash
     if [ -n "{{env_file}}" ]; then
         ENV_FILE_ARG="--env-file {{env_file}}"
@@ -293,7 +296,13 @@ bento action="up" env_file="" compose_flags="":
             echo "Using default values from compose.yml"
         fi
         
-        docker compose {{compose_flags}} $ENV_FILE_ARG up --build -d
+        if [ "{{detached}}" = "true" ]; then
+            DETACHED_FLAG="-d"
+        else
+            DETACHED_FLAG=""
+        fi
+        
+        docker compose {{compose_flags}} $ENV_FILE_ARG up --build $DETACHED_FLAG
         echo "Docker Compose services have been started."
     elif [ "{{action}}" = "down" ]; then
         echo "Stopping Docker Compose services"
@@ -321,8 +330,8 @@ bento action="up" env_file="" compose_flags="":
     fi
 
 # Run the broker service with a bento cluster for proving.
-broker action="up" env_file="":
-    just bento "{{action}}" "{{env_file}}" "--profile broker"
+broker action="up" env_file="" detached="true":
+    just bento "{{action}}" "{{env_file}}" "--profile broker" "{{detached}}"
 
 # Run the setup script
 bento-setup:
