@@ -457,8 +457,7 @@ export HOME=/home/ubuntu
 chmod +x /local/boundless/scripts/setup.sh
 /local/boundless/scripts/setup.sh
 
-# Create a script that
-# 1/ creates a broker env file with all environment variables set.
+# Create a script that creates a broker env file with all environment variables set.
 # This script is run when the instance is rebooted, and when the instance is updated.
 cat > /local/create-broker-env.sh << 'EOF'
 #!/bin/bash
