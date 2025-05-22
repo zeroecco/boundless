@@ -706,6 +706,8 @@ where
 // DO NOT MERGE: Add a test that the order_gas_cost is being enforced as a min price.
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::{
         chain_monitor::ChainMonitorService, db::SqliteDb, provers::DefaultProver, FulfillmentType,
@@ -739,7 +741,7 @@ mod tests {
         db: DbObj,
         provider: Arc<P>,
         priced_orders_rx: mpsc::Receiver<OrderRequest>,
-        _new_order_tx: mpsc::Sender<OrderRequest>,
+        new_order_tx: mpsc::Sender<OrderRequest>,
     }
 
     /// Parameters for the generate_next_order function.
@@ -907,7 +909,7 @@ mod tests {
                 db,
                 provider,
                 priced_orders_rx,
-                _new_order_tx,
+                new_order_tx: _new_order_tx,
             }
         }
     }
@@ -1236,33 +1238,41 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx.generate_next_order(Default::default()).await;
+        let order_id = order.id();
 
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
 
-        // let order_id = order.id();
+        let pricing_task = tokio::spawn(ctx.picker.spawn());
 
-        // TODO re-implement lookback
+        ctx.new_order_tx.send(order).await.unwrap();
 
-        // ctx.picker.find_existing_orders().await.unwrap();
+        // Wait for the order to be priced, with some timeout
+        let priced_order =
+            tokio::time::timeout(Duration::from_secs(10), ctx.priced_orders_rx.recv())
+                .await
+                .unwrap();
+        assert_eq!(priced_order.unwrap().id(), order_id);
 
-        // assert!(logs_contain("Found 1 orders currently pricing to resume"));
+        pricing_task.abort();
 
-        // // Try and wait for the order to complete pricing
-        // for _ in 0..4 {
-        //     let db_order = ctx.db.get_order(&order_id).await.unwrap().unwrap();
-        //     if db_order.status != OrderStatus::Pricing {
-        //         break;
-        //     }
-        //     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        // }
+        // Send a new order when picker task is down.
+        let new_order = ctx.generate_next_order(Default::default()).await;
+        let new_order_id = new_order.id();
+        ctx.new_order_tx.send(new_order).await.unwrap();
 
-        // let db_order = ctx.db.get_order(&order_id).await.unwrap().unwrap();
-        // assert_eq!(db_order.status, OrderStatus::WaitingToLock);
-        // assert_eq!(db_order.target_timestamp, Some(0));
+        assert!(ctx.priced_orders_rx.is_empty());
+
+        tokio::spawn(ctx.picker.spawn());
+
+        let priced_order =
+            tokio::time::timeout(Duration::from_secs(10), ctx.priced_orders_rx.recv())
+                .await
+                .unwrap();
+        assert_eq!(priced_order.unwrap().id(), new_order_id);
     }
 
     // TODO: Test

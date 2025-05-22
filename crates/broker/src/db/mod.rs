@@ -1092,23 +1092,6 @@ mod tests {
         assert_eq!(db_order.status, OrderStatus::Skipped);
     }
 
-    // #[sqlx::test]
-    // async fn set_get_block(pool: SqlitePool) {
-    //     let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
-
-    //     let mut block_numb = 20;
-    //     db.set_last_block(block_numb).await.unwrap();
-
-    //     let db_block = db.get_last_block().await.unwrap().unwrap();
-    //     assert_eq!(block_numb, db_block);
-
-    //     block_numb = 21;
-    //     db.set_last_block(block_numb).await.unwrap();
-
-    //     let db_block = db.get_last_block().await.unwrap().unwrap();
-    //     assert_eq!(block_numb, db_block);
-    // }
-
     #[sqlx::test]
     async fn get_proving_order(pool: SqlitePool) {
         let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
