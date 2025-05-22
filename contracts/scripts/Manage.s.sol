@@ -97,8 +97,11 @@ contract DeployBoundlessMarket is RiscZeroManagementScript {
             )
         );
 
-        // Add the market address in the authorized list of the stake-token contract
-        // HitPoints(stakeToken).grantAuthorizedTransferRole(marketAddress);
+        // Skip Base, as the stake-token contract is USDC.
+        if (deploymentConfig.chainId != 8453) {
+            // Add the market address in the authorized list of the stake-token contract
+            HitPoints(stakeToken).grantAuthorizedTransferRole(marketAddress);
+        }
 
         vm.stopBroadcast();
 

@@ -47,7 +47,7 @@ use alloy::{
     network::Ethereum,
     primitives::{
         aliases::U96,
-        utils::{format_ether, parse_ether},
+        utils::{format_ether, parse_ether, parse_units},
         Address, Bytes, FixedBytes, TxKind, B256, U256,
     },
     providers::{network::EthereumWallet, Provider, ProviderBuilder},
@@ -142,18 +142,13 @@ enum AccountCommands {
     },
     /// Deposit stake funds into the market
     DepositStake {
-        /// Amount in HP to deposit.
-        ///
-        /// e.g. 10 is uint256(10 * 10**18).
-        // #[clap(value_parser = parse_ether)]
-        amount: U256,
+        /// Amount in HP to deposit in Eth or USDC based on the chain ID.
+        amount: String,
     },
     /// Withdraw stake funds from the market
     WithdrawStake {
-        /// Amount in HP to withdraw.
-        ///
-        /// e.g. 10 is uint256(10 * 10**18).
-        amount: U256,
+        /// Amount to withdraw in Eth or USDC based on the chain ID.
+        amount: String,
     },
     /// Check the stake balance of an account in the market
     StakeBalance {
@@ -600,10 +595,27 @@ where
             Ok(())
         }
         AccountCommands::DepositStake { amount } => {
-            tracing::info!("Depositing {} HP as stake", format_ether(*amount));
-            match boundless_market.deposit_stake_with_permit(*amount, &private_key).await {
+            let chain_id: u64 = boundless_market.get_chain_id().await?;
+            let (parsed_amount, t): (U256, &str) = if chain_id == 8453 {
+                (
+                    parse_units(amount, "mwei")
+                        .map_err(|e| anyhow!("Failed to parse USDC: {}", e))?
+                        .into(),
+                    "USDC",
+                )
+            } else {
+                // HP amount parsing
+                (
+                    parse_units(amount, "ether")
+                        .map_err(|e| anyhow!("Failed to parse Ether: {}", e))?
+                        .into(),
+                    "HP",
+                )
+            };
+            tracing::info!("Depositing {amount} {t} as stake");
+            match boundless_market.deposit_stake_with_permit(parsed_amount, &private_key).await {
                 Ok(_) => {
-                    tracing::info!("Successfully deposited {} HP as stake", format_ether(*amount));
+                    tracing::info!("Successfully deposited {amount} {t} as stake");
                     Ok(())
                 }
                 Err(e) => {
@@ -619,9 +631,26 @@ where
             }
         }
         AccountCommands::WithdrawStake { amount } => {
-            tracing::info!("Withdrawing {} HP from stake", format_ether(*amount));
-            boundless_market.withdraw_stake(*amount).await?;
-            tracing::info!("Successfully withdrew {} HP from stake", format_ether(*amount));
+            let chain_id: u64 = boundless_market.get_chain_id().await?;
+            let (parsed_amount, t): (U256, &str) = if chain_id == 8453 {
+                (
+                    parse_units(amount, "mwei")
+                        .map_err(|e| anyhow!("Failed to parse USDC: {}", e))?
+                        .into(),
+                    "USDC",
+                )
+            } else {
+                // HP amount parsing
+                (
+                    parse_units(amount, "ether")
+                        .map_err(|e| anyhow!("Failed to parse Ether: {}", e))?
+                        .into(),
+                    "HP",
+                )
+            };
+            tracing::info!("Withdrawing {amount} {t} from stake");
+            boundless_market.withdraw_stake(parsed_amount).await?;
+            tracing::info!("Successfully withdrew {amount} {t} from stake");
             Ok(())
         }
         AccountCommands::StakeBalance { address } => {
@@ -1803,18 +1832,15 @@ mod tests {
         let mut args = MainArgs {
             config,
             command: Command::Account(Box::new(AccountCommands::DepositStake {
-                amount: default_allowance(),
+                amount: default_allowance().to_string(),
             })),
         };
 
         run(&args).await.unwrap();
-        assert!(logs_contain(&format!(
-            "Depositing {} HP as stake",
-            format_units(default_allowance(), "ether").unwrap()
-        )));
+        assert!(logs_contain(&format!("Depositing {} HP as stake", default_allowance())));
         assert!(logs_contain(&format!(
             "Successfully deposited {} HP as stake",
-            format_units(default_allowance(), "ether").unwrap()
+            default_allowance()
         )));
 
         let balance =
@@ -1836,17 +1862,14 @@ mod tests {
         )));
 
         args.command = Command::Account(Box::new(AccountCommands::WithdrawStake {
-            amount: default_allowance(),
+            amount: default_allowance().to_string(),
         }));
 
         run(&args).await.unwrap();
-        assert!(logs_contain(&format!(
-            "Withdrawing {} HP from stake",
-            format_units(default_allowance(), "ether").unwrap()
-        )));
+        assert!(logs_contain(&format!("Withdrawing {} HP from stake", default_allowance())));
         assert!(logs_contain(&format!(
             "Successfully withdrew {} HP from stake",
-            format_units(default_allowance(), "ether").unwrap()
+            default_allowance()
         )));
 
         let balance =
@@ -1862,7 +1885,7 @@ mod tests {
         let mut args = MainArgs {
             config,
             command: Command::Account(Box::new(AccountCommands::DepositStake {
-                amount: default_allowance(),
+                amount: default_allowance().to_string(),
             })),
         };
 
@@ -1873,7 +1896,7 @@ mod tests {
         )));
 
         args.command = Command::Account(Box::new(AccountCommands::WithdrawStake {
-            amount: default_allowance(),
+            amount: default_allowance().to_string(),
         }));
 
         let err = run(&args).await.unwrap_err();
