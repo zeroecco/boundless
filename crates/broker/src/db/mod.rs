@@ -127,6 +127,8 @@ pub trait BrokerDb {
     async fn set_order_complete(&self, id: &str) -> Result<(), DbError>;
     /// Get all orders that are committed to be prove and be fulfilled.
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
+    /// Get all orders that are committed to be proved but have expired based on their expire_timestamp.
+    async fn get_expired_committed_orders(&self) -> Result<Vec<Order>, DbError>;
     async fn get_proving_order(&self) -> Result<Option<Order>, DbError>;
     async fn get_active_proofs(&self) -> Result<Vec<Order>, DbError>;
     async fn set_order_proof_id(&self, order_id: &str, proof_id: &str) -> Result<(), DbError>;
@@ -385,19 +387,30 @@ impl BrokerDb for SqliteDb {
     #[instrument(level = "trace", skip_all)]
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError> {
         let orders: Vec<DbOrder> = sqlx::query_as(
-            "SELECT * FROM orders WHERE data->>'status' IN ($1, $2, $3, $4, $5, $6)",
+            "SELECT id, data FROM orders WHERE json_extract(data, '$.status') IN (
+                'PendingProving', 'Proving'
+            )",
         )
-        .bind(OrderStatus::PendingProving)
-        .bind(OrderStatus::Proving)
-        .bind(OrderStatus::PendingAgg)
-        .bind(OrderStatus::Aggregating)
-        .bind(OrderStatus::SkipAggregation)
-        .bind(OrderStatus::PendingSubmission)
         .fetch_all(&self.pool)
         .await?;
 
-        // Break if any order-id's are invalid and raise
-        orders.into_iter().map(|elm| Ok(elm.data)).collect()
+        Ok(orders.into_iter().map(|db_order| db_order.data).collect())
+    }
+
+    #[instrument(level = "trace", skip(self))]
+    async fn get_expired_committed_orders(&self) -> Result<Vec<Order>, DbError> {
+        let now = crate::now_timestamp();
+        let orders: Vec<DbOrder> = sqlx::query_as(
+            "SELECT id, data FROM orders WHERE json_extract(data, '$.status') IN (
+                'PendingProving', 'Proving'
+            ) AND json_extract(data, '$.expire_timestamp') IS NOT NULL 
+            AND json_extract(data, '$.expire_timestamp') < ?",
+        )
+        .bind(now as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(orders.into_iter().map(|db_order| db_order.data).collect())
     }
 
     #[instrument(level = "trace", skip_all)]
