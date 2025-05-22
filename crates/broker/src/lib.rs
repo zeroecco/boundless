@@ -229,7 +229,6 @@ impl OrderRequest {
             image_id: self.image_id.clone(),
             input_id: self.input_id.clone(),
             total_cycles: self.total_cycles,
-            // TODO can likely remove this timestamp from Order
             target_timestamp: self.target_timestamp,
             expire_timestamp: self.expire_timestamp,
             proving_started_at: None,

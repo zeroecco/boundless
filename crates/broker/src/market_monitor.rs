@@ -184,7 +184,6 @@ where
                 .context("Missing transaction data")?;
             let calldata = IBoundlessMarket::submitRequestCall::abi_decode(tx_data.input())
                 .context("Failed to decode calldata")?;
-            // TODO perhaps re-add short circuit DB to avoid DOS by spamming invalid/mispriced requests
 
             let req_status =
                 match market.get_status(request_id, Some(calldata.request.expires_at())).await {

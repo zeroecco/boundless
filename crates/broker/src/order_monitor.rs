@@ -863,8 +863,8 @@ where
     async fn handle_new_order_result(&self, order: OrderRequest) -> Result<(), OrderMonitorErr> {
         match order.fulfillment_type {
             FulfillmentType::LockAndFulfill => {
-                // TODO this could be done without waiting for the batch to minimize latency, but
-                //      avoiding more complicated logic for checking capacity for each order.
+                // Note: this could be done without waiting for the batch to minimize latency, but
+                //       avoiding more complicated logic for checking capacity for each order.
 
                 // If not, add it to the cache to be locked after target time
                 self.lock_and_prove_cache.insert(order.id(), Arc::new(order)).await;
