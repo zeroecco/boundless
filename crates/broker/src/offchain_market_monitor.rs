@@ -43,14 +43,14 @@ impl CodedError for OffchainMarketMonitorErr {
 pub struct OffchainMarketMonitor {
     client: OrderStreamClient,
     signer: PrivateKeySigner,
-    new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
+    new_order_tx: tokio::sync::mpsc::Sender<Box<OrderRequest>>,
 }
 
 impl OffchainMarketMonitor {
     pub fn new(
         client: OrderStreamClient,
         signer: PrivateKeySigner,
-        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
+        new_order_tx: tokio::sync::mpsc::Sender<Box<OrderRequest>>,
     ) -> Self {
         Self { client, signer, new_order_tx }
     }
@@ -58,7 +58,7 @@ impl OffchainMarketMonitor {
     async fn monitor_orders(
         client: OrderStreamClient,
         signer: &impl Signer,
-        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
+        new_order_tx: tokio::sync::mpsc::Sender<Box<OrderRequest>>,
     ) -> Result<(), OffchainMarketMonitorErr> {
         tracing::debug!("Connecting to off-chain market: {}", client.base_url);
         let socket =
@@ -86,7 +86,7 @@ impl OffchainMarketMonitor {
                     );
 
                     new_order_tx
-                        .send(new_order)
+                        .send(Box::new(new_order))
                         .await
                         .map_err(|_| OffchainMarketMonitorErr::ReceiverDropped)
                 }

@@ -77,8 +77,8 @@ pub struct OrderPicker<P> {
     market: BoundlessMarketService<Arc<P>>,
     supported_selectors: SupportedSelectors,
     // TODO ideal not to wrap in mutex, but otherwise would require supervisor refactor, try to find alternative
-    new_order_rx: Arc<Mutex<mpsc::Receiver<OrderRequest>>>,
-    priced_orders_tx: mpsc::Sender<OrderRequest>,
+    new_order_rx: Arc<Mutex<mpsc::Receiver<Box<OrderRequest>>>>,
+    priced_orders_tx: mpsc::Sender<Box<OrderRequest>>,
 }
 
 #[derive(Debug)]
@@ -113,8 +113,8 @@ where
         market_addr: Address,
         provider: Arc<P>,
         chain_monitor: Arc<ChainMonitorService<P>>,
-        new_order_rx: mpsc::Receiver<OrderRequest>,
-        order_result_tx: mpsc::Sender<OrderRequest>,
+        new_order_rx: mpsc::Receiver<Box<OrderRequest>>,
+        order_result_tx: mpsc::Sender<Box<OrderRequest>>,
     ) -> Self {
         let market = BoundlessMarketService::new(
             market_addr,
@@ -135,7 +135,7 @@ where
         }
     }
 
-    async fn price_order_and_update_state(&self, mut order: OrderRequest) -> bool {
+    async fn price_order_and_update_state(&self, mut order: Box<OrderRequest>) -> bool {
         let order_id = order.id();
         let f = || async {
             match self.price_order(&mut order).await {
@@ -740,8 +740,8 @@ mod tests {
         storage_provider: MockStorageProvider,
         db: DbObj,
         provider: Arc<P>,
-        priced_orders_rx: mpsc::Receiver<OrderRequest>,
-        new_order_tx: mpsc::Sender<OrderRequest>,
+        priced_orders_rx: mpsc::Receiver<Box<OrderRequest>>,
+        new_order_tx: mpsc::Sender<Box<OrderRequest>>,
     }
 
     /// Parameters for the generate_next_order function.
@@ -771,13 +771,13 @@ mod tests {
             self.anvil.keys()[index].clone().into()
         }
 
-        async fn generate_next_order(&self, params: OrderParams) -> OrderRequest {
+        async fn generate_next_order(&self, params: OrderParams) -> Box<OrderRequest> {
             let image_url = self.storage_provider.upload_program(ECHO_ELF).await.unwrap();
             let image_id = Digest::from(ECHO_ID);
             let chain_id = self.provider.get_chain_id().await.unwrap();
             let boundless_market_address = self.boundless_market.instance().address();
 
-            OrderRequest {
+            Box::new(OrderRequest {
                 request: ProofRequest::new(
                     RequestId::new(self.provider.default_signer_address(), params.order_index),
                     Requirements::new(
@@ -808,7 +808,7 @@ mod tests {
                 boundless_market_address: *boundless_market_address,
                 chain_id,
                 total_cycles: None,
-            }
+            })
         }
     }
 
@@ -885,10 +885,8 @@ mod tests {
             tokio::spawn(chain_monitor.spawn());
 
             const TEST_CHANNEL_CAPACITY: usize = 50;
-            let (_new_order_tx, new_order_rx) =
-                mpsc::channel::<OrderRequest>(TEST_CHANNEL_CAPACITY);
-            let (priced_orders_tx, priced_orders_rx) =
-                mpsc::channel::<OrderRequest>(TEST_CHANNEL_CAPACITY);
+            let (_new_order_tx, new_order_rx) = mpsc::channel(TEST_CHANNEL_CAPACITY);
+            let (priced_orders_tx, priced_orders_rx) = mpsc::channel(TEST_CHANNEL_CAPACITY);
 
             let picker = OrderPicker::new(
                 db.clone(),

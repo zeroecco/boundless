@@ -119,7 +119,7 @@ pub struct OrderMonitor<P> {
     market: BoundlessMarketService<Arc<P>>,
     provider: Arc<P>,
     prover_addr: Address,
-    priced_order_rx: Arc<Mutex<mpsc::Receiver<OrderRequest>>>,
+    priced_order_rx: Arc<Mutex<mpsc::Receiver<Box<OrderRequest>>>>,
     lock_and_prove_cache: Arc<Cache<String, Arc<OrderRequest>>>,
     prove_cache: Arc<Cache<String, Arc<OrderRequest>>>,
     supported_selectors: SupportedSelectors,
@@ -138,7 +138,7 @@ where
         block_time: u64,
         prover_addr: Address,
         market_addr: Address,
-        priced_orders_rx: mpsc::Receiver<OrderRequest>,
+        priced_orders_rx: mpsc::Receiver<Box<OrderRequest>>,
     ) -> Result<Self> {
         let txn_timeout_opt = {
             let config = config.lock_all().context("Failed to read config")?;
@@ -860,17 +860,20 @@ where
     }
 
     // Called when a new order result is received from the channel
-    async fn handle_new_order_result(&self, order: OrderRequest) -> Result<(), OrderMonitorErr> {
+    async fn handle_new_order_result(
+        &self,
+        order: Box<OrderRequest>,
+    ) -> Result<(), OrderMonitorErr> {
         match order.fulfillment_type {
             FulfillmentType::LockAndFulfill => {
                 // Note: this could be done without waiting for the batch to minimize latency, but
                 //       avoiding more complicated logic for checking capacity for each order.
 
                 // If not, add it to the cache to be locked after target time
-                self.lock_and_prove_cache.insert(order.id(), Arc::new(order)).await;
+                self.lock_and_prove_cache.insert(order.id(), Arc::from(order)).await;
             }
             FulfillmentType::FulfillAfterLockExpire | FulfillmentType::FulfillWithoutLocking => {
-                self.prove_cache.insert(order.id(), Arc::new(order)).await;
+                self.prove_cache.insert(order.id(), Arc::from(order)).await;
             }
         }
         Ok(())
@@ -944,7 +947,7 @@ mod tests {
         market_address: Address,
         #[allow(dead_code)]
         config: ConfigLock,
-        priced_order_tx: mpsc::Sender<OrderRequest>,
+        priced_order_tx: mpsc::Sender<Box<OrderRequest>>,
         signer: PrivateKeySigner,
         market_service: BoundlessMarketService<Arc<TestProvider>>,
         next_order_id: u32, // Counter to assign unique order IDs
@@ -958,7 +961,7 @@ mod tests {
             bidding_start: u64,
             lock_timeout: u64,
             timeout: u64,
-        ) -> OrderRequest {
+        ) -> Box<OrderRequest> {
             let request_id = self.next_order_id;
             self.next_order_id += 1;
 
@@ -991,7 +994,7 @@ mod tests {
                 .as_bytes()
                 .into();
 
-            OrderRequest {
+            Box::new(OrderRequest {
                 target_timestamp: Some(0),
                 request,
                 image_id: None,
@@ -1002,7 +1005,7 @@ mod tests {
                 boundless_market_address: self.market_address,
                 chain_id: self.anvil.chain_id(),
                 total_cycles: None,
-            }
+            })
         }
     }
 
@@ -1167,7 +1170,7 @@ mod tests {
         let expired_order_id = expired_order.id();
         ctx.monitor
             .lock_and_prove_cache
-            .insert(expired_order_id.clone(), Arc::new(expired_order))
+            .insert(expired_order_id.clone(), Arc::from(expired_order))
             .await;
 
         let result = ctx.monitor.get_valid_orders(current_timestamp, 0).await.unwrap();
@@ -1188,14 +1191,14 @@ mod tests {
         let order =
             ctx.create_test_order(FulfillmentType::LockAndFulfill, current_timestamp, 45, 45).await;
         let order_1_id = order.id();
-        ctx.monitor.lock_and_prove_cache.insert(order_1_id.clone(), Arc::new(order)).await;
+        ctx.monitor.lock_and_prove_cache.insert(order_1_id.clone(), Arc::from(order)).await;
 
         // Create an order with insufficient deadline
         let order = ctx
             .create_test_order(FulfillmentType::FulfillAfterLockExpire, current_timestamp, 1, 45)
             .await;
         let order_2_id = order.id();
-        ctx.monitor.prove_cache.insert(order_2_id.clone(), Arc::new(order)).await;
+        ctx.monitor.prove_cache.insert(order_2_id.clone(), Arc::from(order)).await;
 
         let result = ctx.monitor.get_valid_orders(current_timestamp, 100).await.unwrap();
 
@@ -1226,7 +1229,7 @@ mod tests {
             )
             .await
             .unwrap();
-        ctx.monitor.lock_and_prove_cache.insert(order.id(), Arc::new(order)).await;
+        ctx.monitor.lock_and_prove_cache.insert(order.id(), Arc::from(order)).await;
 
         let result =
             ctx.monitor.get_valid_orders(current_timestamp, current_timestamp + 100).await.unwrap();
@@ -1269,7 +1272,7 @@ mod tests {
         let order_4_id = order4.id();
 
         let mut orders =
-            vec![Arc::new(order1), Arc::new(order2), Arc::new(order3), Arc::new(order4)];
+            vec![Arc::from(order1), Arc::from(order2), Arc::from(order3), Arc::from(order4)];
         ctx.monitor.prioritize_orders(&mut orders);
 
         assert!(orders[0].id() == order_1_id);
@@ -1290,7 +1293,7 @@ mod tests {
             .await;
         let order_id = order.id();
 
-        ctx.monitor.lock_and_prove_orders(&[Arc::new(order)]).await.unwrap();
+        ctx.monitor.lock_and_prove_orders(&[Arc::from(order)]).await.unwrap();
 
         let updated_order = ctx.db.get_order(&order_id).await.unwrap().unwrap();
         assert_eq!(updated_order.status, OrderStatus::PendingProving);
@@ -1313,7 +1316,7 @@ mod tests {
             let _request_id =
                 ctx.market_service.submit_request(&order.request, &ctx.signer).await.unwrap();
 
-            orders.push(Arc::new(order));
+            orders.push(Arc::from(order));
         }
 
         // Set unlimited capacity in config
@@ -1367,7 +1370,7 @@ mod tests {
             let _request_id =
                 ctx.market_service.submit_request(&order.request, &ctx.signer).await.unwrap();
 
-            orders.push(Arc::new(order));
+            orders.push(Arc::from(order));
         }
 
         // Process orders with limited capacity
@@ -1413,13 +1416,13 @@ mod tests {
             .await;
         order1.total_cycles = Some(1000);
 
-        orders.push(Arc::new(order1));
+        orders.push(Arc::from(order1));
 
         let mut order2 = ctx
             .create_test_order(FulfillmentType::LockAndFulfill, current_timestamp, 100, 200)
             .await;
         order2.total_cycles = Some(100);
-        orders.push(Arc::new(order2));
+        orders.push(Arc::from(order2));
 
         let orders = ctx.monitor.apply_capacity_limits(orders, None, Some(100)).await.unwrap();
 
@@ -1445,7 +1448,7 @@ mod tests {
 
         let _request_id =
             ctx.market_service.submit_request(&order1.request, &ctx.signer).await.unwrap();
-        candidate_orders.push(Arc::new(order1));
+        candidate_orders.push(Arc::from(order1));
 
         // Order 2: Longer expiration (enough time to prove)
         let mut order2 = ctx
@@ -1455,7 +1458,7 @@ mod tests {
         let order2_id = order2.id();
         let _request_id =
             ctx.market_service.submit_request(&order2.request, &ctx.signer).await.unwrap();
-        candidate_orders.push(Arc::new(order2));
+        candidate_orders.push(Arc::from(order2));
 
         let filtered_orders =
             ctx.monitor.apply_capacity_limits(candidate_orders, None, Some(1)).await.unwrap();
@@ -1497,7 +1500,7 @@ mod tests {
             .await
             .unwrap();
 
-        let orders = vec![Arc::new(lock_and_fulfill_order), Arc::new(fulfill_only_order)];
+        let orders = vec![Arc::from(lock_and_fulfill_order), Arc::from(fulfill_only_order)];
         let filtered_orders = ctx.monitor.apply_capacity_limits(orders, None, None).await.unwrap();
         let result = ctx.monitor.lock_and_prove_orders(&filtered_orders).await;
         assert!(result.is_ok(), "lock_and_prove_orders should succeed");
@@ -1532,7 +1535,7 @@ mod tests {
             let _request_id =
                 ctx.market_service.submit_request(&order.request, &ctx.signer).await.unwrap();
 
-            orders.push(Arc::new(order));
+            orders.push(Arc::from(order));
         }
 
         let filtered_orders =
@@ -1560,14 +1563,14 @@ mod tests {
         let incoming_order =
             ctx.create_test_order(FulfillmentType::LockAndFulfill, now_timestamp(), 100, 200).await;
 
-        let mut orders = vec![Arc::new(incoming_order)];
+        let mut orders = vec![Arc::from(incoming_order)];
 
         // Should be able to have enough gas for 1 lock and fulfill
         let filtered_orders =
             ctx.monitor.apply_capacity_limits(orders.clone(), None, None).await.unwrap();
         assert_eq!(filtered_orders.len(), 1);
 
-        orders.push(Arc::new(
+        orders.push(Arc::from(
             ctx.create_test_order(FulfillmentType::LockAndFulfill, now_timestamp(), 100, 200).await,
         ));
 

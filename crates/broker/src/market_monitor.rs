@@ -67,7 +67,7 @@ pub struct MarketMonitor<P> {
     chain_monitor: Arc<ChainMonitorService<P>>,
     prover_addr: Address,
     order_stream: Option<OrderStreamClient>,
-    new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
+    new_order_tx: tokio::sync::mpsc::Sender<Box<OrderRequest>>,
 }
 
 sol! {
@@ -92,7 +92,7 @@ where
         chain_monitor: Arc<ChainMonitorService<P>>,
         prover_addr: Address,
         order_stream: Option<OrderStreamClient>,
-        new_order_tx: tokio::sync::mpsc::Sender<OrderRequest>,
+        new_order_tx: tokio::sync::mpsc::Sender<Box<OrderRequest>>,
     ) -> Self {
         Self {
             lookback_blocks,
@@ -135,7 +135,7 @@ where
         market_addr: Address,
         provider: Arc<P>,
         chain_monitor: Arc<ChainMonitorService<P>>,
-        new_order_tx: &tokio::sync::mpsc::Sender<OrderRequest>,
+        new_order_tx: &tokio::sync::mpsc::Sender<Box<OrderRequest>>,
     ) -> Result<u64, MarketMonitorErr> {
         let current_block = chain_monitor.current_block_number().await?;
         let chain_id = provider.get_chain_id().await.context("Failed to get chain id")?;
@@ -223,7 +223,7 @@ where
                 chain_id,
             );
 
-            new_order_tx.send(new_order).await.map_err(|_| MarketMonitorErr::ReceiverDropped)?;
+            new_order_tx.send(Box::new(new_order)).await.map_err(|_| MarketMonitorErr::ReceiverDropped)?;
             order_count += 1;
         }
 
@@ -235,7 +235,7 @@ where
     async fn monitor_orders(
         market_addr: Address,
         provider: Arc<P>,
-        new_order_tx: mpsc::Sender<OrderRequest>,
+        new_order_tx: mpsc::Sender<Box<OrderRequest>>,
     ) -> Result<(), MarketMonitorErr> {
         let chain_id = provider.get_chain_id().await.context("Failed to get chain id")?;
 
@@ -287,7 +287,7 @@ where
         prover_addr: Address,
         provider: Arc<P>,
         db: DbObj,
-        new_order_tx: mpsc::Sender<OrderRequest>,
+        new_order_tx: mpsc::Sender<Box<OrderRequest>>,
         order_stream: Option<OrderStreamClient>,
     ) -> Result<(), MarketMonitorErr> {
         let market = BoundlessMarketService::new(market_addr, provider.clone(), Address::ZERO);
@@ -357,7 +357,7 @@ where
                             }
 
                             if let Some(order) = order {
-                                if let Err(e) = new_order_tx.send(order).await {
+                                if let Err(e) = new_order_tx.send(Box::new(order)).await {
                                     tracing::error!("Failed to send order locked by another prover, {:x}: {e:?}", event.requestId);
                                 }
                             } else {
@@ -436,7 +436,7 @@ where
         provider: Arc<P>,
         market_addr: Address,
         chain_id: u64,
-        new_order_tx: &tokio::sync::mpsc::Sender<OrderRequest>,
+        new_order_tx: &tokio::sync::mpsc::Sender<Box<OrderRequest>>,
     ) -> Result<()> {
         tracing::info!("Detected new request {:x}", event.requestId);
 
@@ -495,7 +495,7 @@ where
         );
 
         let order_id = new_order.request.id;
-        if let Err(e) = new_order_tx.send(new_order).await {
+        if let Err(e) = new_order_tx.send(Box::new(new_order)).await {
             tracing::error!(
                 "Failed to send new on-chain order {:x} to OrderPicker: {}",
                 order_id,
