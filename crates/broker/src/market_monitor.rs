@@ -223,7 +223,10 @@ where
                 chain_id,
             );
 
-            new_order_tx.send(Box::new(new_order)).await.map_err(|_| MarketMonitorErr::ReceiverDropped)?;
+            new_order_tx
+                .send(Box::new(new_order))
+                .await
+                .map_err(|_| MarketMonitorErr::ReceiverDropped)?;
             order_count += 1;
         }
 
