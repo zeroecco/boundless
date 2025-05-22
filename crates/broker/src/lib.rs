@@ -213,7 +213,8 @@ impl OrderRequest {
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
     pub fn id(&self) -> String {
-        let signing_hash = self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
+        let signing_hash =
+            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
         format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
     }
 
@@ -319,7 +320,8 @@ impl Order {
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
     pub fn id(&self) -> String {
-        let signing_hash = self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
+        let signing_hash =
+            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
         format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
     }
 
