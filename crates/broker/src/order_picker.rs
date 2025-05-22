@@ -716,7 +716,7 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::{Anvil, AnvilInstance},
-        primitives::{address, aliases::U96, Address, Bytes, FixedBytes, B256},
+        primitives::{address, aliases::U96, utils::parse_units, Address, Bytes, FixedBytes, B256},
         providers::{ext::AnvilApi, ProviderBuilder},
         signers::local::PrivateKeySigner,
     };
@@ -1306,15 +1306,34 @@ mod tests {
         assert_eq!(priced.id(), order1_id);
 
         let order = ctx
-            .generate_next_order(OrderParams { lock_stake: U256::from(100), ..Default::default() })
+            .generate_next_order(OrderParams {
+                lock_stake: lockin_stake + U256::from(1),
+                ..Default::default()
+            })
             .await;
-        let order2_id = order.id();
-        // only the first order above should have marked as active pricing, the second one should have been skipped due to insufficient stake
+        let order_id = order.id();
+        assert!(!ctx.picker.price_order_and_update_state(order).await);
+        assert!(logs_contain("Insufficient available stake to lock order"));
         assert_eq!(
-            ctx.db.get_order(&order2_id).await.unwrap().unwrap().status,
+            ctx.db.get_order(&order_id).await.unwrap().unwrap().status,
             OrderStatus::Skipped
         );
-        assert!(logs_contain("Insufficient available stake to lock order"));
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                lock_stake: parse_units("11", 18).unwrap().into(),
+                ..Default::default()
+            })
+            .await;
+        let order_id = order.id();
+        assert!(!ctx.picker.price_order_and_update_state(order).await);
+
+        // only the first order above should have marked as active pricing, the second one should have been skipped due to insufficient stake
+        assert_eq!(
+            ctx.db.get_order(&order_id).await.unwrap().unwrap().status,
+            OrderStatus::Skipped
+        );
+        assert!(logs_contain("Removing high stake order"));
     }
 
     #[tokio::test]
