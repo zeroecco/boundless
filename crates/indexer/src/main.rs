@@ -53,11 +53,7 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    match dotenvy::dotenv() {
-        Ok(path) => tracing::debug!("Loaded environment variables from {:?}", path),
-        Err(e) if e.not_found() => tracing::debug!("No .env file found"),
-        Err(e) => bail!("failed to load .env file: {}", e),
-    }
+    let args = MainArgs::parse();
 
     let mut indexer_service = IndexerService::new(
         args.rpc_url.clone(),
