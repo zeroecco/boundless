@@ -4,11 +4,7 @@
 
 use alloy::{
     primitives::utils::parse_ether,
-    providers::{
-        fillers::{ChainIdFiller, NonceFiller},
-        network::EthereumWallet,
-        ProviderBuilder, WalletProvider,
-    },
+    providers::{network::EthereumWallet, ProviderBuilder, WalletProvider},
     rpc::client::RpcClient,
     transports::layers::RetryBackoffLayer,
 };
@@ -17,7 +13,8 @@ use anyhow::{Context, Result};
 use boundless_market::{
     balance_alerts_layer::{BalanceAlertConfig, BalanceAlertLayer},
     contracts::boundless_market::BoundlessMarketService,
-    resettable_nonce_layer::{NonceResetLayer, ResettableNonceManager},
+    dynamic_gas_filler::DynamicGasFiller,
+    mutex_layer::MutexLayer,
 };
 use broker::{Args, Broker, Config, CustomRetryPolicy};
 use clap::Parser;
@@ -65,18 +62,18 @@ async fn main() -> Result<()> {
             .transpose()?,
     });
 
-    let nonce_manager = ResettableNonceManager::default();
-    let nonce_filler = NonceFiller::new(nonce_manager.clone());
-    let nonce_reset_layer =
-        NonceResetLayer::new(wallet.default_signer().address(), nonce_manager.clone());
+    let mutex_layer = MutexLayer::default();
+    let dynamic_gas_filler = DynamicGasFiller::new(
+        0.2,  // 20% increase of gas limit
+        0.05, // 5% increase of gas_price per pending transaction
+        2.0,  // 2x max gas multiplier
+        wallet.default_signer().address(),
+    );
     let provider = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .with_gas_estimation()
-        .filler(ChainIdFiller::default())
-        .filler(nonce_filler)
-        .layer(nonce_reset_layer)
-        .layer(balance_alerts_layer)
+        .filler(dynamic_gas_filler)
         .wallet(wallet)
+        .layer(balance_alerts_layer)
+        .layer(mutex_layer)
         .with_chain(NamedChain::Sepolia)
         .connect_client(client);
 

@@ -44,6 +44,8 @@ use crate::{
         boundless_market::{BoundlessMarketService, MarketError},
         ProofRequest, RequestError,
     },
+    dynamic_gas_filler::DynamicGasFiller,
+    mutex_layer::{MutexLayer, MutexProvider},
     now_timestamp,
     order_stream_client::{Client as OrderStreamClient, Order},
     storage::{
@@ -58,12 +60,15 @@ const BIDDING_START_DELAY: u64 = 30;
 type ProviderWallet = FillProvider<
     JoinFill<
         JoinFill<
-            Identity,
-            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+            JoinFill<
+                Identity,
+                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+            >,
+            DynamicGasFiller,
         >,
         WalletFiller<EthereumWallet>,
     >,
-    BalanceAlertProvider<RootProvider>,
+    BalanceAlertProvider<MutexProvider<RootProvider>>,
 >;
 
 #[derive(thiserror::Error, Debug)]
@@ -561,9 +566,17 @@ impl Client<ProviderWallet, BuiltinStorageProvider> {
 
         let caller = private_key.address();
         let wallet = EthereumWallet::from(private_key.clone());
+        let dynamic_gas_filler = DynamicGasFiller::new(
+            0.2,  // 20% increase of gas limit
+            0.05, // 5% increase of gas_price per pending transaction
+            2.0,  // 2x max gas multiplier
+            wallet.default_signer().address(),
+        );
         let provider = ProviderBuilder::new()
-            .wallet(wallet.clone())
+            .filler(dynamic_gas_filler)
+            .wallet(wallet)
             .layer(BalanceAlertLayer::default())
+            .layer(MutexLayer::default())
             .connect_http(rpc_url);
 
         let boundless_market =
@@ -611,9 +624,17 @@ impl<P: StorageProvider> Client<ProviderWallet, P> {
     ) -> Result<Self, ClientError> {
         let caller = wallet.default_signer().address();
 
+        let dynamic_gas_filler = DynamicGasFiller::new(
+            0.2,  // 20% increase of gas limit
+            0.05, // 5% increase of gas_price per pending transaction
+            2.0,  // 2x max gas multiplier
+            wallet.default_signer().address(),
+        );
         let provider = ProviderBuilder::new()
+            .filler(dynamic_gas_filler)
             .wallet(wallet)
             .layer(BalanceAlertLayer::new(balance_alerts.unwrap_or_default()))
+            .layer(MutexLayer::default())
             .connect_http(rpc_url);
 
         let boundless_market =

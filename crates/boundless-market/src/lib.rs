@@ -35,6 +35,9 @@ pub mod client;
 /// Contracts module for interacting with the Boundless Market smart contracts.
 pub mod contracts;
 #[cfg(not(target_os = "zkvm"))]
+/// Dynamic gas filler module.
+pub mod dynamic_gas_filler;
+#[cfg(not(target_os = "zkvm"))]
 /// Input module for serializing input.
 pub mod input;
 #[cfg(not(target_os = "zkvm"))]
@@ -42,8 +45,8 @@ pub mod input;
 pub mod order_stream_client;
 
 #[cfg(not(target_os = "zkvm"))]
-/// A nonce manager module.
-pub mod resettable_nonce_layer;
+/// A ProviderLayer and nonce manager module.
+pub mod mutex_layer;
 #[cfg(not(target_os = "zkvm"))]
 /// Selector module implementing utility functions for supported selectors.
 pub mod selector;
