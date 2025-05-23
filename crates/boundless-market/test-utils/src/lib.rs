@@ -18,7 +18,9 @@ use alloy::{
     primitives::{Address, Bytes, FixedBytes},
     providers::{
         ext::AnvilApi,
-        fillers::{ChainIdFiller, FillerControlFlow, GasFillable, GasFiller, TxFiller},
+        fillers::{
+            ChainIdFiller, FillerControlFlow, GasFillable, GasFiller, NonceFiller, TxFiller,
+        },
         Provider, ProviderBuilder, SendableTx, WalletProvider,
     },
     signers::local::PrivateKeySigner,
@@ -28,11 +30,15 @@ use alloy::{
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::{Eip712Domain, SolStruct, SolValue};
 use anyhow::{Context, Ok, Result};
-use boundless_market::contracts::{
-    boundless_market::BoundlessMarketService,
-    bytecode::*,
-    hit_points::{default_allowance, HitPointsService},
-    AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
+use boundless_market::{
+    contracts::{
+        boundless_market::BoundlessMarketService,
+        bytecode::*,
+        hit_points::{default_allowance, HitPointsService},
+        AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
+    },
+    deployments::Deployment,
+    resettable_nonce_layer::{NonceResetLayer, ResettableNonceManager},
 };
 use risc0_aggregation::{
     merkle_path, merkle_root, GuestState, SetInclusionReceipt,
@@ -55,12 +61,14 @@ pub use guest_util::{
     LOOP_PATH,
 };
 
+/// Re-export of the boundless_market crate, which can be used to avoid dependency issues when
+/// writing tests in the boundless_market crate itself, where two version of boundless_market end
+/// up in the Cargo dependency tree due to the way cycle-breaking works.
+pub use boundless_market;
+
 #[non_exhaustive]
 pub struct TestCtx<P> {
-    pub verifier_address: Address,
-    pub set_verifier_address: Address,
-    pub hit_points_address: Address,
-    pub boundless_market_address: Address,
+    pub deployment: Deployment,
     pub prover_signer: PrivateKeySigner,
     pub customer_signer: PrivateKeySigner,
     pub prover_provider: P,
@@ -359,25 +367,37 @@ pub async fn create_test_ctx_with_rpc_url(
     let customer_signer: PrivateKeySigner = anvil.keys()[2].clone().into();
     let verifier_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
 
+    let nonce_manager = ResettableNonceManager::default();
+    let nonce_filler = NonceFiller::new(nonce_manager.clone());
+    let nonce_reset_layer = NonceResetLayer::new(prover_signer.address(), nonce_manager.clone());
     let prover_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .with_cached_nonce_management()
+        .layer(nonce_reset_layer)
+        .filler(nonce_filler)
         .filler(ChainIdFiller::default())
         .filler(TestGasFiller)
         .wallet(EthereumWallet::from(prover_signer.clone()))
         .connect(rpc_url)
         .await?;
+    let nonce_manager = ResettableNonceManager::default();
+    let nonce_filler = NonceFiller::new(nonce_manager.clone());
+    let nonce_reset_layer = NonceResetLayer::new(customer_signer.address(), nonce_manager.clone());
     let customer_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .with_cached_nonce_management()
+        .layer(nonce_reset_layer)
+        .filler(nonce_filler)
         .filler(ChainIdFiller::default())
         .filler(TestGasFiller)
         .wallet(EthereumWallet::from(customer_signer.clone()))
         .connect(rpc_url)
         .await?;
+    let nonce_manager = ResettableNonceManager::default();
+    let nonce_filler = NonceFiller::new(nonce_manager.clone());
+    let nonce_reset_layer = NonceResetLayer::new(verifier_signer.address(), nonce_manager.clone());
     let verifier_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .with_cached_nonce_management()
+        .layer(nonce_reset_layer)
+        .filler(nonce_filler)
         .filler(ChainIdFiller::default())
         .filler(TestGasFiller)
         .wallet(EthereumWallet::from(verifier_signer.clone()))
@@ -411,10 +431,13 @@ pub async fn create_test_ctx_with_rpc_url(
     hit_points_service.mint(prover_signer.address(), default_allowance()).await?;
 
     Ok(TestCtx {
-        verifier_address: verifier_addr,
-        set_verifier_address: set_verifier_addr,
-        hit_points_address: hit_points_addr,
-        boundless_market_address: boundless_market_addr,
+        deployment: Deployment::builder()
+            .chain_id(anvil.chain_id())
+            .boundless_market_address(boundless_market_addr)
+            .verifier_router_address(verifier_addr)
+            .set_verifier_address(set_verifier_addr)
+            .stake_token_address(hit_points_addr)
+            .build()?,
         prover_signer,
         customer_signer,
         prover_provider,

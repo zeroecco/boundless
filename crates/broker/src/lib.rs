@@ -14,7 +14,7 @@ use alloy::{
 use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, ProofRequest},
-    order_stream_client::Client as OrderStreamClient,
+    order_stream_client::OrderStreamClient,
     selector::is_groth16_selector,
 };
 use chrono::{serde::ts_seconds, DateTime, Utc};
@@ -100,7 +100,7 @@ pub struct Args {
 
     /// Pre deposit amount
     ///
-    /// Amount of HP tokens to pre-deposit into the contract for staking eg: 100
+    /// Amount of stake tokens to pre-deposit into the contract for staking eg: 100
     #[clap(short, long)]
     pub deposit_amount: Option<U256>,
 
@@ -121,6 +121,10 @@ pub struct Args {
     /// From the `RetryBackoffLayer` of Alloy
     #[clap(long, default_value_t = 100)]
     pub rpc_retry_cu: u64,
+
+    /// Log JSON
+    #[clap(long, env, default_value_t = false)]
+    pub log_json: bool,
 }
 
 /// Status of a order as it moves through the lifecycle
@@ -401,10 +405,10 @@ where
         }
 
         let program_bytes = if let Some(path) = program_path {
-            let file_elf_buf =
+            let file_program_buf =
                 tokio::fs::read(&path).await.context("Failed to read program file")?;
-            let file_img_id =
-                risc0_zkvm::compute_image_id(&file_elf_buf).context("Failed to compute imageId")?;
+            let file_img_id = risc0_zkvm::compute_image_id(&file_program_buf)
+                .context("Failed to compute imageId")?;
 
             if image_id != file_img_id {
                 anyhow::bail!(
@@ -415,7 +419,7 @@ where
                 );
             }
 
-            file_elf_buf
+            file_program_buf
         } else {
             let image_uri = create_uri_handler(&image_url_str, &self.config_watcher.config)
                 .await
@@ -706,8 +710,8 @@ pub mod test_utils {
             let args = Args {
                 db_url: "sqlite::memory:".into(),
                 config_file: config_file.path().to_path_buf(),
-                boundless_market_address: ctx.boundless_market_address,
-                set_verifier_address: ctx.set_verifier_address,
+                boundless_market_address: ctx.deployment.boundless_market_address,
+                set_verifier_address: ctx.deployment.set_verifier_address,
                 rpc_url,
                 order_stream_url: None,
                 private_key: ctx.prover_signer.clone(),
@@ -718,6 +722,7 @@ pub mod test_utils {
                 rpc_retry_max: 0,
                 rpc_retry_backoff: 200,
                 rpc_retry_cu: 1000,
+                log_json: false,
             };
             Self { args, provider: ctx.prover_provider.clone(), config_file }
         }

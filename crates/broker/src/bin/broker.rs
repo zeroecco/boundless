@@ -4,7 +4,11 @@
 
 use alloy::{
     primitives::utils::parse_ether,
-    providers::{network::EthereumWallet, ProviderBuilder, WalletProvider},
+    providers::{
+        fillers::{ChainIdFiller, NonceFiller},
+        network::EthereumWallet,
+        ProviderBuilder, WalletProvider,
+    },
     rpc::client::RpcClient,
     transports::layers::RetryBackoffLayer,
 };
@@ -13,6 +17,7 @@ use anyhow::{Context, Result};
 use boundless_market::{
     balance_alerts_layer::{BalanceAlertConfig, BalanceAlertLayer},
     contracts::boundless_market::BoundlessMarketService,
+    resettable_nonce_layer::{NonceResetLayer, ResettableNonceManager},
 };
 use broker::{Args, Broker, Config, CustomRetryPolicy};
 use clap::Parser;
@@ -20,13 +25,22 @@ use tracing_subscriber::fmt::format::FmtSpan;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_span_events(FmtSpan::CLOSE)
-        .init();
-
     let args = Args::parse();
     let config = Config::load(&args.config_file).await?;
+
+    if args.log_json {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_span_events(FmtSpan::CLOSE)
+            .with_ansi(false)
+            .json()
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_span_events(FmtSpan::CLOSE)
+            .init();
+    }
 
     let wallet = EthereumWallet::from(args.private_key.clone());
 
@@ -51,8 +65,16 @@ async fn main() -> Result<()> {
             .transpose()?,
     });
 
+    let nonce_manager = ResettableNonceManager::default();
+    let nonce_filler = NonceFiller::new(nonce_manager.clone());
+    let nonce_reset_layer =
+        NonceResetLayer::new(wallet.default_signer().address(), nonce_manager.clone());
     let provider = ProviderBuilder::new()
-        .with_cached_nonce_management()
+        .disable_recommended_fillers()
+        .with_gas_estimation()
+        .filler(ChainIdFiller::default())
+        .filler(nonce_filler)
+        .layer(nonce_reset_layer)
         .layer(balance_alerts_layer)
         .wallet(wallet)
         .with_chain(NamedChain::Sepolia)
@@ -66,7 +88,7 @@ async fn main() -> Result<()> {
             provider.default_signer_address(),
         );
 
-        tracing::info!("pre-depositing {deposit_amount} HP into the market contract");
+        tracing::info!("pre-depositing {deposit_amount} stake tokens into the market contract");
         boundless_market
             .deposit_stake_with_permit(*deposit_amount, &args.private_key)
             .await

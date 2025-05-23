@@ -52,7 +52,7 @@ const BUILD_SPEC = `
           - export INSTANCE_ID=$(pulumi stack output ${bentoBrokerInstanceIdStackOutputKey})
           - echo "INSTANCE_ID $INSTANCE_ID"
           - echo "SSM_DOCUMENT_NAME $SSM_DOCUMENT_NAME"
-          - aws ssm send-command --document-name $SSM_DOCUMENT_NAME --targets "Key=InstanceIds,Values=$INSTANCE_ID" --cloud-watch-output-config CloudWatchOutputEnabled=true"
+          - aws ssm send-command --document-name $SSM_DOCUMENT_NAME --targets "Key=InstanceIds,Values=$INSTANCE_ID" --cloud-watch-output-config CloudWatchOutputEnabled=true
     `;
 
 export class ProverPipeline extends pulumi.ComponentResource {
@@ -95,9 +95,15 @@ export class ProverPipeline extends pulumi.ComponentResource {
       { dependsOn: [role] }
     );
 
-    const prodDeployment = new aws.codebuild.Project(
-      `${APP_NAME}-prod-build`,
-      this.codeBuildProjectArgs(APP_NAME, "prod", role, BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN, dockerUsername, dockerTokenSecret, githubTokenSecret),
+    const prodDeploymentEthSepolia = new aws.codebuild.Project(
+      `${APP_NAME}-prod-11155111-build`,
+      this.codeBuildProjectArgs(APP_NAME, "prod-11155111", role, BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN, dockerUsername, dockerTokenSecret, githubTokenSecret),
+      { dependsOn: [role] }
+    );
+
+    const prodDeploymentBaseMainnet = new aws.codebuild.Project(
+      `${APP_NAME}-prod-8453-build`,
+      this.codeBuildProjectArgs(APP_NAME, "prod-8453", role, BOUNDLESS_PROD_DEPLOYMENT_ROLE_ARN, dockerUsername, dockerTokenSecret, githubTokenSecret),
       { dependsOn: [role] }
     );
 
@@ -156,16 +162,29 @@ export class ProverPipeline extends pulumi.ComponentResource {
               configuration: {}
             },
             {
-              name: "DeployProduction",
+              name: "DeployProductionEthSepolia",
               category: "Build",
               owner: "AWS",
               provider: "CodeBuild",
               version: "1",
               runOrder: 2,
               configuration: {
-                ProjectName: prodDeployment.name
+                ProjectName: prodDeploymentEthSepolia.name
               },
-              outputArtifacts: ["production_output"],
+              outputArtifacts: ["production_output_eth_sepolia"],
+              inputArtifacts: ["source_output"],
+            },
+            {
+              name: "DeployProductionBaseMainnet",
+              category: "Build",
+              owner: "AWS",
+              provider: "CodeBuild",
+              version: "1",
+              runOrder: 2,
+              configuration: {
+                ProjectName: prodDeploymentBaseMainnet.name
+              },
+              outputArtifacts: ["production_output_base_mainnet"],
               inputArtifacts: ["source_output"],
             }
           ]
