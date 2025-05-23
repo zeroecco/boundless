@@ -109,7 +109,6 @@ impl<St, Si> ClientBuilder<St, Si> {
 
         let wallet_default_signer = wallet.default_signer().address();
 
-        let wallet = EthereumWallet::from(private_key.clone());
         let dynamic_gas_filler = DynamicGasFiller::new(
             0.2,  // 20% increase of gas limit
             0.05, // 5% increase of gas_price per pending transaction

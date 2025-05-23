@@ -34,7 +34,6 @@ use boundless_market::{
     deployments::Deployment,
     dynamic_gas_filler::DynamicGasFiller,
     nonce_layer::NonceProvider,
-    resettable_nonce_layer::{NonceResetLayer, ResettableNonceManager},
 };
 use risc0_aggregation::{
     merkle_path, merkle_root, GuestState, SetInclusionReceipt,
