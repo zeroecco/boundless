@@ -31,8 +31,10 @@ use boundless_market::{
         hit_points::{default_allowance, HitPointsService},
         AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
     },
+    deployments::Deployment,
     dynamic_gas_filler::DynamicGasFiller,
     nonce_layer::NonceProvider,
+    resettable_nonce_layer::{NonceResetLayer, ResettableNonceManager},
 };
 use risc0_aggregation::{
     merkle_path, merkle_root, GuestState, SetInclusionReceipt,
@@ -55,12 +57,14 @@ pub use guest_util::{
     LOOP_PATH,
 };
 
+/// Re-export of the boundless_market crate, which can be used to avoid dependency issues when
+/// writing tests in the boundless_market crate itself, where two version of boundless_market end
+/// up in the Cargo dependency tree due to the way cycle-breaking works.
+pub use boundless_market;
+
 #[non_exhaustive]
 pub struct TestCtx<P> {
-    pub verifier_address: Address,
-    pub set_verifier_address: Address,
-    pub hit_points_address: Address,
-    pub boundless_market_address: Address,
+    pub deployment: Deployment,
     pub prover_signer: PrivateKeySigner,
     pub customer_signer: PrivateKeySigner,
     pub prover_provider: P,
@@ -355,10 +359,13 @@ pub async fn create_test_ctx_with_rpc_url(
     hit_points_service.mint(prover_signer.address(), default_allowance()).await?;
 
     Ok(TestCtx {
-        verifier_address: verifier_addr,
-        set_verifier_address: set_verifier_addr,
-        hit_points_address: hit_points_addr,
-        boundless_market_address: boundless_market_addr,
+        deployment: Deployment::builder()
+            .chain_id(anvil.chain_id())
+            .boundless_market_address(boundless_market_addr)
+            .verifier_router_address(verifier_addr)
+            .set_verifier_address(set_verifier_addr)
+            .stake_token_address(hit_points_addr)
+            .build()?,
         prover_signer,
         customer_signer,
         prover_provider,

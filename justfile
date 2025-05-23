@@ -69,7 +69,7 @@ test-db action="setup":
     fi
 
 # Run all formatting and linting checks
-check: check-links check-license check-format check-clippy
+check: check-links check-license check-format check-clippy check-docs
 
 # Check links in markdown files
 check-links:
@@ -122,6 +122,10 @@ check-clippy:
     forge build && \
     RUSTFLAGS=-Dwarnings ISC0_SKIP_BUILD=1 RISC0_SKIP_BUILD_KERNEL=1 \
     cargo clippy --workspace --all-targets
+
+check-docs:
+    # Matches the docs-rs job in CI 
+    RUSTDOCFLAGS="--cfg docsrs -D warnings" RISC0_SKIP_BUILD=1 cargo +nightly-2025-01-03 doc -p boundless-market --all-features --no-deps
 
 # Format all code
 format:
@@ -193,8 +197,8 @@ localnet action="up": check-deps
         DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY CHAIN_KEY=$CHAIN_KEY RISC0_DEV_MODE=$RISC0_DEV_MODE BOUNDLESS_MARKET_OWNER=$ADMIN_ADDRESS forge script contracts/scripts/Deploy.s.sol --rpc-url http://localhost:$ANVIL_PORT --broadcast -vv || { echo "Failed to deploy contracts"; just localnet down; exit 1; }
         echo "Fetching contract addresses..."
         VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroVerifierRouter") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
-        SET_VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroSetVerifier") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
-        BOUNDLESS_MARKET_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "ERC1967Proxy") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json)
+        SET_VERIFIER_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "RiscZeroSetVerifier") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
+        BOUNDLESS_MARKET_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "ERC1967Proxy") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
         HIT_POINTS_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "HitPoints") | .contractAddress' ./broadcast/Deploy.s.sol/31337/run-latest.json | head -n 1)
         echo "Contract deployed at addresses:"
         echo "VERIFIER_ADDRESS=$VERIFIER_ADDRESS"
@@ -206,10 +210,7 @@ localnet action="up": check-deps
         sed -i.bak "s/^VERIFIER_ADDRESS=.*/VERIFIER_ADDRESS=$VERIFIER_ADDRESS/" .env.localnet
         sed -i.bak "s/^SET_VERIFIER_ADDRESS=.*/SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS/" .env.localnet
         sed -i.bak "s/^BOUNDLESS_MARKET_ADDRESS=.*/BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS/" .env.localnet
-        # Add HIT_POINTS_ADDRESS to .env.localnet
-        grep -q "^HIT_POINTS_ADDRESS=" .env.localnet && \
-            sed -i.bak "s/^HIT_POINTS_ADDRESS=.*/HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS/" .env.localnet || \
-            echo "HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS" >> .env.localnet
+        sed -i.bak "s/^HIT_POINTS_ADDRESS=.*/HIT_POINTS_ADDRESS=$HIT_POINTS_ADDRESS/" .env.localnet
         rm .env.localnet.bak
         echo ".env.localnet file updated successfully."
         echo "Minting HP for prover address."
@@ -232,6 +233,8 @@ localnet action="up": check-deps
             --rpc-url http://localhost:$ANVIL_PORT \
             --order-stream-url http://localhost:8585 \
             --deposit-amount $DEPOSIT_AMOUNT > {{LOGS_DIR}}/broker.txt 2>&1 & echo $! >> {{PID_FILE}}
+        # Wait 5 seconds and see if that broker is still running, or if it has crashed.
+        sleep 5 && kill -0 $(tail -n1 {{PID_FILE}})
         echo "Localnet is running!"
         echo "Make sure to run 'source .env.localnet' to load the environment variables before interacting with the network."
     elif [ "{{action}}" = "down" ]; then
@@ -242,6 +245,11 @@ localnet action="up": check-deps
             rm {{PID_FILE}}
         fi
         just test-db clean
+    elif [ "{{action}}" = "logs" ]; then
+        if [ ! -f {{PID_FILE}} ]; then
+            echo "localnet is not running" >/dev/stderr; exit 1
+        fi
+        tail -F {{LOGS_DIR}}/*
     else
         echo "Unknown action: {{action}}"
         echo "Available actions: up, down"
