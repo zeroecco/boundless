@@ -220,15 +220,13 @@ contract BoundlessMarket is
         }
 
         (, uint64 deadline) = request.validate();
-        if (deadline < block.timestamp) {
-            revert IBoundlessMarket.RequestIsExpired(request.id, deadline);
-        }
+        bool expired = deadline < block.timestamp;
 
         // Compute the current price offered by the reverse Dutch auction.
         uint96 price = request.offer.priceAt(uint64(block.timestamp)).toUint96();
 
         // Record the price in transient storage, such that the order can be filled in this same transaction.
-        FulfillmentContext({valid: true, price: price}).store(requestHash);
+        FulfillmentContext({valid: true, expired: expired, price: price}).store(requestHash);
     }
 
     /// @inheritdoc IBoundlessMarket
@@ -440,14 +438,17 @@ contract BoundlessMarket is
         address assessorProver
     ) internal returns (bytes memory paymentError) {
         // If no fulfillment context was stored for this request digest (via priceRequest),
-        // then payment cannot be processed. This check also serves as
-        // 1/ an expiration check since fulfillment contexts cannot be created for expired requests.
-        // 2/ a smart contract signature check, since signatures are validated when a request is priced.
+        // then payment cannot be processed. This check also serves as a smart
+        // contract signature check, since signatures are validated when a
+        // request is priced.
         // NOTE: We check this before checking fulfillment status to maintain the invariant that
         // the transaction will revert if the delivered proof is not associated with a valid request.
         FulfillmentContext memory context = FulfillmentContextLibrary.load(requestDigest);
         if (!context.valid) {
-            revert RequestIsExpiredOrNotPriced(id);
+            revert RequestIsNotPriced(id);
+        }
+        if (context.expired) {
+            return abi.encodeWithSelector(RequestIsExpired.selector, RequestId.unwrap(id));
         }
 
         uint96 price = context.price;
@@ -508,14 +509,17 @@ contract BoundlessMarket is
         address assessorProver
     ) internal returns (bytes memory paymentError) {
         // If no fulfillment context was stored for this request digest (via priceRequest),
-        // then payment cannot be processed. This check also serves as an expiration check since
-        // fulfillment contexts cannot be created for expired requests.
+        // then payment cannot be processed.
         // NOTE: We check this before checking fulfillment status to maintain the invariant that
         // the transaction will revert if the delivered proof is not associated with a valid request.
         FulfillmentContext memory context = FulfillmentContextLibrary.load(requestDigest);
         if (!context.valid) {
-            revert RequestIsExpiredOrNotPriced(id);
+            revert RequestIsNotPriced(id);
         }
+        if (context.expired) {
+            return abi.encodeWithSelector(RequestIsExpired.selector, RequestId.unwrap(id));
+        }
+
         uint96 price = context.price;
 
         // When never locked, the fulfilled flag _does_ indicate that payment has already been transferred,
