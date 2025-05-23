@@ -123,18 +123,16 @@ impl<N: Network> TxFiller<N> for DynamicGasFiller {
                 GasFillable::Eip1559 { gas_limit, estimate } => {
                     let adjusted_gas_limit =
                         (gas_limit as f64 * (1.0 + self.gas_limit_factor)).ceil() as u64;
-                    let adjusted_max_fee =
-                        (estimate.max_fee_per_gas as f64 * params.multiplier) as u128;
                     let adjusted_priority_fee =
                         (estimate.max_priority_fee_per_gas as f64 * params.multiplier) as u128;
 
                     builder.set_gas_limit(adjusted_gas_limit);
-                    builder.set_max_fee_per_gas(adjusted_max_fee);
+                    builder.set_max_fee_per_gas(estimate.max_fee_per_gas);
                     builder.set_max_priority_fee_per_gas(adjusted_priority_fee);
                     tracing::debug!(
                         "DynamicGasFiller: Adjusted gas limit: {}, max fee: {}, priority fee: {}",
                         adjusted_gas_limit,
-                        adjusted_max_fee,
+                        estimate.max_fee_per_gas,
                         adjusted_priority_fee
                     );
                 }
