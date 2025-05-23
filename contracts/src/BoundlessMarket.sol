@@ -219,7 +219,10 @@ contract BoundlessMarket is
             requestHash = _hashTypedDataV4(request.eip712Digest());
         }
 
-        request.validate();
+        (, uint64 deadline) = request.validate();
+        if (deadline < block.timestamp) {
+            revert IBoundlessMarket.RequestIsExpired(request.id, deadline);
+        }
 
         // Compute the current price offered by the reverse Dutch auction.
         uint96 price = request.offer.priceAt(uint64(block.timestamp)).toUint96();
@@ -308,7 +311,7 @@ contract BoundlessMarket is
 
         paymentError = new bytes[](fills.length);
 
-        // NOTE: It would be slightly more efficient to keep balances and request flags in memory until a single
+        // NOTE: It could be slightly more efficient to keep balances and request flags in memory until a single
         // batch update to storage. However, updating the same storage slot twice only costs 100 gas, so
         // this savings is marginal, and will be outweighed by complicated memory management if not careful.
         for (uint256 i = 0; i < fills.length; i++) {
