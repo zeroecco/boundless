@@ -222,7 +222,7 @@ localnet action="up": check-deps
         just test-db setup
         echo "Starting order stream server..."
         DATABASE_URL={{DATABASE_URL}} RUST_LOG=$RUST_LOG ./target/debug/order_stream \
-            --min-balance 0 \
+            --min-balance-raw 0 \
             --bypass-addrs="0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f" \
             --boundless-market-address $BOUNDLESS_MARKET_ADDRESS > {{LOGS_DIR}}/order_stream.txt 2>&1 & echo $! >> {{PID_FILE}}
         echo "Starting broker..."
