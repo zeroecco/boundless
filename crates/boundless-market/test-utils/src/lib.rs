@@ -16,7 +16,7 @@ use alloy::{
     network::EthereumWallet,
     node_bindings::AnvilInstance,
     primitives::{Address, Bytes, FixedBytes},
-    providers::{ext::AnvilApi, Provider, ProviderBuilder, WalletProvider},
+    providers::{ext::AnvilApi, fillers::ChainIdFiller, Provider, ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol_types::SolCall,
     transports::http::reqwest::Url,
@@ -314,18 +314,24 @@ pub async fn create_test_ctx_with_rpc_url(
         prover_signer.address(),
     );
     let base_prover_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .filler(ChainIdFiller::default())
         .filler(dynamic_gas_filler)
         .connect_http(Url::parse(rpc_url).unwrap());
     let prover_provider =
         NonceProvider::new(base_prover_provider, EthereumWallet::from(prover_signer.clone()));
 
     let base_customer_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .filler(ChainIdFiller::default())
         .filler(dynamic_gas_filler)
         .connect_http(Url::parse(rpc_url).unwrap());
     let customer_provider =
         NonceProvider::new(base_customer_provider, EthereumWallet::from(customer_signer.clone()));
 
     let base_verifier_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .filler(ChainIdFiller::default())
         .filler(dynamic_gas_filler)
         .connect_http(Url::parse(rpc_url).unwrap());
     let verifier_provider =

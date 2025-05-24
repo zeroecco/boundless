@@ -829,7 +829,14 @@ mod tests {
         network::EthereumWallet,
         node_bindings::Anvil,
         primitives::{Address, U256},
-        providers::{ext::AnvilApi, ProviderBuilder},
+        providers::{
+            ext::AnvilApi,
+            fillers::{
+                BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+                WalletFiller,
+            },
+            ProviderBuilder, RootProvider,
+        },
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
@@ -845,24 +852,15 @@ mod tests {
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
-    type TestProvider = alloy::providers::fillers::FillProvider<
-        alloy::providers::fillers::JoinFill<
-            alloy::providers::fillers::JoinFill<
+    type TestProvider = FillProvider<
+        JoinFill<
+            JoinFill<
                 alloy::providers::Identity,
-                alloy::providers::fillers::JoinFill<
-                    alloy::providers::fillers::GasFiller,
-                    alloy::providers::fillers::JoinFill<
-                        alloy::providers::fillers::BlobGasFiller,
-                        alloy::providers::fillers::JoinFill<
-                            alloy::providers::fillers::NonceFiller,
-                            alloy::providers::fillers::ChainIdFiller,
-                        >,
-                    >,
-                >,
+                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
             >,
-            alloy::providers::fillers::WalletFiller<EthereumWallet>,
+            WalletFiller<EthereumWallet>,
         >,
-        alloy::providers::RootProvider,
+        RootProvider,
     >;
 
     async fn setup_test() -> (OrderMonitor<TestProvider>, DbObj, Address, ConfigLock) {

@@ -9,7 +9,7 @@ use alloy::{
     network::{Ethereum, EthereumWallet, TransactionResponse},
     primitives::{Address, U256},
     providers::{
-        fillers::{BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller},
+        fillers::{ChainIdFiller, JoinFill},
         Identity, Provider, ProviderBuilder, RootProvider,
     },
     signers::local::PrivateKeySigner,
@@ -31,13 +31,8 @@ use url::Url;
 
 mod db;
 
-type ProviderWallet = NonceProvider<
-    JoinFill<
-        Identity,
-        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-    >,
-    BalanceAlertProvider<RootProvider>,
->;
+type ProviderWallet =
+    NonceProvider<JoinFill<Identity, ChainIdFiller>, BalanceAlertProvider<RootProvider>>;
 
 #[derive(Error, Debug)]
 pub enum ServiceError {
@@ -106,8 +101,11 @@ impl SlashService<ProviderWallet> {
             error_threshold: config.balance_error_threshold,
         });
 
-        let base_provider =
-            ProviderBuilder::new().layer(balance_alerts_layer).connect_http(rpc_url);
+        let base_provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .filler(ChainIdFiller::default())
+            .layer(balance_alerts_layer)
+            .connect_http(rpc_url);
         let provider = NonceProvider::new(base_provider, wallet.clone());
 
         let boundless_market =

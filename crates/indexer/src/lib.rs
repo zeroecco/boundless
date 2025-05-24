@@ -10,8 +10,8 @@ use alloy::{
     network::{Ethereum, TransactionResponse},
     primitives::{Address, Bytes, B256},
     providers::{
-        fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
-        Provider, ProviderBuilder, RootProvider,
+        fillers::{ChainIdFiller, FillProvider, JoinFill},
+        Identity, Provider, ProviderBuilder, RootProvider,
     },
     rpc::types::Log,
     signers::local::PrivateKeySigner,
@@ -33,13 +33,7 @@ pub mod test_utils;
 
 const MAX_BATCH_SIZE: u64 = 500;
 
-type ProviderWallet = FillProvider<
-    JoinFill<
-        alloy::providers::Identity,
-        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-    >,
-    RootProvider,
->;
+type ProviderWallet = FillProvider<JoinFill<Identity, ChainIdFiller>, RootProvider>;
 
 #[derive(Error, Debug)]
 pub enum ServiceError {
@@ -90,7 +84,10 @@ impl IndexerService<ProviderWallet> {
         config: IndexerServiceConfig,
     ) -> Result<Self, ServiceError> {
         let caller = private_key.address();
-        let provider = ProviderBuilder::new().connect_http(rpc_url);
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .filler(ChainIdFiller::default())
+            .connect_http(rpc_url);
         let boundless_market =
             BoundlessMarketService::new(boundless_market_address, provider.clone(), caller);
         let db: DbObj = Arc::new(AnyDb::new(db_conn).await?);

@@ -4,7 +4,7 @@
 
 use alloy::{
     primitives::utils::parse_ether,
-    providers::{network::EthereumWallet, ProviderBuilder, WalletProvider},
+    providers::{fillers::ChainIdFiller, network::EthereumWallet, ProviderBuilder, WalletProvider},
     rpc::client::RpcClient,
     transports::layers::RetryBackoffLayer,
 };
@@ -69,6 +69,8 @@ async fn main() -> Result<()> {
     );
 
     let base_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .filler(ChainIdFiller::default())
         .filler(dynamic_gas_filler)
         .layer(balance_alerts_layer)
         .connect_client(client);

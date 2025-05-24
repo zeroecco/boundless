@@ -17,7 +17,7 @@ use std::time::Duration;
 use alloy::{
     network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, U256},
-    providers::{Provider, ProviderBuilder},
+    providers::{fillers::ChainIdFiller, Provider, ProviderBuilder},
     signers::{local::PrivateKeySigner, Signer},
 };
 use alloy_primitives::{Signature, B256};
@@ -118,6 +118,8 @@ impl<St, Si> ClientBuilder<St, Si> {
 
         // Connect the RPC provider.
         let base_provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .filler(ChainIdFiller::default())
             .filler(dynamic_gas_filler)
             .layer(BalanceAlertLayer::new(self.balance_alerts.unwrap_or_default()))
             .connect(rpc_url.as_str())

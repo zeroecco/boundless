@@ -99,13 +99,13 @@ where
             );
         }
 
-        let tx = self.inner.fill(request).await.unwrap();
+        let tx = self.inner.fill(request).await?;
 
         let builder = match tx {
             SendableTx::Builder(builder) => builder,
-            _ => {
-                panic!("should not be called test");
-                // return Ok(tx);
+            SendableTx::Envelope(envelope) => {
+                tracing::warn!("Unexpected signed transaction in provider");
+                return self.inner.send_transaction_internal(SendableTx::Envelope(envelope)).await;
             }
         };
 

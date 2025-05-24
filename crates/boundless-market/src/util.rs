@@ -18,7 +18,9 @@ use crate::{
     nonce_layer::NonceProvider,
 };
 #[cfg(not(target_os = "zkvm"))]
-use alloy::providers::{fillers::JoinFill, utils::JoinedRecommendedFillers, RootProvider};
+use alloy::providers::fillers::{ChainIdFiller, JoinFill};
+#[cfg(not(target_os = "zkvm"))]
+use alloy::providers::{Identity, RootProvider};
 
 /// Type used in the [Client] and [StandardRequestBuilder] to indicate that the component in question is not provided.
 ///
@@ -35,7 +37,7 @@ pub enum NotProvided {}
 /// and [StandardRequestBuilder][crate::request_builder::StandardRequestBuilder]
 #[cfg(not(target_os = "zkvm"))]
 pub type StandardRpcProvider = NonceProvider<
-    JoinFill<JoinedRecommendedFillers, DynamicGasFiller>,
+    JoinFill<JoinFill<Identity, ChainIdFiller>, DynamicGasFiller>,
     BalanceAlertProvider<RootProvider>,
 >;
 
