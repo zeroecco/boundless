@@ -13,19 +13,13 @@
 // limitations under the License.
 
 use alloy::{
-    network::{EthereumWallet, Network, TransactionBuilder},
+    network::EthereumWallet,
     node_bindings::AnvilInstance,
     primitives::{Address, Bytes, FixedBytes},
-    providers::{
-        ext::AnvilApi,
-        fillers::{
-            ChainIdFiller, FillerControlFlow, GasFillable, GasFiller, NonceFiller, TxFiller,
-        },
-        Provider, ProviderBuilder, SendableTx, WalletProvider,
-    },
+    providers::{ext::AnvilApi, fillers::ChainIdFiller, Provider, ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol_types::SolCall,
-    transports::TransportResult,
+    transports::http::reqwest::Url,
 };
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::{Eip712Domain, SolStruct, SolValue};
@@ -38,7 +32,8 @@ use boundless_market::{
         AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
     },
     deployments::Deployment,
-    resettable_nonce_layer::{NonceResetLayer, ResettableNonceManager},
+    dynamic_gas_filler::DynamicGasFiller,
+    nonce_layer::NonceProvider,
 };
 use risc0_aggregation::{
     merkle_path, merkle_root, GuestState, SetInclusionReceipt,
@@ -219,6 +214,8 @@ pub async fn deploy_contracts(
         .connect(&anvil.endpoint())
         .await?;
 
+    println!("PRE DEPLOY PROVIDER: {:?}", deployer_provider);
+
     // Deploy contracts
     let verifier_router = deploy_verifier_router(&deployer_provider, deployer_address).await?;
     let (verifier, groth16_selector) = match is_dev_mode() {
@@ -287,61 +284,6 @@ pub async fn create_test_ctx(
     create_test_ctx_with_rpc_url(anvil, &anvil.endpoint()).await
 }
 
-/// This is a stop-gap workaround to insufficient gas estimation for lock transactions in anvil.
-// TODO: resolve the gas discrepancy to avoid lock transaction failures if possible outside of
-//       tests, currently unclear if `anvil` specific or a gas difference based on timestamp control
-//       flow.
-#[derive(Clone, Copy, Debug, Default)]
-struct TestGasFiller;
-
-impl<N: Network> TxFiller<N> for TestGasFiller {
-    type Fillable = GasFillable;
-
-    fn status(&self, tx: &<N as Network>::TransactionRequest) -> FillerControlFlow {
-        TxFiller::<N>::status(&GasFiller, tx)
-    }
-
-    fn fill_sync(&self, _tx: &mut SendableTx<N>) {}
-
-    async fn prepare<P>(
-        &self,
-        provider: &P,
-        tx: &N::TransactionRequest,
-    ) -> TransportResult<Self::Fillable>
-    where
-        P: Provider<N>,
-    {
-        // Default gas filler, overrides in `fill`
-        GasFiller.prepare(provider, tx).await
-    }
-
-    async fn fill(
-        &self,
-        fillable: Self::Fillable,
-        mut tx: SendableTx<N>,
-    ) -> TransportResult<SendableTx<N>> {
-        if let Some(builder) = tx.as_mut_builder() {
-            // Overrides setting gas limit
-            match fillable {
-                GasFillable::Legacy { gas_limit, gas_price } => {
-                    // Multiply gas limit by 1.5
-                    let adjusted_gas_limit = (gas_limit * 15) / 10;
-                    builder.set_gas_limit(adjusted_gas_limit);
-                    builder.set_gas_price(gas_price);
-                }
-                GasFillable::Eip1559 { gas_limit, estimate } => {
-                    // Multiply gas limit by 1.5
-                    let adjusted_gas_limit = (gas_limit * 15) / 10;
-                    builder.set_gas_limit(adjusted_gas_limit);
-                    builder.set_max_fee_per_gas(estimate.max_fee_per_gas);
-                    builder.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-                }
-            }
-        };
-        TransportResult::Ok(tx)
-    }
-}
-
 pub async fn create_test_ctx_with_rpc_url(
     anvil: &AnvilInstance,
     rpc_url: &str,
@@ -367,42 +309,37 @@ pub async fn create_test_ctx_with_rpc_url(
     let customer_signer: PrivateKeySigner = anvil.keys()[2].clone().into();
     let verifier_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
 
-    let nonce_manager = ResettableNonceManager::default();
-    let nonce_filler = NonceFiller::new(nonce_manager.clone());
-    let nonce_reset_layer = NonceResetLayer::new(prover_signer.address(), nonce_manager.clone());
-    let prover_provider = ProviderBuilder::new()
+    let dynamic_gas_filler = DynamicGasFiller::new(
+        0.2,  // 20% increase of gas limit
+        0.05, // 5% increase of gas_price per pending transaction
+        2.0,  // 2x max gas multiplier
+        prover_signer.address(),
+    );
+    let base_prover_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .layer(nonce_reset_layer)
-        .filler(nonce_filler)
         .filler(ChainIdFiller::default())
-        .filler(TestGasFiller)
-        .wallet(EthereumWallet::from(prover_signer.clone()))
-        .connect(rpc_url)
-        .await?;
-    let nonce_manager = ResettableNonceManager::default();
-    let nonce_filler = NonceFiller::new(nonce_manager.clone());
-    let nonce_reset_layer = NonceResetLayer::new(customer_signer.address(), nonce_manager.clone());
-    let customer_provider = ProviderBuilder::new()
+        .filler(dynamic_gas_filler)
+        .connect_http(Url::parse(rpc_url).unwrap());
+    let prover_provider =
+        NonceProvider::new(base_prover_provider, EthereumWallet::from(prover_signer.clone()));
+
+    let dynamic_gas_filler = DynamicGasFiller::new(0.2, 0.05, 2.0, customer_signer.address());
+    let base_customer_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .layer(nonce_reset_layer)
-        .filler(nonce_filler)
         .filler(ChainIdFiller::default())
-        .filler(TestGasFiller)
-        .wallet(EthereumWallet::from(customer_signer.clone()))
-        .connect(rpc_url)
-        .await?;
-    let nonce_manager = ResettableNonceManager::default();
-    let nonce_filler = NonceFiller::new(nonce_manager.clone());
-    let nonce_reset_layer = NonceResetLayer::new(verifier_signer.address(), nonce_manager.clone());
-    let verifier_provider = ProviderBuilder::new()
+        .filler(dynamic_gas_filler)
+        .connect_http(Url::parse(rpc_url).unwrap());
+    let customer_provider =
+        NonceProvider::new(base_customer_provider, EthereumWallet::from(customer_signer.clone()));
+
+    let dynamic_gas_filler = DynamicGasFiller::new(0.2, 0.05, 2.0, verifier_signer.address());
+    let base_verifier_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .layer(nonce_reset_layer)
-        .filler(nonce_filler)
         .filler(ChainIdFiller::default())
-        .filler(TestGasFiller)
-        .wallet(EthereumWallet::from(verifier_signer.clone()))
-        .connect(rpc_url)
-        .await?;
+        .filler(dynamic_gas_filler)
+        .connect_http(Url::parse(rpc_url).unwrap());
+    let verifier_provider =
+        NonceProvider::new(base_verifier_provider, EthereumWallet::from(verifier_signer.clone()));
 
     let prover_market = BoundlessMarketService::new(
         boundless_market_addr,

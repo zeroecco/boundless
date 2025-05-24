@@ -13,16 +13,14 @@
 // limitations under the License.
 
 #[cfg(not(target_os = "zkvm"))]
-use crate::balance_alerts_layer::BalanceAlertProvider;
-#[cfg(not(target_os = "zkvm"))]
-use alloy::{
-    network::EthereumWallet,
-    providers::{
-        fillers::{FillProvider, JoinFill, WalletFiller},
-        utils::JoinedRecommendedFillers,
-        RootProvider,
-    },
+use crate::{
+    balance_alerts_layer::BalanceAlertProvider, dynamic_gas_filler::DynamicGasFiller,
+    nonce_layer::NonceProvider,
 };
+#[cfg(not(target_os = "zkvm"))]
+use alloy::providers::fillers::{ChainIdFiller, JoinFill};
+#[cfg(not(target_os = "zkvm"))]
+use alloy::providers::{Identity, RootProvider};
 
 /// Type used in the [Client] and [StandardRequestBuilder] to indicate that the component in question is not provided.
 ///
@@ -38,8 +36,8 @@ pub enum NotProvided {}
 /// Alias for the [alloy] RPC provider used by the [StandardClient][crate::client::StandardClient]
 /// and [StandardRequestBuilder][crate::request_builder::StandardRequestBuilder]
 #[cfg(not(target_os = "zkvm"))]
-pub type StandardRpcProvider = FillProvider<
-    JoinFill<JoinedRecommendedFillers, WalletFiller<EthereumWallet>>,
+pub type StandardRpcProvider = NonceProvider<
+    JoinFill<JoinFill<Identity, ChainIdFiller>, DynamicGasFiller>,
     BalanceAlertProvider<RootProvider>,
 >;
 

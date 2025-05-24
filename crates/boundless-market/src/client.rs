@@ -17,7 +17,7 @@ use std::time::Duration;
 use alloy::{
     network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, U256},
-    providers::{Provider, ProviderBuilder},
+    providers::{fillers::ChainIdFiller, Provider, ProviderBuilder},
     signers::{local::PrivateKeySigner, Signer},
 };
 use alloy_primitives::{Signature, B256};
@@ -35,6 +35,8 @@ use crate::{
         ProofRequest, RequestError,
     },
     deployments::Deployment,
+    dynamic_gas_filler::DynamicGasFiller,
+    nonce_layer::NonceProvider,
     order_stream_client::{Order, OrderStreamClient},
     request_builder::{
         FinalizerConfigBuilder, OfferLayer, OfferLayerConfigBuilder, RequestBuilder,
@@ -107,13 +109,23 @@ impl<St, Si> ClientBuilder<St, Si> {
 
         let wallet_default_signer = wallet.default_signer().address();
 
+        let dynamic_gas_filler = DynamicGasFiller::new(
+            0.2,  // 20% increase of gas limit
+            0.05, // 5% increase of gas_price per pending transaction
+            2.0,  // 2x max gas multiplier
+            wallet_default_signer,
+        );
+
         // Connect the RPC provider.
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
+        let base_provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .filler(ChainIdFiller::default())
+            .filler(dynamic_gas_filler)
             .layer(BalanceAlertLayer::new(self.balance_alerts.unwrap_or_default()))
             .connect(rpc_url.as_str())
             .await
             .with_context(|| format!("failed to connect provider to {rpc_url}"))?;
+        let provider = NonceProvider::new(base_provider, wallet.clone());
 
         // Resolve the deployment information.
         let chain_id =
