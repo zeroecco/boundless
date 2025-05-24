@@ -22,6 +22,7 @@ use boundless_market::{
         boundless_market::{BoundlessMarketService, MarketError},
         IBoundlessMarket::{self},
     },
+    dynamic_gas_filler::DynamicGasFiller,
     nonce_layer::NonceProvider,
 };
 use db::{DbError, DbObj, SqliteDb};
@@ -31,8 +32,10 @@ use url::Url;
 
 mod db;
 
-type ProviderWallet =
-    NonceProvider<JoinFill<Identity, ChainIdFiller>, BalanceAlertProvider<RootProvider>>;
+type ProviderWallet = NonceProvider<
+    JoinFill<JoinFill<Identity, ChainIdFiller>, DynamicGasFiller>,
+    BalanceAlertProvider<RootProvider>,
+>;
 
 #[derive(Error, Debug)]
 pub enum ServiceError {
@@ -95,15 +98,18 @@ impl SlashService<ProviderWallet> {
         let caller = private_key.address();
         let wallet = EthereumWallet::from(private_key.clone());
 
+        let signer_address = wallet.default_signer().address();
         let balance_alerts_layer = BalanceAlertLayer::new(BalanceAlertConfig {
-            watch_address: wallet.default_signer().address(),
+            watch_address: signer_address,
             warn_threshold: config.balance_warn_threshold,
             error_threshold: config.balance_error_threshold,
         });
 
+        let dynamic_gas_filler = DynamicGasFiller::new(0.2, 0.05, 2.0, signer_address);
         let base_provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .filler(ChainIdFiller::default())
+            .filler(dynamic_gas_filler)
             .layer(balance_alerts_layer)
             .connect_http(rpc_url);
         let provider = NonceProvider::new(base_provider, wallet.clone());
@@ -422,7 +428,7 @@ where
                         return Err(ServiceError::InsufficientFunds(err_msg));
                     } else {
                         // Any other error should be RPC related so we can retry
-                        tracing::error!("Failed to slash request 0x{:x}", request_id);
+                        tracing::error!("Failed to slash request 0x{:x}: {}", request_id, err);
                         return Err(ServiceError::BoundlessMarketError(err));
                     }
                 }

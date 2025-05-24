@@ -214,6 +214,8 @@ pub async fn deploy_contracts(
         .connect(&anvil.endpoint())
         .await?;
 
+    println!("PRE DEPLOY PROVIDER: {:?}", deployer_provider);
+
     // Deploy contracts
     let verifier_router = deploy_verifier_router(&deployer_provider, deployer_address).await?;
     let (verifier, groth16_selector) = match is_dev_mode() {
@@ -321,6 +323,7 @@ pub async fn create_test_ctx_with_rpc_url(
     let prover_provider =
         NonceProvider::new(base_prover_provider, EthereumWallet::from(prover_signer.clone()));
 
+    let dynamic_gas_filler = DynamicGasFiller::new(0.2, 0.05, 2.0, customer_signer.address());
     let base_customer_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
         .filler(ChainIdFiller::default())
@@ -329,6 +332,7 @@ pub async fn create_test_ctx_with_rpc_url(
     let customer_provider =
         NonceProvider::new(base_customer_provider, EthereumWallet::from(customer_signer.clone()));
 
+    let dynamic_gas_filler = DynamicGasFiller::new(0.2, 0.05, 2.0, verifier_signer.address());
     let base_verifier_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
         .filler(ChainIdFiller::default())
