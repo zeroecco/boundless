@@ -46,7 +46,6 @@ use std::{
 use alloy::{
     network::Ethereum,
     primitives::{
-        aliases::U96,
         utils::{format_ether, parse_ether, parse_units},
         Address, Bytes, FixedBytes, TxKind, B256, U256,
     },
@@ -512,7 +511,7 @@ async fn handle_account_command(
             Ok(())
         }
         AccountCommands::DepositStake { amount } => {
-            let chain_id: u64 = boundless_market.get_chain_id().await?;
+            let chain_id: u64 = client.boundless_market.get_chain_id().await?;
             let (parsed_amount, t): (U256, &str) = if chain_id == 8453 {
                 (
                     parse_units(amount, "mwei")
@@ -530,7 +529,11 @@ async fn handle_account_command(
                 )
             };
             tracing::info!("Depositing {amount} {t} as stake");
-            match boundless_market.deposit_stake_with_permit(parsed_amount, &private_key).await {
+            match client
+                .boundless_market
+                .deposit_stake_with_permit(parsed_amount, &private_key)
+                .await
+            {
                 Ok(_) => {
                     tracing::info!("Successfully deposited {amount} {t} as stake");
                     Ok(())
@@ -548,7 +551,7 @@ async fn handle_account_command(
             }
         }
         AccountCommands::WithdrawStake { amount } => {
-            let chain_id: u64 = boundless_market.get_chain_id().await?;
+            let chain_id: u64 = client.boundless_market.get_chain_id().await?;
             let (parsed_amount, t): (U256, &str) = if chain_id == 8453 {
                 (
                     parse_units(amount, "mwei")
@@ -566,7 +569,7 @@ async fn handle_account_command(
                 )
             };
             tracing::info!("Withdrawing {amount} {t} from stake");
-            boundless_market.withdraw_stake(parsed_amount).await?;
+            client.boundless_market.withdraw_stake(parsed_amount).await?;
             tracing::info!("Successfully withdrew {amount} {t} from stake");
             Ok(())
         }
@@ -1569,15 +1572,18 @@ mod tests {
         let mut args = MainArgs {
             config,
             command: Command::Account(Box::new(AccountCommands::DepositStake {
-                amount: default_allowance().to_string(),
+                amount: format_ether(default_allowance()),
             })),
         };
 
         run(&args).await.unwrap();
-        assert!(logs_contain(&format!("Depositing {} HP as stake", default_allowance())));
+        assert!(logs_contain(&format!(
+            "Depositing {} HP as stake",
+            format_ether(default_allowance())
+        )));
         assert!(logs_contain(&format!(
             "Successfully deposited {} HP as stake",
-            default_allowance()
+            format_ether(default_allowance())
         )));
 
         let balance =
@@ -1599,14 +1605,17 @@ mod tests {
         )));
 
         args.command = Command::Account(Box::new(AccountCommands::WithdrawStake {
-            amount: default_allowance().to_string(),
+            amount: format_ether(default_allowance()),
         }));
 
         run(&args).await.unwrap();
-        assert!(logs_contain(&format!("Withdrawing {} HP from stake", default_allowance())));
+        assert!(logs_contain(&format!(
+            "Withdrawing {} HP from stake",
+            format_ether(default_allowance())
+        )));
         assert!(logs_contain(&format!(
             "Successfully withdrew {} HP from stake",
-            default_allowance()
+            format_ether(default_allowance())
         )));
 
         let balance =
@@ -1622,7 +1631,7 @@ mod tests {
         let mut args = MainArgs {
             config,
             command: Command::Account(Box::new(AccountCommands::DepositStake {
-                amount: default_allowance().to_string(),
+                amount: format_ether(default_allowance()),
             })),
         };
 
@@ -1633,7 +1642,7 @@ mod tests {
         )));
 
         args.command = Command::Account(Box::new(AccountCommands::WithdrawStake {
-            amount: default_allowance().to_string(),
+            amount: format_ether(default_allowance()),
         }));
 
         let err = run(&args).await.unwrap_err();
