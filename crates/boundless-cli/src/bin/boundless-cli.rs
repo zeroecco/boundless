@@ -136,12 +136,12 @@ enum AccountCommands {
     },
     /// Deposit stake funds into the market
     DepositStake {
-        /// Amount in HP to deposit in Eth or USDC based on the chain ID.
+        /// Amount to deposit in HP or USDC based on the chain ID.
         amount: String,
     },
     /// Withdraw stake funds from the market
     WithdrawStake {
-        /// Amount to withdraw in Eth or USDC based on the chain ID.
+        /// Amount to withdraw in HP or USDC based on the chain ID.
         amount: String,
     },
     /// Check the stake balance of an account in the market
