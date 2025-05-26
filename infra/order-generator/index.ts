@@ -34,7 +34,7 @@ export = () => {
   const boundlessPagerdutyTopicArn = baseConfig.get('PAGERDUTY_ALERTS_TOPIC_ARN');
   const alertsTopicArns = [boundlessAlertsTopicArn, boundlessPagerdutyTopicArn].filter(Boolean) as string[];
   const interval = baseConfig.require('INTERVAL');
-  const lockStake = baseConfig.require('LOCK_STAKE');
+  const lockStakeRaw = baseConfig.require('LOCK_STAKE_RAW');
   const rampUp = baseConfig.require('RAMP_UP');
   const minPricePerMCycle = baseConfig.require('MIN_PRICE_PER_MCYCLE');
   const maxPricePerMCycle = baseConfig.require('MAX_PRICE_PER_MCYCLE');
@@ -111,6 +111,8 @@ export = () => {
 
   const offchainConfig = new pulumi.Config("order-generator-offchain");
   const autoDeposit = offchainConfig.require('AUTO_DEPOSIT');
+  const offchainWarnBalanceBelow = offchainConfig.get('WARN_BALANCE_BELOW');
+  const offchainErrorBalanceBelow = offchainConfig.get('ERROR_BALANCE_BELOW');
   const offchainPrivateKey = isDev ? pulumi.output(getEnvVar("OFFCHAIN_PRIVATE_KEY")) : offchainConfig.requireSecret('PRIVATE_KEY');
   new OrderGenerator('offchain', {
     chainId,
@@ -118,6 +120,8 @@ export = () => {
     privateKey: offchainPrivateKey,
     pinataJWT,
     ethRpcUrl,
+    warnBalanceBelow: offchainWarnBalanceBelow,
+    errorBalanceBelow: offchainErrorBalanceBelow,
     offchainConfig: {
       autoDeposit,
       orderStreamUrl,
@@ -128,7 +132,7 @@ export = () => {
     boundlessMarketAddr,
     pinataGateway,
     interval,
-    lockStake,
+    lockStakeRaw,
     rampUp,
     minPricePerMCycle,
     maxPricePerMCycle,
@@ -140,10 +144,14 @@ export = () => {
   });
 
   const onchainConfig = new pulumi.Config("order-generator-onchain");
+  const onchainWarnBalanceBelow = onchainConfig.get('WARN_BALANCE_BELOW');
+  const onchainErrorBalanceBelow = onchainConfig.get('ERROR_BALANCE_BELOW');
   const onchainPrivateKey = isDev ? pulumi.output(getEnvVar("ONCHAIN_PRIVATE_KEY")) : onchainConfig.requireSecret('PRIVATE_KEY');
   new OrderGenerator('onchain', {
     chainId,
     stackName,
+    warnBalanceBelow: onchainWarnBalanceBelow,
+    errorBalanceBelow: onchainErrorBalanceBelow,
     privateKey: onchainPrivateKey,
     pinataJWT,
     ethRpcUrl,
@@ -153,7 +161,7 @@ export = () => {
     boundlessMarketAddr,
     pinataGateway,
     interval,
-    lockStake,
+    lockStakeRaw,
     rampUp,
     minPricePerMCycle,
     maxPricePerMCycle,

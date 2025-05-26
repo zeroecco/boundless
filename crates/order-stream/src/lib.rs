@@ -6,9 +6,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use alloy::providers::fillers::{
-    BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
-};
+use alloy::providers::fillers::{ChainIdFiller, FillProvider, JoinFill};
 use alloy::providers::Identity;
 use alloy::{
     primitives::{utils::parse_ether, Address, U256},
@@ -313,13 +311,7 @@ pub enum ConfigError {
     MissingRequiredField(&'static str),
 }
 
-type WalletProvider = FillProvider<
-    JoinFill<
-        Identity,
-        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-    >,
-    RootProvider,
->;
+type ReadOnlyProvider = FillProvider<JoinFill<Identity, ChainIdFiller>, RootProvider>;
 
 /// Application state struct
 pub struct AppState {
@@ -330,7 +322,7 @@ pub struct AppState {
     /// Map of pending connections by address with their timestamp
     pending_connections: Arc<Mutex<HashMap<Address, Instant>>>,
     /// Ethereum RPC provider
-    rpc_provider: WalletProvider,
+    rpc_provider: ReadOnlyProvider,
     /// Configuration
     config: Config,
     /// chain_id
@@ -349,7 +341,10 @@ impl AppState {
             config.rpc_retry_cu,
         );
         let client = RpcClient::builder().layer(retry_layer).http(config.rpc_url.clone());
-        let rpc_provider = ProviderBuilder::new().connect_client(client);
+        let rpc_provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .filler(ChainIdFiller::default())
+            .connect_client(client);
 
         let db = if let Some(db_pool) = db_pool_opt {
             OrderDb::from_pool(db_pool).await?
@@ -686,7 +681,7 @@ mod tests {
 
                 // Handle potential errors from both streams
                 match (res1, res2) {
-                    (Some(Ok(order1)), Some(Ok(order2))) => {
+                    (Some(order1), Some(order2)) => {
                         if order1.order == order2.order {
                             order_tx.send(order1).await.unwrap();
                         } else {

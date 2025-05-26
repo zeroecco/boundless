@@ -30,11 +30,6 @@ struct MainArgs {
     /// URL of the Ethereum RPC endpoint.
     #[clap(short, long, env)]
     rpc_url: Url,
-    /// Optional URL of the offchain order stream endpoint.
-    ///
-    /// If set, the order-generator will submit requests off-chain.
-    #[clap(short, long, env)]
-    order_stream_url: Option<Url>,
     /// Private key used to sign and submit requests.
     #[clap(long, env)]
     private_key: PrivateKeySigner,
@@ -44,7 +39,7 @@ struct MainArgs {
     /// When submitting offchain, auto-deposits an amount in ETH when market balance is below this value.
     ///
     /// This parameter can only be set if order_stream_url is provided.
-    #[clap(long, env, value_parser = parse_ether, requires = "order_stream_url")]
+    #[clap(long, env, value_parser = parse_ether, requires = "submit_offchain")]
     auto_deposit: Option<U256>,
     /// Interval in seconds between requests.
     #[clap(short, long, default_value = "60")]
@@ -61,8 +56,8 @@ struct MainArgs {
     #[clap(long = "max", value_parser = parse_ether, default_value = "0.002")]
     max_price_per_mcycle: U256,
     /// Lockin stake amount in ether.
-    #[clap(short, long, value_parser = parse_ether, default_value = "0.0")]
-    lockin_stake: U256,
+    #[clap(short, long, default_value = "0")]
+    lock_stake_raw: U256,
     /// Number of seconds, from the current time, before the auction period starts.
     #[clap(long, default_value = "30")]
     bidding_start_delay: u64,
@@ -101,6 +96,11 @@ struct MainArgs {
     /// Boundless Market deployment configuration
     #[clap(flatten, next_help_heading = "Boundless Market Deployment")]
     deployment: Option<Deployment>,
+
+    /// Submit requests offchain.
+    #[clap(long, default_value = "false")]
+    submit_offchain: bool,
+
     /// Storage provider to use.
     #[clap(flatten, next_help_heading = "Storage Provider")]
     storage_config: StorageProviderConfig,
@@ -206,7 +206,7 @@ async fn run(args: &MainArgs) -> Result<()> {
                     .ramp_up_period(args.ramp_up)
                     .lock_timeout(lock_timeout)
                     .timeout(timeout)
-                    .lock_stake(args.lockin_stake),
+                    .lock_stake(args.lock_stake_raw),
             );
 
         // Build the request, including preflight, and assigned the remaining fields.
@@ -221,7 +221,7 @@ async fn run(args: &MainArgs) -> Result<()> {
             format_units(request.offer.maxPrice, "ether")?
         );
 
-        let submit_offchain = args.order_stream_url.is_some();
+        let submit_offchain = args.submit_offchain;
 
         // Check balance and auto-deposit if needed. Only necessary if submitting offchain, since onchain submission automatically deposits
         // in the submitRequest call.
@@ -243,11 +243,17 @@ async fn run(args: &MainArgs) -> Result<()> {
                         format_units(balance, "ether")?,
                         format_units(auto_deposit, "ether")?
                     );
-                    market.deposit(auto_deposit).await?;
-                    tracing::info!(
-                        "Successfully deposited {} ETH",
-                        format_units(auto_deposit, "ether")?
-                    );
+                    match market.deposit(auto_deposit).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "Successfully deposited {} ETH",
+                                format_units(auto_deposit, "ether")?
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to auto deposit ETH: {e:?}");
+                        }
+                    }
                 }
             }
         }
@@ -261,7 +267,7 @@ async fn run(args: &MainArgs) -> Result<()> {
         if submit_offchain {
             tracing::info!(
                 "Request 0x{request_id:x} submitted offchain to {}",
-                args.order_stream_url.clone().unwrap()
+                client.deployment.order_stream_url.clone().unwrap()
             );
         } else {
             tracing::info!(
@@ -296,7 +302,6 @@ mod tests {
 
         let args = MainArgs {
             rpc_url: anvil.endpoint_url(),
-            order_stream_url: None,
             storage_config: StorageProviderConfig::dev_mode(),
             private_key: ctx.customer_signer,
             deployment: Some(ctx.deployment.clone()),
@@ -304,7 +309,7 @@ mod tests {
             count: Some(2),
             min_price_per_mcycle: parse_ether("0.001").unwrap(),
             max_price_per_mcycle: parse_ether("0.002").unwrap(),
-            lockin_stake: parse_ether("0.0").unwrap(),
+            lock_stake_raw: parse_ether("0.0").unwrap(),
             bidding_start_delay: 30,
             ramp_up: 0,
             timeout: 1000,
@@ -316,6 +321,7 @@ mod tests {
             error_balance_below: None,
             auto_deposit: None,
             tx_timeout: 45,
+            submit_offchain: false,
         };
 
         run(&args).await.unwrap();
