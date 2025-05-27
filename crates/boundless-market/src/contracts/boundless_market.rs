@@ -1294,6 +1294,35 @@ impl<P: Provider> BoundlessMarketService<P> {
         }
         Ok(())
     }
+
+    /// Returns the stake token address used by the market.
+    pub async fn stake_token_address(&self) -> Result<Address, MarketError> {
+        tracing::trace!("Calling STAKE_TOKEN_CONTRACT()");
+        let address = self
+            .instance
+            .STAKE_TOKEN_CONTRACT()
+            .call()
+            .await
+            .context("STAKE_TOKEN_CONTRACT call failed")?
+            .0;
+        Ok(address.into())
+    }
+
+    /// Returns the stake token's symbol.
+    pub async fn stake_token_symbol(&self) -> Result<String, MarketError> {
+        let address = self.stake_token_address().await?;
+        let contract = IERC20::new(address, self.instance.provider());
+        let symbol = contract.symbol().call().await.context("Failed to get token symbol")?;
+        Ok(symbol)
+    }
+
+    /// Returns the stake token's decimals.
+    pub async fn stake_token_decimals(&self) -> Result<u8, MarketError> {
+        let address = self.stake_token_address().await?;
+        let contract = IERC20::new(address, self.instance.provider());
+        let decimals = contract.decimals().call().await.context("Failed to get token decimals")?;
+        Ok(decimals)
+    }
 }
 
 impl Offer {

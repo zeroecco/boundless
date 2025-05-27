@@ -46,7 +46,7 @@ use std::{
 use alloy::{
     network::Ethereum,
     primitives::{
-        utils::{format_ether, parse_ether, parse_units},
+        utils::{format_ether, format_units, parse_ether, parse_units},
         Address, Bytes, FixedBytes, TxKind, B256, U256,
     },
     providers::{network::EthereumWallet, Provider, ProviderBuilder},
@@ -511,31 +511,19 @@ async fn handle_account_command(
             Ok(())
         }
         AccountCommands::DepositStake { amount } => {
-            let chain_id: u64 = client.boundless_market.get_chain_id().await?;
-            let (parsed_amount, t): (U256, &str) = if chain_id == 8453 {
-                (
-                    parse_units(amount, "mwei")
-                        .map_err(|e| anyhow!("Failed to parse USDC: {}", e))?
-                        .into(),
-                    "USDC",
-                )
-            } else {
-                // HP amount parsing
-                (
-                    parse_units(amount, "ether")
-                        .map_err(|e| anyhow!("Failed to parse Ether: {}", e))?
-                        .into(),
-                    "HP",
-                )
-            };
-            tracing::info!("Depositing {amount} {t} as stake");
+            let symbol = client.boundless_market.stake_token_symbol().await?;
+            let decimals = client.boundless_market.stake_token_decimals().await?;
+            let parsed_amount = parse_units(amount, decimals)
+                .map_err(|e| anyhow!("Failed to parse amount: {}", e))?
+                .into();
+            tracing::info!("Depositing {amount} {symbol} as stake");
             match client
                 .boundless_market
                 .deposit_stake_with_permit(parsed_amount, &private_key)
                 .await
             {
                 Ok(_) => {
-                    tracing::info!("Successfully deposited {amount} {t} as stake");
+                    tracing::info!("Successfully deposited {amount} {symbol} as stake");
                     Ok(())
                 }
                 Err(e) => {
@@ -551,33 +539,25 @@ async fn handle_account_command(
             }
         }
         AccountCommands::WithdrawStake { amount } => {
-            let chain_id: u64 = client.boundless_market.get_chain_id().await?;
-            let (parsed_amount, t): (U256, &str) = if chain_id == 8453 {
-                (
-                    parse_units(amount, "mwei")
-                        .map_err(|e| anyhow!("Failed to parse USDC: {}", e))?
-                        .into(),
-                    "USDC",
-                )
-            } else {
-                // HP amount parsing
-                (
-                    parse_units(amount, "ether")
-                        .map_err(|e| anyhow!("Failed to parse Ether: {}", e))?
-                        .into(),
-                    "HP",
-                )
-            };
-            tracing::info!("Withdrawing {amount} {t} from stake");
+            let symbol = client.boundless_market.stake_token_symbol().await?;
+            let decimals = client.boundless_market.stake_token_decimals().await?;
+            let parsed_amount = parse_units(amount, decimals)
+                .map_err(|e| anyhow!("Failed to parse amount: {}", e))?
+                .into();
+            tracing::info!("Withdrawing {amount} {symbol} from stake");
             client.boundless_market.withdraw_stake(parsed_amount).await?;
-            tracing::info!("Successfully withdrew {amount} {t} from stake");
+            tracing::info!("Successfully withdrew {amount} {symbol} from stake");
             Ok(())
         }
         AccountCommands::StakeBalance { address } => {
+            let symbol = client.boundless_market.stake_token_symbol().await?;
+            let decimals = client.boundless_market.stake_token_decimals().await?;
             let addr = address.unwrap_or(client.boundless_market.caller());
             tracing::info!("Checking stake balance for address {}", addr);
             let balance = client.boundless_market.balance_of_stake(addr).await?;
-            tracing::info!("Stake balance for address {}: {} HP", addr, format_ether(balance));
+            let balance = format_units(balance, decimals)
+                .map_err(|e| anyhow!("Failed to format stake balance: {}", e))?;
+            tracing::info!("Stake balance for address {}: {} {}", addr, balance, symbol);
             Ok(())
         }
     }
@@ -1350,7 +1330,7 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
         };
     } else {
         // Verifier router is recommended, but not required for most operations.
-        println!("⚠️Verifier router address not configured");
+        println!("⚠️ Verifier router address not configured");
     }
 
     println!(

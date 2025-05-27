@@ -102,6 +102,8 @@ pub mod token {
             error ERC20InvalidSpender(address spender);
             function approve(address spender, uint256 value) external returns (bool);
             function balanceOf(address account) external view returns (uint256);
+            function symbol() external view returns (string memory);
+            function decimals() external view returns (uint8);
         }
     }
 
