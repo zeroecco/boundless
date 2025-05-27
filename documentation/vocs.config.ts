@@ -44,10 +44,6 @@ const DEVELOPERS_ITEMS = [
             link: "/developers/tutorials/build",
           },
           {
-            text: "Request a Proof [NEW]",
-            link: "/developers/tutorials/request-a-proof",
-          },
-          {
             text: "Request a Proof",
             link: "/developers/tutorials/request",
           },
