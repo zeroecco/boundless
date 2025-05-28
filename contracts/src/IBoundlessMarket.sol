@@ -36,9 +36,8 @@ interface IBoundlessMarket {
     event RequestFulfilled(RequestId indexed requestId);
 
     /// @notice Event logged when a proof is delivered that satisfies the request's requirements.
-    /// @dev It is possible for this event to be logged multiple times for a single request. This
-    /// is usually logged as part of order fulfillment, however it can also be logged by a prover
-    /// sending the proof without payment.
+    /// @dev It is possible for this event to be logged multiple times for a single request. The
+    /// first event logged will always coincide with the `RequestFulfilled` event and the fulfilled flag on the request being set.
     /// @param requestId The ID of the request.
     event ProofDelivered(RequestId indexed requestId);
 
@@ -92,11 +91,11 @@ interface IBoundlessMarket {
     /// @param requestId The ID of the request.
     error RequestIsLocked(RequestId requestId);
 
-    /// @notice Error when a request is expired or not priced when it was required to be.
+    /// @notice Error when a request is not priced when it was required to be.
     /// Either locking the request, or calling the `IBoundlessMarket.priceRequest` function
     /// in the same transaction will satisfy this requirement.
     /// @param requestId The ID of the request.
-    error RequestIsExpiredOrNotPriced(RequestId requestId);
+    error RequestIsNotPriced(RequestId requestId);
 
     /// @notice Error when a request is not locked when it was required to be.
     /// @param requestId The ID of the request.
