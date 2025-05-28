@@ -74,7 +74,7 @@ export PINATA_JWT="abcdef..."
 let client = Client::builder()
   .with_rpc_url(args.rpc_url)
   .with_private_key(args.private_key)
-  .with_storage_provider(storage_provider_from_env()?)?
+  .with_storage_provider(Some(storage_provider_from_env()?))
   .build()
   .await?;
 # Ok(())
@@ -109,6 +109,7 @@ let (request_id, expires_at) = client.submit_onchain(request).await?;
 
 Once submitted, you can keep track of the request using:
 
+<StripRustCodeComments>
 ```rust
 # use std::time::Duration;
 # use anyhow::Result;
@@ -131,6 +132,7 @@ tracing::info!("Request {:x} fulfilled", request_id);
 # Ok(())
 # }
 ```
+</StripRustCodeComments>
 
 This will store the `journal` and `seal` from the Boundless market, together they represent the public outputs of your guest and the proof itself, respectively. You can [use a proof in your application](/developers/tutorials/use) to access the power of verifiable compute using Boundless.
 
@@ -170,7 +172,7 @@ then when you use `.with_storage_provider()`:
 let client = Client::builder()
   .with_rpc_url(args.rpc_url)
   .with_private_key(args.private_key)
-  .with_storage_provider(storage_provider_from_env()?)? // [!code hl] // [!code focus]
+  .with_storage_provider(Some(storage_provider_from_env()?)) // [!code hl] // [!code focus]
   .build()
   .await?;
 # Ok(())
@@ -219,6 +221,7 @@ let program_url = client.upload_program(program).await?;
 
 After which, you'd create a request with:
 
+<StripRustCodeComments>
 ```rust
 # use boundless_market::Client;
 # async fn create_request_with_urls(
@@ -226,11 +229,12 @@ After which, you'd create a request with:
 # program_url: &str,
 # input_url: &str) -> Result<(), Box<dyn std::error::Error>> {
 let request = client.new_request()
-  .with_program_url(program_url)
+  .with_program_url(program_url)?
   .with_input_url(input_url);
 # Ok(())
 # }
 ```
+</StripRustCodeComments>
 
 If you already have the `program_url`, you do not need to upload the program again; you can simply use `with_program_url` with a hard-coded URL.
 
@@ -364,12 +368,26 @@ let (request_id, expires_at) = client.submit_offchain(request).await?; // [!code
 
 ### Offer
 
-[Offer parameters](/developers/tutorials/pricing#contents-of-an-offer) allow you to fine tune the pricing, auction, staking and expiry parameters for your Boundless request.
+The [Offer](/developers/tutorials/pricing) specifies how much the requestor will pay for a proof, by setting the auction price, timing, stake requirements, and expiration.
+
+The Client helps you build requests and set these parameters. Within the client, the [OfferLayer](https://docs.rs/boundless-market/latest/boundless_market/request_builder/offer_layer/struct.OfferLayer.html) creates the offer. It contains a set of defaults, and logic to assign a price to your request.
 
 There are two ways to configure offer parameters:
 
-1. Using `with_offer` on individual requests to override parameters for a specific request.
-2. Using `config_offer_layer` on the client builder to configure pricing logic the SDK uses to automatically calculate offers.
+1. Using `client_builder.config_offer_layer` to configure the offer building logic.
+2. Using `request.with_offer` to override parameters for a specific request. This gives you direct control over the offer.
+
+#### When to Use Each Approach
+
+- Use `config_offer_layer` when:
+  - You want to configure cycle-based pricing that applies to all requests
+  - You need to adjust gas estimates or other calculation parameters
+  - You want consistent pricing logic across multiple requests
+
+- Use `with_offer` when:
+  - You need to override the automatic calculations for a specific request
+  - You want to set exact prices rather than using cycle-based calculations
+  - You have special requirements for a particular proof request
 
 #### Per-Request Configuration with `with_offer`
 
@@ -437,7 +455,7 @@ Use `config_offer_layer` when you want to adjust how the SDK calculates offer pa
 let client = Client::builder()
   .with_rpc_url(args.rpc_url)
   .with_private_key(args.private_key)
-  .with_storage_provider(storage_provider_from_env()?)?
+  .with_storage_provider(Some(storage_provider_from_env()?))
   .config_offer_layer(|config| config
     // Set the price per cycle for automatic pricing calculations
     .max_price_per_cycle(parse_units("0.1", "gwei").unwrap())
@@ -482,14 +500,3 @@ let (request_id, expires_at) = client.submit_onchain(request).await?;
 ```
 </StripRustCodeComments>
 
-#### When to Use Each Approach
-
-- **Use `config_offer_layer`** when:
-  - You want to configure cycle-based pricing that applies to all requests
-  - You need to adjust gas estimates or other calculation parameters
-  - You want consistent pricing logic across multiple requests
-
-- **Use `with_offer`** when:
-  - You need to override the automatic calculations for a specific request
-  - You want to set exact prices rather than using cycle-based calculations
-  - You have special requirements for a particular proof request
