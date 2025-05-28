@@ -58,13 +58,23 @@ export PINATA_JWT="abcdef..."
 ```rust
 # use alloy::signers::local::PrivateKeySigner;
 # use boundless_market::{Client, storage::storage_provider_from_env};
-# async fn create_boundless_client(
-# rpc_url: url::Url,
-# private_key: PrivateKeySigner) -> Result<(), Box<dyn std::error::Error>> {
+# use url::Url;
+# #[derive(Clone)]
+# struct Args {
+#     rpc_url: Url,
+#     private_key: PrivateKeySigner,
+#     storage_config: String,
+# }
+# async fn create_boundless_client() -> Result<(), Box<dyn std::error::Error>> {
+# let args = Args {
+#     rpc_url: "https://example.com".parse()?,
+#     private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".parse()?,
+#     storage_config: "mock".to_string(),
+# };
 let client = Client::builder()
   .with_rpc_url(args.rpc_url)
   .with_private_key(args.private_key)
-  .with_storage_provider(&args.storage_config)?
+  .with_storage_provider(storage_provider_from_env()?)?
   .build()
   .await?;
 # Ok(())
@@ -82,6 +92,9 @@ let client = Client::builder()
 # client: Client,
 # program: &'static [u8],
 # input: &[u8]) -> Result<()> {
+# // In a real application, ECHO_ELF would come from guest_util::ECHO_ELF
+# let ECHO_ELF = program;
+# let echo_message = "Hello, world!";
 // Create a request using new_request
 let request = client.new_request().with_program(ECHO_ELF).with_stdin(echo_message.as_bytes());
 
@@ -97,6 +110,14 @@ let (request_id, expires_at) = client.submit_onchain(request).await?;
 Once submitted, you can keep track of the request using:
 
 ```rust
+# use std::time::Duration;
+# use anyhow::Result;
+# use boundless_market::Client;
+# use alloy_primitives::U256;
+# async fn wait_for_fulfillment(
+# client: Client,
+# request_id: U256,
+# expires_at: u64) -> Result<()> {
 // Wait for the request to be fulfilled. The market will return the journal and seal.
 tracing::info!("Waiting for request {:x} to be fulfilled", request_id);
 let (journal, seal) = client
@@ -107,6 +128,8 @@ let (journal, seal) = client
     )
     .await?;
 tracing::info!("Request {:x} fulfilled", request_id);
+# Ok(())
+# }
 ```
 
 This will store the `journal` and `seal` from the Boundless market, together they represent the public outputs of your guest and the proof itself, respectively. You can [use a proof in your application](/developers/tutorials/use) to access the power of verifiable compute using Boundless.
@@ -131,13 +154,23 @@ then when you use `.with_storage_provider()`:
 ```rust
 # use alloy::signers::local::PrivateKeySigner;
 # use boundless_market::{Client, storage::storage_provider_from_env};
-# async fn create_boundless_client(
-# rpc_url: url::Url,
-# private_key: PrivateKeySigner) -> Result<(), Box<dyn std::error::Error>> {
+# use url::Url;
+# #[derive(Clone)]
+# struct Args {
+#     rpc_url: Url,
+#     private_key: PrivateKeySigner,
+#     storage_config: String,
+# }
+# async fn create_boundless_client() -> Result<(), Box<dyn std::error::Error>> {
+# let args = Args {
+#     rpc_url: "https://example.com".parse()?,
+#     private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".parse()?,
+#     storage_config: "mock".to_string(),
+# };
 let client = Client::builder()
   .with_rpc_url(args.rpc_url)
   .with_private_key(args.private_key)
-  .with_storage_provider(&args.storage_config)? // [!code hl] // [!code focus]
+  .with_storage_provider(storage_provider_from_env()?)? // [!code hl] // [!code focus]
   .build()
   .await?;
 # Ok(())
@@ -187,9 +220,16 @@ let program_url = client.upload_program(program).await?;
 After which, you'd create a request with:
 
 ```rust
+# use boundless_market::Client;
+# async fn create_request_with_urls(
+# client: &Client,
+# program_url: &str,
+# input_url: &str) -> Result<(), Box<dyn std::error::Error>> {
 let request = client.new_request()
-  .with_program_url(&program_url)
-  .with_input_url(&input_url);
+  .with_program_url(program_url)
+  .with_input_url(input_url);
+# Ok(())
+# }
 ```
 
 If you already have the `program_url`, you do not need to upload the program again; you can simply use `with_program_url` with a hard-coded URL.
@@ -206,7 +246,10 @@ If you are working in a monorepo, you can take advantage of [risc0-build](https:
 # client: Client,
 # program: &'static [u8],
 # input: &[u8]) -> Result<()> {
-use guest::{ECHO_ELF};
+// In a real application, you would import ECHO_ELF from your guest code:
+// use guest_util::{ECHO_ELF};
+# let ECHO_ELF = program;
+# let echo_message = "Hello, world!";
 
 // Create a request using new_request
 let request = client.new_request().with_program(ECHO_ELF).with_stdin(echo_message.as_bytes());
@@ -248,6 +291,8 @@ or if we look back at the counter example, we can see that the inputs are includ
 # client: Client,
 # program: &'static [u8],
 # input: &[u8]) -> Result<()> {
+# let ECHO_ELF = program;
+# let echo_message = "Hello, world!";
 // Create a request using new_request
 let request = client.new_request().with_program(ECHO_ELF).with_stdin(echo_message.as_bytes()); // [!code hl] // [!code focus]
 
@@ -277,6 +322,8 @@ To submit a request onchain, we use:
 # client: Client,
 # program: &'static [u8],
 # input: &[u8]) -> Result<()> {
+# let ECHO_ELF = program;
+# let echo_message = "Hello, world!";
 // Create a request using new_request
 let request = client.new_request().with_program(ECHO_ELF).with_stdin(echo_message.as_bytes());
 
@@ -303,6 +350,8 @@ To submit a request offchain, we use:
 # client: Client,
 # program: &'static [u8],
 # input: &[u8]) -> Result<()> {
+# let ECHO_ELF = program;
+# let echo_message = "Hello, world!";
 // Create a request using new_request
 let request = client.new_request().with_program(ECHO_ELF).with_stdin(echo_message.as_bytes());
 
@@ -371,14 +420,24 @@ Use `config_offer_layer` when you want to adjust how the SDK calculates offer pa
 # use alloy::signers::local::PrivateKeySigner;
 # use alloy::primitives::utils::parse_units;
 # use boundless_market::{Client, storage::storage_provider_from_env};
-# async fn create_boundless_client(
-# rpc_url: url::Url,
-# private_key: PrivateKeySigner) -> Result<(), Box<dyn std::error::Error>> {
+# use url::Url;
+# #[derive(Clone)]
+# struct Args {
+#     rpc_url: Url,
+#     private_key: PrivateKeySigner,
+#     storage_config: String,
+# }
+# async fn create_boundless_client() -> Result<(), Box<dyn std::error::Error>> {
+# let args = Args {
+#     rpc_url: "https://example.com".parse()?,
+#     private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".parse()?,
+#     storage_config: "mock".to_string(),
+# };
 // Configure the offer layer logic when building the client
 let client = Client::builder()
   .with_rpc_url(args.rpc_url)
   .with_private_key(args.private_key)
-  .with_storage_provider(&args.storage_config)?
+  .with_storage_provider(storage_provider_from_env()?)?
   .config_offer_layer(|config| config
     // Set the price per cycle for automatic pricing calculations
     .max_price_per_cycle(parse_units("0.1", "gwei").unwrap())
