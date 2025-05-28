@@ -317,7 +317,14 @@ let (request_id, expires_at) = client.submit_offchain(request).await?; // [!code
 
 [Offer parameters](/developers/tutorials/pricing#contents-of-an-offer) allow you to fine tune the pricing, auction, staking and expiry parameters for your Boundless request.
 
-Some common parameters to adjust are the `min_price`, `max_price`, and `timeout` and `ramp_up_period` options:
+There are two ways to configure offer parameters:
+
+1. Using `with_offer` on individual requests to override parameters for a specific request.
+2. Using `config_offer_layer` on the client builder to configure pricing logic the SDK uses to automatically calculate offers.
+
+#### Per-Request Configuration with `with_offer`
+
+Use `with_offer` when you want to override specific pricing parameters for an individual request:
 
 <StripRustCodeComments>
 ```rust showLineNumbers
@@ -353,3 +360,77 @@ let (request_id, expires_at) = client.submit_onchain(request).await?;
 # }
 ```
 </StripRustCodeComments>
+
+#### Client-Level Configuration with `config_offer_layer`
+
+Use `config_offer_layer` when you want to adjust how the SDK calculates offer parameters based on cycle count and gas prices. This is particularly useful when you want to use cycle-based pricing:
+
+<StripRustCodeComments>
+```rust
+# use anyhow::Result;
+# use alloy::signers::local::PrivateKeySigner;
+# use alloy::primitives::utils::parse_units;
+# use boundless_market::{Client, storage::storage_provider_from_env};
+# async fn create_boundless_client(
+# rpc_url: url::Url,
+# private_key: PrivateKeySigner) -> Result<(), Box<dyn std::error::Error>> {
+// Configure the offer layer logic when building the client
+let client = Client::builder()
+  .with_rpc_url(args.rpc_url)
+  .with_private_key(args.private_key)
+  .with_storage_provider(&args.storage_config)?
+  .config_offer_layer(|config| config
+    // Set the price per cycle for automatic pricing calculations
+    .max_price_per_cycle(parse_units("0.1", "gwei").unwrap())
+    .min_price_per_cycle(parse_units("0.01", "gwei").unwrap())
+    // Configure default timeouts and auction parameters
+    .ramp_up_period(36)
+    .lock_timeout(120)
+    .timeout(300)
+    // Configure gas estimates for more accurate pricing
+    .lock_gas_estimate(200_000)
+    .fulfill_gas_estimate(750_000)
+  )
+  .build()
+  .await?;
+# Ok(())
+# }
+```
+</StripRustCodeComments>
+
+With this configuration, when you create requests and provide cycle count estimates, the SDK will automatically calculate appropriate prices:
+
+<StripRustCodeComments>
+```rust
+# use anyhow::Result;
+# use boundless_market::{Client};
+# async fn create_proof_request(
+# client: Client,
+# program: &'static [u8],
+# input: &[u8]) -> Result<()> {
+// The SDK will automatically calculate prices based on the cycle count
+let request = client.new_request()
+  .with_program(program)
+  .with_stdin(input)
+  .with_cycles(1_000_000); // Provide cycle count for automatic pricing
+
+// The offer will be calculated using:
+// - min_price = min_price_per_cycle * cycle_count
+// - max_price = max_price_per_cycle * cycle_count + gas_cost_estimate
+let (request_id, expires_at) = client.submit_onchain(request).await?;
+# Ok(())
+# }
+```
+</StripRustCodeComments>
+
+#### When to Use Each Approach
+
+- **Use `config_offer_layer`** when:
+  - You want to configure cycle-based pricing that applies to all requests
+  - You need to adjust gas estimates or other calculation parameters
+  - You want consistent pricing logic across multiple requests
+
+- **Use `with_offer`** when:
+  - You need to override the automatic calculations for a specific request
+  - You want to set exact prices rather than using cycle-based calculations
+  - You have special requirements for a particular proof request
