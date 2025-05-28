@@ -162,7 +162,7 @@ Once these are set, this will automatically use the specified [AWS S3 bucket](ht
 
 #### No Storage Provider
 
-A perfectly valid option for `StorageProvider` is `None`; if you don't set any relevant environment variables for IPFS/S3, you are allowed to skip th storage provider when building and submitting a request via the `client`. This means you will have to pass through a valid URL for the program and inputs. For the inputs, you can also pass them inline if they are small enough.
+A perfectly valid option for `StorageProvider` is `None`; if you don't set any relevant environment variables for IPFS/S3, it won't use a storage provider to upload programs or inputs at runtime. This means you will need to upload you program ahead of time, and provide the public URL. For the inputs, you can also pass them inline (i.e. in the transaction) if they are small enough. Otherwise, you can upload inputs ahead of time as well.
 
 ### Uploading Programs
 
