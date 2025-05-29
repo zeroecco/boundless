@@ -73,11 +73,11 @@ struct MainArgs {
     #[clap(long, default_value = "1800")]
     timeout: u32,
     /// Additional time in seconds to add to the timeout for each 1M cycles.
-    #[clap(long, default_value = "60")]
+    #[clap(long, default_value = "20")]
     seconds_per_mcycle: u32,
     /// Program binary file to use as the guest image, given as a path.
     ///
-    /// If unspecified, defaults to the included echo guest.
+    /// If unspecified, defaults to the included loop guest.
     #[clap(long)]
     program: Option<PathBuf>,
     /// The cycle count to drive the loop.
@@ -86,6 +86,9 @@ struct MainArgs {
     /// with a step of 1_000_000.
     #[clap(long, env = "CYCLE_COUNT")]
     input: Option<u64>,
+    /// The maximum cycle count to drive the loop.
+    #[clap(long, env = "CYCLE_COUNT_MAX", conflicts_with_all = ["input", "program"])]
+    input_max_mcycles: Option<u64>,
     /// Balance threshold at which to log a warning.
     #[clap(long, value_parser = parse_ether, default_value = "1")]
     warn_balance_below: Option<U256>,
@@ -182,7 +185,8 @@ async fn run(args: &MainArgs) -> Result<()> {
             Some(input) => input,
             None => {
                 // Generate a random input.
-                let input: u64 = rand::rng().random_range(1..=1000) << 20;
+                let max = args.input_max_mcycles.unwrap_or(1000);
+                let input: u64 = rand::rng().random_range(1..=max) << 20;
                 tracing::debug!("Generated random cycle count: {}", input);
                 input
             }
@@ -192,9 +196,12 @@ async fn run(args: &MainArgs) -> Result<()> {
         // add 1 minute for each 1M cycles to the original timeout
         // Use the input directly as the estimated cycle count, since we are using a loop program.
         let m_cycles = input >> 20;
-        let timeout = args.timeout + args.seconds_per_mcycle.checked_mul(m_cycles as u32).unwrap();
         let lock_timeout =
             args.lock_timeout + args.seconds_per_mcycle.checked_mul(m_cycles as u32).unwrap();
+        // Give equal time for provers that are fulfilling after lock expiry to prove.
+        let timeout: u32 = args.timeout
+            + lock_timeout
+            + args.seconds_per_mcycle.checked_mul(m_cycles as u32).unwrap();
 
         let request = client
             .new_request()
@@ -317,6 +324,7 @@ mod tests {
             seconds_per_mcycle: 60,
             program: None,
             input: None,
+            input_max_mcycles: None,
             warn_balance_below: None,
             error_balance_below: None,
             auto_deposit: None,

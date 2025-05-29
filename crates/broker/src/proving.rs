@@ -15,8 +15,13 @@ use crate::{
 use anyhow::{Context, Result};
 use thiserror::Error;
 
+const MONITOR_EXISTING_PROOFS_SLEEP_MS: u64 = 5000;
+
 #[derive(Error)]
 pub enum ProvingErr {
+    #[error("{code} Proving failed after retries: {0:?}", code = self.code())]
+    ProvingFailed(anyhow::Error),
+
     #[error("{code} Unexpected error: {0:?}", code = self.code())]
     UnexpectedError(#[from] anyhow::Error),
 }
@@ -26,6 +31,7 @@ impl_coded_debug!(ProvingErr);
 impl CodedError for ProvingErr {
     fn code(&self) -> &str {
         match self {
+            ProvingErr::ProvingFailed(_) => "[B-PRO-501]",
             ProvingErr::UnexpectedError(_) => "[B-PRO-500]",
         }
     }
@@ -147,29 +153,52 @@ impl ProvingService {
                 continue;
             };
             let is_groth16 = order.is_groth16();
-            let compressed_proof_id = order.compressed_proof_id;
+            let compressed_proof_id = order.compressed_proof_id.clone();
             // TODO: Manage these tasks in a joinset?
             // They should all be fail-able without triggering a larger failure so it should be
             // fine.
             tokio::spawn(async move {
-                match prove_serv
-                    .monitor_proof(&order_id, &proof_id, is_groth16, compressed_proof_id)
-                    .await
-                {
-                    Ok(_) => tracing::info!("Successfully complete order proof {order_id}"),
-                    Err(err) => {
-                        tracing::error!("FATAL: Order failed to prove: {err:?}");
-                        if let Err(inner_err) = prove_serv
-                            .db
-                            .set_order_failure(&order_id, "Monitoring existing proof failed")
+                // We retry here as we occasionally run into BusyLoadingErrors during prover restart
+                // where we attempt to access Bento before various services are ready (e.g. Redis
+                // still loading dataset into memory).
+                retry(
+                    1,
+                    MONITOR_EXISTING_PROOFS_SLEEP_MS,
+                    || async {
+                        match prove_serv
+                            .monitor_proof(
+                                &order_id,
+                                &proof_id,
+                                is_groth16,
+                                compressed_proof_id.clone(),
+                            )
                             .await
                         {
-                            tracing::error!(
-                                "Failed to set order {order_id} failure: {inner_err:?}"
-                            );
+                            Ok(_) => {
+                                tracing::info!("Successfully complete order proof {order_id}");
+                                Ok(())
+                            }
+                            Err(err) => {
+                                tracing::error!("FATAL: Order failed to prove: {err:?}");
+                                if let Err(inner_err) = prove_serv
+                                    .db
+                                    .set_order_failure(
+                                        &order_id,
+                                        "Monitoring existing proof failed",
+                                    )
+                                    .await
+                                {
+                                    tracing::error!(
+                                        "Failed to set order {order_id} failure: {inner_err:?}"
+                                    );
+                                }
+                                Err(err)
+                            }
                         }
-                    }
-                }
+                    },
+                    "find_and_monitor_proof",
+                )
+                .await
             });
         }
 
@@ -225,8 +254,9 @@ impl RetryTask for ProvingService {
                                 tracing::info!("Successfully complete order proof {order_id}");
                             }
                             Err(err) => {
+                                let proving_err = ProvingErr::ProvingFailed(err);
                                 tracing::error!(
-                                    "FATAL: Order {} failed to prove after {} retries: {err:?}",
+                                    "FATAL: Order {} failed to prove after {} retries: {proving_err:?}",
                                     order_id,
                                     proof_retry_count
                                 );

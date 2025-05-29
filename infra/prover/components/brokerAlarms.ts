@@ -63,7 +63,7 @@ export const createProverAlarms = (
       evaluationPeriods: 1,
       datapointsToAlarm: 1,
       treatMissingData: 'notBreaching',
-      alarmDescription: `${severity} ${metricName} ${description}`,
+      alarmDescription: `${severity} ${metricName} ${description ?? ''}`,
       actionsEnabled: true,
       alarmActions,
       ...alarmConfig
@@ -85,7 +85,8 @@ export const createProverAlarms = (
   }, { period: 3600 });
 
   // Matches on any ERROR log that does NOT contain an error code. Ensures we don't miss any errors.
-  createErrorCodeAlarm('ERROR -"[B-"', 'error-without-code', Severity.SEV2);
+  // Don't match on INTERNAL_ERROR which is sometimes returned by our dependencies e.g. Bonsai on retryable errors.
+  createErrorCodeAlarm('ERROR -"[B-" -"INTERNAL_ERROR"', 'error-without-code', Severity.SEV2);
 
   // Alarms for low balances
   createErrorCodeAlarm('WARN "[B-BAL-ETH]"', 'low-balance-alert-eth', Severity.SEV2);
@@ -259,6 +260,11 @@ export const createProverAlarms = (
     threshold: 3,
   }, { period: 300 });
 
+  // 2 proving failed errors within 30 minutes in the prover triggers a SEV2 alarm.
+  createErrorCodeAlarm('"[B-PRO-501]"', 'prover-proving-failed', Severity.SEV2, {
+    threshold: 2,
+  }, { period: 1800 }, "Proving with retries failed 2 times within 30 minutes");
+
   // Aggregator
   // Any 1 unexpected error in the aggregator triggers a SEV2 alarm.
   createErrorCodeAlarm('"[B-AGG-500]"', 'aggregator-unexpected-error', Severity.SEV2);
@@ -267,6 +273,14 @@ export const createProverAlarms = (
   createErrorCodeAlarm('"[B-AGG-500]"', 'aggregator-unexpected-error', Severity.SEV1, {
     threshold: 3,
   }, { period: 300 });
+
+  //
+  // Proving engine
+  //
+
+  // Track internal errors as a metric, but these errors are expected to happen occasionally.
+  // and are retried and covered by other alarms.
+  createLogMetricFilter('"[B-BON-008]"', 'proving-engine-internal-error');
 
   //
   // Submitter
