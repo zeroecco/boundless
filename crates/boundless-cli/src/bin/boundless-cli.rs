@@ -653,7 +653,7 @@ async fn handle_proving_command(
             let session_info = execute(&request).await?;
             let journal = session_info.journal.bytes;
 
-            if !request.requirements.predicate.eval(&journal) {
+            if !request.requirements.predicate.eval(request.requirements.imageId, &journal) {
                 tracing::error!("Predicate evaluation failed for request");
                 bail!("Predicate evaluation failed");
             }
@@ -1141,7 +1141,7 @@ where
 
         // Verify predicate
         ensure!(
-            request.requirements.predicate.eval(&journal),
+            request.requirements.predicate.eval(request.requirements.imageId, &journal),
             "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
             hex::encode(&journal),
             request.requirements.predicate.predicateType,

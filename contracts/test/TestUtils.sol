@@ -26,7 +26,12 @@ library TestUtils {
     ) internal pure returns (ReceiptClaim memory) {
         bytes32[] memory leaves = new bytes32[](fills.length);
         for (uint256 i = 0; i < fills.length; i++) {
-            bytes32 claimDigest = ReceiptClaimLib.ok(fills[i].imageId, sha256(fills[i].journal)).digest();
+            bytes32 claimDigest; 
+            if (fills[i].kind == FulfillmentKind.WithJournal) {
+                claimDigest = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
+            } else {
+                claimDigest = fills[i].imageIdOrClaimDigest;
+            }
             leaves[i] = AssessorCommitment(i, fills[i].id, fills[i].requestDigest, claimDigest).eip712Digest();
         }
         bytes32 root = MerkleProofish.processTree(leaves);
@@ -53,7 +58,11 @@ library TestUtils {
     {
         bytes32[] memory claimDigests = new bytes32[](fills.length);
         for (uint256 i = 0; i < fills.length; i++) {
-            claimDigests[i] = ReceiptClaimLib.ok(fills[i].imageId, sha256(fills[i].journal)).digest();
+            if (fills[i].kind == FulfillmentKind.WithJournal) {
+                claimDigests[i] = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
+            } else {
+                claimDigests[i] = fills[i].imageIdOrClaimDigest;
+            }
         }
         // compute the merkle tree of the batch
         (batchRoot, tree) = computeMerkleTree(claimDigests);

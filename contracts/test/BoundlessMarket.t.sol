@@ -54,7 +54,7 @@ import {IBoundlessMarket} from "../src/IBoundlessMarket.sol";
 
 import {ProofRequestLibrary} from "../src/types/ProofRequest.sol";
 import {RiscZeroSetVerifier} from "risc0/RiscZeroSetVerifier.sol";
-import {Fulfillment} from "../src/types/Fulfillment.sol";
+import {Fulfillment, FulfillmentKind} from "../src/types/Fulfillment.sol";
 import {MockCallback} from "./MockCallback.sol";
 import {Selector} from "../src/types/Selector.sol";
 
@@ -376,14 +376,25 @@ contract BoundlessMarketTest is Test {
         Selector[] memory selectors = new Selector[](0);
         AssessorCallback[] memory callbacks = new AssessorCallback[](0);
         for (uint8 i = 0; i < requests.length; i++) {
+            FulfillmentKind kind = FulfillmentKind.WithJournal;
+            bytes32 imageIdOrClaimDigest = requests[i].requirements.imageId;
+            bytes memory journal = journals[i];
+            if (requests[i].requirements.predicate.predicateType == PredicateType.ClaimDigestMatch) {
+                kind = FulfillmentKind.WithoutJournal;
+                imageIdOrClaimDigest = ReceiptClaimLib.ok(
+                    requests[i].requirements.imageId, sha256(journal)
+                ).digest();
+                journal = bytes(""); // no journal needed for claim digest match
+            }
             Fulfillment memory fill = Fulfillment({
                 id: requests[i].id,
                 requestDigest: MessageHashUtils.toTypedDataHash(
                     boundlessMarket.eip712DomainSeparator(), requests[i].eip712Digest()
                 ),
-                imageId: requests[i].requirements.imageId,
-                journal: journals[i],
-                seal: bytes("")
+                imageIdOrClaimDigest: imageIdOrClaimDigest,
+                journal: journal,
+                seal: bytes(""),
+                kind: kind
             });
             fills[i] = fill;
             if (requests[i].requirements.selector != bytes4(0)) {
@@ -2424,11 +2435,11 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         (Fulfillment[] memory fills, AssessorReceipt memory assessorReceipt) =
             createFillsAndSubmitRoot(requests, journals, testProverAddress);
 
-        bytes32 imageId0 = fills[0].imageId;
+        bytes32 imageId0 = fills[0].imageIdOrClaimDigest;
         bytes memory journal0 = fills[0].journal;
 
-        fills[0].imageId = fills[1].imageId;
-        fills[1].imageId = imageId0;
+        fills[0].imageIdOrClaimDigest = fills[1].imageIdOrClaimDigest;
+        fills[1].imageIdOrClaimDigest = imageId0;
 
         fills[0].journal = fills[1].journal;
         fills[1].journal = journal0;
@@ -2728,7 +2739,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         bytes[] memory clientSignatures = new bytes[](1);
         clientSignatures[0] = clientSignature;
 
-        bytes32 claimDigest = ReceiptClaimLib.ok(fill.imageId, sha256(fill.journal)).digest();
+        bytes32 claimDigest = ReceiptClaimLib.ok(fill.imageIdOrClaimDigest, sha256(fill.journal)).digest();
 
         // If no selector is specified, we expect the call to verifyIntegrity to use the default
         // gas limit when verifying the application.
@@ -2763,7 +2774,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         bytes[] memory clientSignatures = new bytes[](1);
         clientSignatures[0] = clientSignature;
 
-        bytes32 claimDigest = ReceiptClaimLib.ok(fill.imageId, sha256(fill.journal)).digest();
+        bytes32 claimDigest = ReceiptClaimLib.ok(fill.imageIdOrClaimDigest, sha256(fill.journal)).digest();
 
         // If a selector is specified, we expect the call to verifyIntegrity to not use the default
         // gas limit, so the minimum gas it should have should exceed it.

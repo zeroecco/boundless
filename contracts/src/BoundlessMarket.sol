@@ -23,7 +23,7 @@ import {Account} from "./types/Account.sol";
 import {AssessorJournal} from "./types/AssessorJournal.sol";
 import {AssessorCallback} from "./types/AssessorCallback.sol";
 import {AssessorCommitment} from "./types/AssessorCommitment.sol";
-import {Fulfillment} from "./types/Fulfillment.sol";
+import {Fulfillment, FulfillmentKind} from "./types/Fulfillment.sol";
 import {AssessorReceipt} from "./types/AssessorReceipt.sol";
 import {ProofRequest} from "./types/ProofRequest.sol";
 import {LockRequest, LockRequestLibrary} from "./types/LockRequest.sol";
@@ -255,7 +255,12 @@ contract BoundlessMarket is
         for (uint256 i = 0; i < fills.length; i++) {
             Fulfillment calldata fill = fills[i];
 
-            bytes32 claimDigest = ReceiptClaimLib.ok(fill.imageId, sha256(fill.journal)).digest();
+            bytes32 claimDigest;
+            if (fill.kind == FulfillmentKind.WithJournal) {
+                claimDigest = ReceiptClaimLib.ok(fill.imageIdOrClaimDigest, sha256(fill.journal)).digest();
+            } else {
+                claimDigest = fill.imageIdOrClaimDigest;
+            }
             leaves[i] = AssessorCommitment(i, fill.id, fill.requestDigest, claimDigest).eip712Digest();
 
             // If the requestor did not specify a selector, we verify with DEFAULT_MAX_GAS_FOR_VERIFY gas limit.
@@ -327,7 +332,7 @@ contract BoundlessMarket is
                 continue;
             }
 
-            _executeCallback(fill.id, callback.addr, callback.gasLimit, fill.imageId, fill.journal, fill.seal);
+            _executeCallback(fill.id, callback.addr, callback.gasLimit, fill.imageIdOrClaimDigest, fill.journal, fill.seal);            
         }
     }
 

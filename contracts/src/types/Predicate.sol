@@ -4,7 +4,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.24;
 
+import {ReceiptClaim, ReceiptClaimLib} from "risc0/IRiscZeroVerifier.sol";
+
 using PredicateLibrary for Predicate global;
+using ReceiptClaimLib for ReceiptClaim;
 
 /// @title Predicate Struct and Library
 /// @notice Represents a predicate and provides functions to create and evaluate predicates.
@@ -15,7 +18,8 @@ struct Predicate {
 
 enum PredicateType {
     DigestMatch,
-    PrefixMatch
+    PrefixMatch,
+    ClaimDigestMatch
 }
 
 library PredicateLibrary {
@@ -36,12 +40,19 @@ library PredicateLibrary {
         return Predicate({predicateType: PredicateType.PrefixMatch, data: prefix});
     }
 
+    /// @notice Creates a claim digest match predicate.
+    /// @param claimDigest The claimDigest to match.
+    /// @return A Predicate struct with type ClaimDigestMatch and the provided claimDigest.
+    function createClaimDigestMatchPredicate(bytes32 claimDigest) internal pure returns (Predicate memory) {
+        return Predicate({predicateType: PredicateType.ClaimDigestMatch, data: abi.encode(claimDigest)});
+    }
+
     /// @notice Evaluates the predicate against the given journal and journal digest.
     /// @param predicate The predicate to evaluate.
     /// @param journal The journal to evaluate against.
     /// @param journalDigest The digest of the journal.
     /// @return True if the predicate is satisfied, false otherwise.
-    function eval(Predicate memory predicate, bytes memory journal, bytes32 journalDigest)
+    function eval(Predicate memory predicate, bytes32 imageId, bytes memory journal, bytes32 journalDigest)
         internal
         pure
         returns (bool)
@@ -50,6 +61,8 @@ library PredicateLibrary {
             return bytes32(predicate.data) == journalDigest;
         } else if (predicate.predicateType == PredicateType.PrefixMatch) {
             return startsWith(journal, predicate.data);
+        } else if (predicate.predicateType == PredicateType.ClaimDigestMatch) {
+            return bytes32(predicate.data) == ReceiptClaimLib.ok(imageId, journalDigest).digest(); 
         } else {
             revert("Unreachable code");
         }

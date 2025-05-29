@@ -468,7 +468,12 @@ where
         }
 
         // Validate the predicates:
-        if !order.request.requirements.predicate.eval(journal.clone()) {
+        if !order
+            .request
+            .requirements
+            .predicate
+            .eval(order.request.requirements.imageId, journal.clone())
+        {
             tracing::info!("Order with request id {request_id:x} predicate check failed, skipping");
             return Ok(Skip);
         }

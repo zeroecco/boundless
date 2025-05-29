@@ -834,10 +834,10 @@ mod tests {
         let req = layer.process((program, &journal, &Default::default())).await?;
 
         // Predicate should match the same journal
-        assert!(req.predicate.eval(&journal));
+        assert!(req.predicate.eval(req.imageId, &journal));
         // And should not match different data
         let other = Journal::new(b"other_data".to_vec());
-        assert!(!req.predicate.eval(&other));
+        assert!(!req.predicate.eval(req.imageId, &other));
         Ok(())
     }
 

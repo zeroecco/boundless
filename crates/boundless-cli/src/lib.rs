@@ -36,8 +36,8 @@ use risc0_zkvm::{
 
 use boundless_market::{
     contracts::{
-        AssessorJournal, AssessorReceipt, EIP712DomainSaltless,
-        Fulfillment as BoundlessFulfillment, RequestInputType,
+        boundless_market_contract::FulfillmentKind, AssessorJournal, AssessorReceipt,
+        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, RequestInputType,
     },
     input::GuestEnv,
     order_stream_client::Order,
@@ -308,12 +308,19 @@ impl DefaultProver {
                 order_inclusion_receipt.abi_encode_seal()?
             };
 
+            let kind = order.request.requirements.fulfillment_kind();
+            let image_id_or_claim_digest = if kind == FulfillmentKind::WithoutJournal {
+                <[u8; 32]>::from(claims[i].digest()).into()
+            } else {
+                order.request.requirements.imageId
+            };
             let fulfillment = BoundlessFulfillment {
                 id: order.request.id,
                 requestDigest: order.request.eip712_signing_hash(&self.domain.alloy_struct()),
-                imageId: order.request.requirements.imageId,
+                imageIdOrClaimDigest: image_id_or_claim_digest,
                 journal: fills[i].journal.clone().into(),
                 seal: order_seal.into(),
+                kind,
             };
 
             boundless_fills.push(fulfillment);

@@ -27,6 +27,7 @@ use anyhow::{Context, Ok, Result};
 use boundless_market::{
     contracts::{
         boundless_market::BoundlessMarketService,
+        boundless_market_contract::FulfillmentKind,
         bytecode::*,
         hit_points::{default_allowance, HitPointsService},
         AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
@@ -435,12 +436,19 @@ pub fn mock_singleton(
     .abi_encode_seal()
     .unwrap();
 
+    let kind = request.requirements.fulfillment_kind();
+    let image_id_or_claim_digest = if kind == FulfillmentKind::WithoutJournal {
+        <[u8; 32]>::from(app_claim_digest).into()
+    } else {
+        request.requirements.imageId
+    };
     let fulfillment = Fulfillment {
         id: request.id,
         requestDigest: request_digest,
-        imageId: to_b256(Digest::from(ECHO_ID)),
+        imageIdOrClaimDigest: image_id_or_claim_digest,
         journal: app_journal.bytes.into(),
         seal: set_inclusion_seal.into(),
+        kind,
     };
 
     let assessor_seal = SetInclusionReceipt::from_path_with_verifier_params(

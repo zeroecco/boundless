@@ -14,6 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use boundless_market::{
     contracts::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, MarketError, UnlockedRequest},
+        boundless_market_contract::FulfillmentKind,
         encode_seal, AssessorJournal, AssessorReceipt, Fulfillment,
     },
     selector::is_groth16_selector,
@@ -252,7 +253,10 @@ where
                     .await
                     .context("Failed to get order journal from prover")?
                     .context("Order proof Journal missing")?;
-
+                // NOTE: We assume here that the order execution ended with exit code 0.
+                let order_claim =
+                    ReceiptClaim::ok(order_img_id.0, MaybePruned::Pruned(order_journal.digest()));
+                let order_claim_digest = order_claim.digest();
                 let seal = if is_groth16_selector(order_request.requirements.selector) {
                     let compressed_proof_id =
                         self.db.get_order_compressed_proof_id(order_id).await.context(
@@ -262,15 +266,10 @@ where
                         .await
                         .context("Failed to fetch and encode g16 proof")?
                 } else {
-                    // NOTE: We assume here that the order execution ended with exit code 0.
-                    let order_claim = ReceiptClaim::ok(
-                        order_img_id.0,
-                        MaybePruned::Pruned(order_journal.digest()),
-                    );
                     let order_claim_index = aggregation_state
                         .claim_digests
                         .iter()
-                        .position(|claim| *claim == order_claim.digest())
+                        .position(|claim| *claim == order_claim_digest)
                         .ok_or(anyhow!(
                             "Failed to find order claim {order_claim:x?} in aggregated claims"
                         ))?;
@@ -280,7 +279,7 @@ where
                     );
                     tracing::debug!(
                         "Merkle path for order {order_id} : {:x?} : {order_path:x?}",
-                        order_claim.digest()
+                        order_claim_digest
                     );
                     let set_inclusion_receipt = SetInclusionReceipt::from_path_with_verifier_params(
                         order_claim,
@@ -296,12 +295,19 @@ where
                     .eip712_signing_hash(&self.market.eip712_domain().await?.alloy_struct());
                 let request_id = order_request.id;
                 fulfillment_to_order_id.insert(request_id, order_id);
+                let kind = order_request.requirements.fulfillment_kind();
+                let image_id_or_claim_digest = if kind == FulfillmentKind::WithoutJournal {
+                    <[u8; 32]>::from(order_claim_digest).into()
+                } else {
+                    order_img_id
+                };
                 fulfillments.push(Fulfillment {
                     id: request_id,
                     requestDigest: request_digest,
-                    imageId: order_img_id,
+                    imageIdOrClaimDigest: image_id_or_claim_digest,
                     journal: order_journal.into(),
                     seal: seal.into(),
+                    kind,
                 });
                 anyhow::Ok(())
             };

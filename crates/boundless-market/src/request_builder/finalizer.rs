@@ -130,7 +130,7 @@ impl Adapt<Finalizer> for RequestParams {
 
         // As an extra consistency check. verify the journal satisfies the required predicate.
         if let Some(ref journal) = self.journal {
-            if !requirements.predicate.eval(journal) {
+            if !requirements.predicate.eval(requirements.imageId, journal) {
                 bail!("journal in request builder does not match requirements predicate; check request parameters.\npredicate = {:?}\njournal = 0x{}", requirements.predicate, hex::encode(journal));
             }
         }
