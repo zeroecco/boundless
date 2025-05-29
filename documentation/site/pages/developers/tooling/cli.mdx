@@ -14,27 +14,6 @@ You'll need to [install Rust](https://doc.rust-lang.org/cargo/getting-started/in
 cargo install --locked boundless-cli
 ```
 
-## Usage
-
-```
-boundless-cli [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
-```
-
-### Global Options
-
-You pass these before specifying a command:
-
-| Option                                 | Description                                                                               |
-|----------------------------------------|-------------------------------------------------------------------------------------------|
-| `-r, --rpc-url <RPC_URL>`              | Ethereum RPC endpoint URL. Defaults to `http://localhost:8545`.                           |
-| `--private-key <PRIVATE_KEY>`          | A private key string (hex-encoded); used to sign transactions.                            |
-| `-b, --boundless-market-address <ADDR>`| Address of the Boundless Market contract.                                                 |
-| `-v, --verifier-address <ADDR>`        | Address of the Verifier contract.                                                         |
-| `-s, --set-verifier-address <ADDR>`    | Address of the SetVerifier contract.                                                      |
-| `--tx-timeout <SECONDS>`               | Transaction timeout in seconds. If set, the CLI will wait up to this duration for mining. |
-| `-h, --help`                           | Print help.                                                                               |
-| `-V, --version`                        | Print version.                                                                            |
-
 
 ## Commands
 
@@ -44,7 +23,7 @@ Each command is run in the form:
 boundless-cli [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
 ```
 
-#### Available Commands
+### Available Commands
 
 
 | Command            | Description                                                   |
@@ -55,30 +34,15 @@ boundless-cli [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
 | [ops](#ops)                  | Operations on the boundless market                  |
 | [config](#config)      | Display configuration and environment variables     |
 
-```
+*Example*:
+```bash
 boundless-cli \
-  --rpc-url http://localhost:8545 \
+  --rpc-url https://ethereum-sepolia-rpc.publicnode.com \
   --private-key 0xabcdef... \
-  --boundless-market-address 0x1234... \
-  --verifier-address 0x5678... \
-  --set-verifier-address 0x5679... \
   account deposit 1.5
 ```
 
-Alternatively, you can set the environment variables `RPC_URL`, `PRIVATE_KEY`, `BOUNDLESS_MARKET_ADDRESS`, `VERIFIER_ADDRESS`, `SET_VERIFIER_ADDRESS` and `ORDER_STREAM_URL` to avoid passing them each time.
-The environment variables `BOUNDLESS_MARKET_ADDRESS`, `VERIFIER_ADDRESS`, `SET_VERIFIER_ADDRESS` and `ORDER_STREAM_URL` can be also set by running:
-
-```bash
-source <(just env testnet)
-```
-
-or, if running a local devnet, with
-
-```bash
-source <(just env devnet)
-```
-
-This will set the environment variables to the correct values for the testnet or devnet.
+Alternatively, you can set the environment variables `RPC_URL` and `PRIVATE_KEY`, to avoid passing them each time.
 
 ### account
 
