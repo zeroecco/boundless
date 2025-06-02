@@ -11,13 +11,15 @@ export class Notifications extends pulumi.ComponentResource {
       slackChannelId: pulumi.Output<string>;
       slackTeamId: pulumi.Output<string>;
       pagerdutyIntegrationUrl: pulumi.Output<string>;
+      ssoBaseUrl: string;
+      runbookUrl: string;
       opsAccountId: string;
     },
     opts?: pulumi.ComponentResourceOptions
   ) {
     super('pipelines:Notifications', name, args, opts);
 
-    const { serviceAccountIds, slackChannelId: slackChannelIdOutput, slackTeamId: slackTeamIdOutput, pagerdutyIntegrationUrl } = args;
+    const { serviceAccountIds, slackChannelId: slackChannelIdOutput, slackTeamId: slackTeamIdOutput, pagerdutyIntegrationUrl, ssoBaseUrl, runbookUrl } = args;
 
     // Create an IAM Role for AWS Chatbot
     const chatbotRole = new aws.iam.Role('chatbotRole', {
@@ -38,6 +40,7 @@ export class Notifications extends pulumi.ComponentResource {
         'arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess',
         'arn:aws:iam::aws:policy/AmazonQDeveloperAccess',
         'arn:aws:iam::aws:policy/AIOpsOperatorAccess',
+        'arn:aws:iam::aws:policy/AWSLambda_FullAccess',
       ],
     });
 
@@ -164,6 +167,40 @@ export class Notifications extends pulumi.ComponentResource {
           Action: "sqs:GetQueueAttributes",
           Resource: sqsDeadLetterQueue.arn,
         }],
+      },
+    });
+
+    // Create an IAM Role for AWS Chatbot
+    const chatbotLogFetcherRole = new aws.iam.Role('chatbot-log-fetcher-role', {
+      assumeRolePolicy: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Principal: {
+              Service: 'lambda.amazonaws.com',
+            },
+            Action: 'sts:AssumeRole',
+          },
+        ],
+      },
+      managedPolicyArns: [
+        'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+      ],
+    });
+
+    const chatbotLogFetcher = new aws.lambda.Function("chatbot-debugger", {
+      handler: "index.handler",
+      runtime: "nodejs20.x",
+      role: chatbotLogFetcherRole.arn,
+      code: new pulumi.asset.AssetArchive({
+        '.': new pulumi.asset.FileArchive('./log-lambda/build'),
+      }),
+      environment: {
+        variables: {
+          SSO_BASE_URL: ssoBaseUrl,
+          RUNBOOK_URL: runbookUrl,
+        },
       },
     });
 
