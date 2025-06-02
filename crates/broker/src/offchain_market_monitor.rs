@@ -89,7 +89,7 @@ impl OffchainMarketMonitor {
                         tracing::error!("Failed to send new order to broker: {}", e);
                         Err(OffchainMarketMonitorErr::ReceiverDropped)
                     } else {
-                        tracing::debug!(
+                        tracing::trace!(
                             "Sent new off-chain order {:x} to OrderPicker via channel.",
                             order_data.id
                         );
