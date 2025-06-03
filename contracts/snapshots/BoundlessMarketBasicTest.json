@@ -8,6 +8,7 @@
   "depositStake: full (drains testProver account)": "49778",
   "depositStakeWithPermit: 1 HP (tops up market account)": "72254",
   "depositStakeWithPermit: full (drains testProver account)": "72244",
+  "fulfill (no journal): a batch of 8": "364661",
   "fulfill: a batch of 8": "392364",
   "fulfill: a locked request": "89374",
   "fulfill: a locked request (locked via prover signature)": "89374",

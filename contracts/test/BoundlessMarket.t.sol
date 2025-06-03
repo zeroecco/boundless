@@ -2360,6 +2360,64 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         expectMarketBalanceUnchanged();
     }
 
+    // Fulfill a batch of locked requests with no journal
+    function testFulfillLockedRequestsNoJournal() public {
+        // Provide a batch definition as an array of clients and how many requests each submits.
+        uint256[5] memory batch = [uint256(1), 2, 1, 3, 1];
+        uint256 batchSize = 0;
+        for (uint256 i = 0; i < batch.length; i++) {
+            batchSize += batch[i];
+        }
+        ProofRequest[] memory requests = new ProofRequest[](batchSize);
+        bytes[] memory journals = new bytes[](batchSize);
+        uint256 expectedRevenue = 0;
+        uint256 idx = 0;
+        for (uint256 i = 0; i < batch.length; i++) {
+            Client client = getClient(i);
+
+            for (uint256 j = 0; j < batch[i]; j++) {
+                ProofRequest memory request = client.request(uint32(j));
+                request.requirements.predicate = Predicate({
+                    predicateType: PredicateType.ClaimDigestMatch,
+                    data: abi.encode(ReceiptClaimLib.ok(request.requirements.imageId, sha256(APP_JOURNAL)).digest())
+                });
+
+                // TODO: This is a fragile part of this test. It should be improved.
+                uint256 desiredPrice = uint256(1.5 ether);
+                vm.warp(request.offer.timeAtPrice(desiredPrice));
+                expectedRevenue += desiredPrice;
+
+                boundlessMarket.lockRequestWithSignature(
+                    request, client.sign(request), testProver.signLockRequest(LockRequest({request: request}))
+                );
+
+                requests[idx] = request;
+                journals[idx] = APP_JOURNAL;
+                idx++;
+            }
+        }
+
+        (Fulfillment[] memory fills, AssessorReceipt memory assessorReceipt) =
+            createFillsAndSubmitRoot(requests, journals, testProverAddress);
+
+        for (uint256 i = 0; i < fills.length; i++) {
+            vm.expectEmit(true, true, true, true);
+            emit IBoundlessMarket.RequestFulfilled(fills[i].id, testProverAddress, fills[i]);
+            vm.expectEmit(true, true, true, false);
+            emit IBoundlessMarket.ProofDelivered(fills[i].id, testProverAddress, fills[i]);
+        }
+        boundlessMarket.fulfill(fills, assessorReceipt);
+        vm.snapshotGasLastCall(string.concat("fulfill (no journal): a batch of ", vm.toString(batchSize)));
+
+        for (uint256 i = 0; i < fills.length; i++) {
+            // Check that the proof was submitted
+            expectRequestFulfilled(fills[i].id);
+        }
+
+        testProver.expectBalanceChange(int256(uint256(expectedRevenue)));
+        expectMarketBalanceUnchanged();
+    }
+
     // Testing that reordering request IDs in a batch will cause the fulfill to revert.
     function testFulfillShuffleIds() public {
         uint256[5] memory batch = [uint256(1), 2, 1, 3, 1];
