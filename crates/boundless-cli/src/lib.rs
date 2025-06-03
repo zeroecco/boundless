@@ -36,8 +36,8 @@ use risc0_zkvm::{
 
 use boundless_market::{
     contracts::{
-        boundless_market_contract::FulfillmentKind, AssessorJournal, AssessorReceipt,
-        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, RequestInputType,
+        AssessorJournal, AssessorReceipt, EIP712DomainSaltless,
+        Fulfillment as BoundlessFulfillment, PredicateType, RequestInputType,
     },
     input::GuestEnv,
     order_stream_client::Order,
@@ -307,20 +307,20 @@ impl DefaultProver {
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
-
-            let kind = order.request.requirements.fulfillment_kind();
-            let image_id_or_claim_digest = if kind == FulfillmentKind::WithoutJournal {
-                <[u8; 32]>::from(claims[i].digest()).into()
-            } else {
-                order.request.requirements.imageId
-            };
+            let mut image_id_or_claim_digest = order.request.requirements.imageId;
+            let mut journal = fills[i].journal.clone();
+            let predicate_type = order.request.requirements.predicate.predicateType;
+            if predicate_type == PredicateType::ClaimDigestMatch {
+                image_id_or_claim_digest = <[u8; 32]>::from(claims[i].digest()).into();
+                journal = vec![];
+            }
             let fulfillment = BoundlessFulfillment {
                 id: order.request.id,
                 requestDigest: order.request.eip712_signing_hash(&self.domain.alloy_struct()),
                 imageIdOrClaimDigest: image_id_or_claim_digest,
-                journal: fills[i].journal.clone().into(),
+                journal: journal.into(),
                 seal: order_seal.into(),
-                kind,
+                predicateType: predicate_type,
             };
 
             boundless_fills.push(fulfillment);

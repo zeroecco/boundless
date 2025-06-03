@@ -61,7 +61,7 @@ const TXN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
 include!(concat!(env!("OUT_DIR"), "/boundless_market_generated.rs"));
 pub use boundless_market_contract::{
     AssessorCallback, AssessorCommitment, AssessorJournal, AssessorJournalCallback,
-    AssessorReceipt, Callback, Fulfillment, FulfillmentContext, FulfillmentKind, IBoundlessMarket,
+    AssessorReceipt, Callback, Fulfillment, FulfillmentContext, IBoundlessMarket,
     Input as RequestInput, InputType as RequestInputType, LockRequest, Offer, Predicate,
     PredicateType, ProofRequest, RequestLock, Requirements, Selector as AssessorSelector,
 };
@@ -552,15 +552,6 @@ impl Requirements {
         match risc0_zkvm::is_dev_mode() {
             true => Self { selector: FixedBytes::from(Selector::FakeReceipt as u32), ..self },
             false => Self { selector: FixedBytes::from(Selector::Groth16V2_0 as u32), ..self },
-        }
-    }
-
-    /// Returns the fulfillment kind based on the predicate type.
-    pub fn fulfillment_kind(&self) -> FulfillmentKind {
-        if self.predicate.predicateType == PredicateType::ClaimDigestMatch {
-            FulfillmentKind::WithoutJournal
-        } else {
-            FulfillmentKind::WithJournal
         }
     }
 }

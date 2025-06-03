@@ -54,7 +54,7 @@ import {IBoundlessMarket} from "../src/IBoundlessMarket.sol";
 
 import {ProofRequestLibrary} from "../src/types/ProofRequest.sol";
 import {RiscZeroSetVerifier} from "risc0/RiscZeroSetVerifier.sol";
-import {Fulfillment, FulfillmentKind} from "../src/types/Fulfillment.sol";
+import {Fulfillment} from "../src/types/Fulfillment.sol";
 import {MockCallback} from "./MockCallback.sol";
 import {Selector} from "../src/types/Selector.sol";
 
@@ -370,17 +370,16 @@ contract BoundlessMarketTest is Test {
         view
         returns (Fulfillment[] memory fills, AssessorReceipt memory assessorReceipt, bytes32 root)
     {
-        // initialize the fullfillments; one for each request;
+        // initialize the fulfillments; one for each request;
         // the seal is filled in later, by calling fillInclusionProof
         fills = new Fulfillment[](requests.length);
         Selector[] memory selectors = new Selector[](0);
         AssessorCallback[] memory callbacks = new AssessorCallback[](0);
         for (uint8 i = 0; i < requests.length; i++) {
-            FulfillmentKind kind = FulfillmentKind.WithJournal;
             bytes32 imageIdOrClaimDigest = requests[i].requirements.imageId;
             bytes memory journal = journals[i];
-            if (requests[i].requirements.predicate.predicateType == PredicateType.ClaimDigestMatch) {
-                kind = FulfillmentKind.WithoutJournal;
+            PredicateType predicateType = requests[i].requirements.predicate.predicateType;
+            if (predicateType == PredicateType.ClaimDigestMatch) {
                 imageIdOrClaimDigest = ReceiptClaimLib.ok(requests[i].requirements.imageId, sha256(journal)).digest();
                 journal = bytes(""); // no journal needed for claim digest match
             }
@@ -392,7 +391,7 @@ contract BoundlessMarketTest is Test {
                 imageIdOrClaimDigest: imageIdOrClaimDigest,
                 journal: journal,
                 seal: bytes(""),
-                kind: kind
+                predicateType: predicateType
             });
             fills[i] = fill;
             if (requests[i].requirements.selector != bytes4(0)) {

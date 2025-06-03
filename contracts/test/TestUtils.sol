@@ -25,19 +25,28 @@ library TestUtils {
         address prover
     ) internal pure returns (ReceiptClaim memory) {
         bytes32[] memory leaves = new bytes32[](fills.length);
+        PredicateType[] memory predicateTypes = new PredicateType[](fills.length);
         for (uint256 i = 0; i < fills.length; i++) {
+            predicateTypes[i] = fills[i].predicateType;
             bytes32 claimDigest;
-            if (fills[i].kind == FulfillmentKind.WithJournal) {
-                claimDigest = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
-            } else {
+            if (fills[i].predicateType == PredicateType.ClaimDigestMatch) {
                 claimDigest = fills[i].imageIdOrClaimDigest;
+            } else {
+                claimDigest = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
             }
             leaves[i] = AssessorCommitment(i, fills[i].id, fills[i].requestDigest, claimDigest).eip712Digest();
         }
         bytes32 root = MerkleProofish.processTree(leaves);
 
-        bytes memory journal =
-            abi.encode(AssessorJournal({root: root, selectors: selectors, callbacks: callbacks, prover: prover}));
+        bytes memory journal = abi.encode(
+            AssessorJournal({
+                root: root,
+                selectors: selectors,
+                callbacks: callbacks,
+                predicateTypes: predicateTypes,
+                prover: prover
+            })
+        );
         return ReceiptClaimLib.ok(assessorImageId, sha256(journal));
     }
 
@@ -58,10 +67,10 @@ library TestUtils {
     {
         bytes32[] memory claimDigests = new bytes32[](fills.length);
         for (uint256 i = 0; i < fills.length; i++) {
-            if (fills[i].kind == FulfillmentKind.WithJournal) {
-                claimDigests[i] = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
-            } else {
+            if (fills[i].predicateType == PredicateType.ClaimDigestMatch) {
                 claimDigests[i] = fills[i].imageIdOrClaimDigest;
+            } else {
+                claimDigests[i] = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
             }
         }
         // compute the merkle tree of the batch

@@ -27,10 +27,9 @@ use anyhow::{Context, Ok, Result};
 use boundless_market::{
     contracts::{
         boundless_market::BoundlessMarketService,
-        boundless_market_contract::FulfillmentKind,
         bytecode::*,
         hit_points::{default_allowance, HitPointsService},
-        AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
+        AssessorCommitment, AssessorJournal, Fulfillment, PredicateType, ProofRequest,
     },
     deployments::Deployment,
     dynamic_gas_filler::DynamicGasFiller,
@@ -405,8 +404,13 @@ pub fn mock_singleton(
         claimDigest: <[u8; 32]>::from(app_claim_digest).into(),
     }
     .eip712_hash_struct();
-    let assessor_journal =
-        AssessorJournal { selectors: vec![], root: assessor_root, prover, callbacks: vec![] };
+    let assessor_journal = AssessorJournal {
+        selectors: vec![],
+        root: assessor_root,
+        prover,
+        callbacks: vec![],
+        predicateTypes: vec![request.requirements.predicate.predicateType],
+    };
     let assesor_receipt_claim = ReceiptClaim::ok(ASSESSOR_GUEST_ID, assessor_journal.abi_encode());
     let assessor_claim_digest = assesor_receipt_claim.digest();
 
@@ -436,19 +440,20 @@ pub fn mock_singleton(
     .abi_encode_seal()
     .unwrap();
 
-    let kind = request.requirements.fulfillment_kind();
-    let image_id_or_claim_digest = if kind == FulfillmentKind::WithoutJournal {
-        <[u8; 32]>::from(app_claim_digest).into()
-    } else {
-        request.requirements.imageId
+    let mut image_id_or_claim_digest = request.requirements.imageId;
+    let mut journal = app_journal.bytes.into();
+    let predicate_type = request.requirements.predicate.predicateType;
+    if predicate_type == PredicateType::ClaimDigestMatch {
+        image_id_or_claim_digest = <[u8; 32]>::from(app_claim_digest).into();
+        journal = vec![].into();
     };
     let fulfillment = Fulfillment {
         id: request.id,
         requestDigest: request_digest,
         imageIdOrClaimDigest: image_id_or_claim_digest,
-        journal: app_journal.bytes.into(),
+        journal,
         seal: set_inclusion_seal.into(),
-        kind,
+        predicateType: predicate_type,
     };
 
     let assessor_seal = SetInclusionReceipt::from_path_with_verifier_params(

@@ -726,8 +726,8 @@ mod tests {
     use crate::test_utils::TestDb;
     use alloy::primitives::{Address, Bytes, B256, U256};
     use boundless_market::contracts::{
-        boundless_market_contract::FulfillmentKind, AssessorReceipt, Fulfillment, Offer, Predicate,
-        PredicateType, ProofRequest, RequestId, RequestInput, Requirements,
+        AssessorReceipt, Fulfillment, Offer, Predicate, PredicateType, ProofRequest, RequestId,
+        RequestInput, Requirements,
     };
     use risc0_zkvm::Digest;
 
@@ -867,7 +867,7 @@ mod tests {
             imageIdOrClaimDigest: B256::ZERO,
             journal: Bytes::default(),
             seal: Bytes::default(),
-            kind: FulfillmentKind::WithJournal,
+            predicateType: PredicateType::PrefixMatch,
         };
 
         let prover_address = Address::ZERO;

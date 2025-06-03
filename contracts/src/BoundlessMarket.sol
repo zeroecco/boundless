@@ -23,8 +23,9 @@ import {Account} from "./types/Account.sol";
 import {AssessorJournal} from "./types/AssessorJournal.sol";
 import {AssessorCallback} from "./types/AssessorCallback.sol";
 import {AssessorCommitment} from "./types/AssessorCommitment.sol";
-import {Fulfillment, FulfillmentKind} from "./types/Fulfillment.sol";
+import {Fulfillment} from "./types/Fulfillment.sol";
 import {AssessorReceipt} from "./types/AssessorReceipt.sol";
+import {PredicateType} from "./types/Predicate.sol";
 import {ProofRequest} from "./types/ProofRequest.sol";
 import {LockRequest, LockRequestLibrary} from "./types/LockRequest.sol";
 import {RequestId} from "./types/RequestId.sol";
@@ -238,6 +239,7 @@ contract BoundlessMarket is
         }
         bytes32[] memory leaves = new bytes32[](fills.length);
         bool[] memory hasSelector = new bool[](fills.length);
+        PredicateType[] memory predicateTypes = new PredicateType[](fills.length);
 
         // Check the selector constraints.
         // NOTE: The assessor guest adds non-zero selector values to the list.
@@ -254,12 +256,14 @@ contract BoundlessMarket is
         // Verify the application receipts.
         for (uint256 i = 0; i < fills.length; i++) {
             Fulfillment calldata fill = fills[i];
+            predicateTypes[i] = fill.predicateType;
 
             bytes32 claimDigest;
-            if (fill.kind == FulfillmentKind.WithJournal) {
-                claimDigest = ReceiptClaimLib.ok(fill.imageIdOrClaimDigest, sha256(fill.journal)).digest();
-            } else {
+            if (fill.predicateType == PredicateType.ClaimDigestMatch) {
                 claimDigest = fill.imageIdOrClaimDigest;
+            } else {
+                // The requestor requested a journal, so we compute the claim digest from the journal.
+                claimDigest = ReceiptClaimLib.ok(fill.imageIdOrClaimDigest, sha256(fill.journal)).digest();
             }
             leaves[i] = AssessorCommitment(i, fill.id, fill.requestDigest, claimDigest).eip712Digest();
 
@@ -282,6 +286,7 @@ contract BoundlessMarket is
                     root: batchRoot,
                     callbacks: assessorReceipt.callbacks,
                     selectors: assessorReceipt.selectors,
+                    predicateTypes: predicateTypes,
                     prover: assessorReceipt.prover
                 })
             )
@@ -332,9 +337,11 @@ contract BoundlessMarket is
                 continue;
             }
 
-            _executeCallback(
-                fill.id, callback.addr, callback.gasLimit, fill.imageIdOrClaimDigest, fill.journal, fill.seal
-            );
+            if (fill.predicateType != PredicateType.ClaimDigestMatch) {
+                _executeCallback(
+                    fill.id, callback.addr, callback.gasLimit, fill.imageIdOrClaimDigest, fill.journal, fill.seal
+                );
+            }
         }
     }
 
