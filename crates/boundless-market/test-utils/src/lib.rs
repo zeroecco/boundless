@@ -457,7 +457,7 @@ pub fn mock_singleton(
     };
 
     let assessor_seal = SetInclusionReceipt::from_path_with_verifier_params(
-        ReceiptClaim::ok(ASSESSOR_GUEST_ID, MaybePruned::Pruned(Digest::ZERO)),
+        assesor_receipt_claim,
         merkle_path(&[app_claim_digest, assessor_claim_digest], 1),
         verifier_parameters.digest(),
     )
