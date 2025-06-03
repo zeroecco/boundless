@@ -8,9 +8,7 @@ import "forge-std/Test.sol";
 import {ReceiptClaim, ReceiptClaimLib} from "risc0/IRiscZeroVerifier.sol";
 import {Predicate, PredicateLibrary, PredicateType} from "../../src/types/Predicate.sol";
 
-bytes32 constant IMAGE_ID = keccak256(
-    "ImageId for testing purposes"
-);
+bytes32 constant IMAGE_ID = keccak256("ImageId for testing purposes");
 
 contract PredicateTest is Test {
     using ReceiptClaimLib for ReceiptClaim;
@@ -67,7 +65,9 @@ contract PredicateTest is Test {
         bytes32 claimDigest = ReceiptClaimLib.ok(IMAGE_ID, journalDigest).digest();
         Predicate memory predicate = PredicateLibrary.createClaimDigestMatchPredicate(claimDigest);
         assertEq(
-            uint8(predicate.predicateType), uint8(PredicateType.ClaimDigestMatch), "Predicate type should be ClaimDigestMatch"
+            uint8(predicate.predicateType),
+            uint8(PredicateType.ClaimDigestMatch),
+            "Predicate type should be ClaimDigestMatch"
         );
 
         bool result = predicate.eval(IMAGE_ID, journal, journalDigest);
@@ -80,7 +80,9 @@ contract PredicateTest is Test {
         bytes32 claimDigest = ReceiptClaimLib.ok(IMAGE_ID, journalDigest).digest();
         Predicate memory predicate = PredicateLibrary.createClaimDigestMatchPredicate(claimDigest);
         assertEq(
-            uint8(predicate.predicateType), uint8(PredicateType.ClaimDigestMatch), "Predicate type should be ClaimDigestMatch"
+            uint8(predicate.predicateType),
+            uint8(PredicateType.ClaimDigestMatch),
+            "Predicate type should be ClaimDigestMatch"
         );
 
         journal = "different test";

@@ -26,7 +26,7 @@ library TestUtils {
     ) internal pure returns (ReceiptClaim memory) {
         bytes32[] memory leaves = new bytes32[](fills.length);
         for (uint256 i = 0; i < fills.length; i++) {
-            bytes32 claimDigest; 
+            bytes32 claimDigest;
             if (fills[i].kind == FulfillmentKind.WithJournal) {
                 claimDigest = ReceiptClaimLib.ok(fills[i].imageIdOrClaimDigest, sha256(fills[i].journal)).digest();
             } else {

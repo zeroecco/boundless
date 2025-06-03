@@ -381,9 +381,7 @@ contract BoundlessMarketTest is Test {
             bytes memory journal = journals[i];
             if (requests[i].requirements.predicate.predicateType == PredicateType.ClaimDigestMatch) {
                 kind = FulfillmentKind.WithoutJournal;
-                imageIdOrClaimDigest = ReceiptClaimLib.ok(
-                    requests[i].requirements.imageId, sha256(journal)
-                ).digest();
+                imageIdOrClaimDigest = ReceiptClaimLib.ok(requests[i].requirements.imageId, sha256(journal)).digest();
                 journal = bytes(""); // no journal needed for claim digest match
             }
             Fulfillment memory fill = Fulfillment({

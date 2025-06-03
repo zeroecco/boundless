@@ -332,7 +332,9 @@ contract BoundlessMarket is
                 continue;
             }
 
-            _executeCallback(fill.id, callback.addr, callback.gasLimit, fill.imageIdOrClaimDigest, fill.journal, fill.seal);            
+            _executeCallback(
+                fill.id, callback.addr, callback.gasLimit, fill.imageIdOrClaimDigest, fill.journal, fill.seal
+            );
         }
     }
 

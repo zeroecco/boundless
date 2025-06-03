@@ -7,7 +7,10 @@ import {RequestId} from "./RequestId.sol";
 
 using FulfillmentLibrary for Fulfillment global;
 
-enum FulfillmentKind { WithJournal, WithoutJournal }
+enum FulfillmentKind {
+    WithJournal,
+    WithoutJournal
+}
 
 /// @title Fulfillment Struct and Library
 /// @notice Represents the information posted by the prover to fulfill a request and get paid.
@@ -29,7 +32,7 @@ struct Fulfillment {
     bytes journal;
     /// @notice Cryptographic proof for the validity of the execution results.
     /// @dev This will be sent to the `IRiscZeroVerifier` associated with this contract.
-    bytes seal;   
+    bytes seal;
 }
 
 library FulfillmentLibrary {}

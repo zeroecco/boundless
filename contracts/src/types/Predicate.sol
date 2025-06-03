@@ -62,7 +62,7 @@ library PredicateLibrary {
         } else if (predicate.predicateType == PredicateType.PrefixMatch) {
             return startsWith(journal, predicate.data);
         } else if (predicate.predicateType == PredicateType.ClaimDigestMatch) {
-            return bytes32(predicate.data) == ReceiptClaimLib.ok(imageId, journalDigest).digest(); 
+            return bytes32(predicate.data) == ReceiptClaimLib.ok(imageId, journalDigest).digest();
         } else {
             revert("Unreachable code");
         }
