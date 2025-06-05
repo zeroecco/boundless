@@ -18,13 +18,13 @@
 //!
 //! ```sh
 //! RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
-//! boundless-cli account balance 0x3da7206e104f6d5dd070bfe06c5373cc45c3e65c
+//! boundless account balance 0x3da7206e104f6d5dd070bfe06c5373cc45c3e65c
 //! ```
 //!
 //! ```sh
 //! RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
 //! PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000000 \
-//! boundless-cli request submit-offer --wait --input "hello" \
+//! boundless request submit-offer --wait --input "hello" \
 //! --program-url http://dweb.link/ipfs/bafkreido62tz2uyieb3s6wmixwmg43hqybga2ztmdhimv7njuulf3yug4e
 //! ```
 //!
@@ -398,12 +398,12 @@ struct GlobalConfig {
     #[clap(long, env = "LOG_LEVEL", global = true, default_value = "info")]
     log_level: LevelFilter,
 
-    #[clap(flatten, next_help_heading = "Boundless Market Deployment")]
+    #[clap(flatten, next_help_heading = "Boundless Deployment")]
     deployment: Option<Deployment>,
 }
 
 #[derive(Parser, Debug)]
-#[clap(author, long_version = build::CLAP_LONG_VERSION, about = "CLI for the Boundless market", long_about = None)]
+#[clap(author, long_version = build::CLAP_LONG_VERSION, about = "CLI for Boundless", long_about = None)]
 struct MainArgs {
     /// Subcommand to run
     #[command(subcommand)]
@@ -494,7 +494,7 @@ pub(crate) async fn run(args: &MainArgs) -> Result<()> {
         clap_complete::generate(
             *shell,
             &mut MainArgs::command(),
-            "boundless-cli",
+            "boundless",
             &mut std::io::stdout(),
         );
         return Ok(());
