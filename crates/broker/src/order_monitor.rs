@@ -33,6 +33,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
 
 /// Hard limit on the number of orders to concurrently kick off proving work for.
 const MAX_PROVING_BATCH_SIZE: u32 = 10;
@@ -232,7 +233,7 @@ where
         );
         let lock_block = self
             .market
-            .lock_request(&order.request, &order.client_sig, conf_priority_gas)
+            .lock_request(&order.request, order.client_sig.clone(), conf_priority_gas)
             .await
             .map_err(|e| -> OrderMonitorErr {
                 match e {
@@ -308,7 +309,7 @@ where
     async fn get_proving_order_capacity(
         &self,
         max_concurrent_proofs: Option<u32>,
-        previous_capacity_log: &mut String,
+        prev_orders_by_status: &mut String,
     ) -> Result<Capacity, OrderMonitorErr> {
         if max_concurrent_proofs.is_none() {
             return Ok(Capacity::Unlimited);
@@ -322,14 +323,14 @@ where
             .map_err(|e| OrderMonitorErr::UnexpectedError(e.into()))?;
         let committed_orders_count: u32 = committed_orders.len().try_into().unwrap();
 
-        Self::log_capacity(previous_capacity_log, committed_orders, max).await;
+        Self::log_capacity(prev_orders_by_status, committed_orders, max).await;
 
         let available_slots = max.saturating_sub(committed_orders_count);
         Ok(Capacity::Available(available_slots))
     }
 
     async fn log_capacity(
-        previous_capacity_log: &mut String,
+        prev_orders_by_status: &mut String,
         commited_orders: Vec<Order>,
         max: u32,
     ) {
@@ -341,9 +342,16 @@ where
 
         let capacity_log = format!("Current num committed orders: {committed_orders_count}. Maximum commitment: {max}. Committed orders: {request_id_and_status:?}");
 
-        if *previous_capacity_log != capacity_log {
+        // Note: we don't compare previous to capacity_log as it contains timestamps which cause it to always change.
+        // We only want to log if status or num orders changes.
+        let cur_orders_by_status = commited_orders
+            .iter()
+            .map(|order| format!("{:?}-{}", order.status, order.id()))
+            .collect::<Vec<_>>()
+            .join(",");
+        if *prev_orders_by_status != cur_orders_by_status {
             tracing::info!("{}", capacity_log);
-            *previous_capacity_log = capacity_log;
+            *prev_orders_by_status = cur_orders_by_status;
         }
     }
 
@@ -588,12 +596,12 @@ where
         &self,
         orders: Vec<Arc<OrderRequest>>,
         config: &OrderMonitorConfig,
-        previous_capacity_log: &mut String,
+        prev_orders_by_status: &mut String,
     ) -> Result<Vec<Arc<OrderRequest>>> {
         let num_orders = orders.len();
         // Get our current capacity for proving orders given our config and the number of orders that are currently committed to be proven + fulfilled.
         let capacity = self
-            .get_proving_order_capacity(config.max_concurrent_proofs, previous_capacity_log)
+            .get_proving_order_capacity(config.max_concurrent_proofs, prev_orders_by_status)
             .await?;
         let capacity_granted = capacity
             .request_capacity(num_orders.try_into().expect("Failed to convert order count to u32"));
@@ -797,7 +805,10 @@ where
         Ok(final_orders)
     }
 
-    pub async fn start_monitor(self) -> Result<(), OrderMonitorErr> {
+    pub async fn start_monitor(
+        self,
+        cancel_token: CancellationToken,
+    ) -> Result<(), OrderMonitorErr> {
         let mut last_block = 0;
         let mut first_block = 0;
         let mut interval = tokio::time::interval_at(
@@ -807,7 +818,7 @@ where
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let mut new_orders = self.priced_order_rx.lock().await;
-        let mut previous_capacity_debug_log = String::new();
+        let mut prev_orders_by_status = String::new();
 
         loop {
             tokio::select! {
@@ -861,7 +872,7 @@ where
                             .apply_capacity_limits(
                                 valid_orders,
                                 &monitor_config,
-                                &mut previous_capacity_debug_log,
+                                &mut prev_orders_by_status,
                             )
                             .await?;
 
@@ -877,8 +888,13 @@ where
                         }
                     }
                 }
+                _ = cancel_token.cancelled() => {
+                    tracing::debug!("Order monitor received cancellation");
+                    break;
+                }
             }
         }
+        Ok(())
     }
 
     // Called when a new order result is received from the channel
@@ -907,11 +923,11 @@ where
     P: Provider<Ethereum> + WalletProvider + 'static + Clone,
 {
     type Error = OrderMonitorErr;
-    fn spawn(&self) -> RetryRes<Self::Error> {
+    fn spawn(&self, cancel_token: CancellationToken) -> RetryRes<Self::Error> {
         let monitor_clone = self.clone();
         Box::pin(async move {
             tracing::info!("Starting order monitor");
-            monitor_clone.start_monitor().await.map_err(SupervisorErr::Recover)?;
+            monitor_clone.start_monitor(cancel_token).await.map_err(SupervisorErr::Recover)?;
             Ok(())
         })
     }
@@ -1081,7 +1097,7 @@ mod tests {
         let block_time = 2;
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
-        tokio::spawn(chain_monitor.spawn());
+        tokio::spawn(chain_monitor.spawn(Default::default()));
 
         // Create required channels for tests
         let (priced_order_tx, priced_order_rx) = mpsc::channel(16);
@@ -1120,7 +1136,7 @@ mod tests {
         // A JoinSet automatically aborts all its tasks when dropped
         let mut tasks = JoinSet::new();
         // Spawn the monitor
-        tasks.spawn(async move { monitor.start_monitor().await });
+        tasks.spawn(async move { monitor.start_monitor(Default::default()).await });
 
         tokio::select! {
             result = f => result,

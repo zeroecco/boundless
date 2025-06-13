@@ -17,15 +17,19 @@ use crate::{
     config::ConfigLock,
     db::{AggregationOrder, DbObj},
     errors::CodedError,
+    futures_retry::retry,
     impl_coded_debug, now_timestamp,
     provers::{self, ProverObj},
     task::{RetryRes, RetryTask, SupervisorErr},
     AggregationState, Batch, BatchStatus,
 };
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Error)]
 pub enum AggregatorErr {
+    #[error("{code} Compression error: {0}", code = self.code())]
+    CompressionErr(crate::provers::ProverError),
     #[error("{code} Unexpected error: {0:?}", code = self.code())]
     UnexpectedErr(#[from] anyhow::Error),
 }
@@ -36,6 +40,7 @@ impl CodedError for AggregatorErr {
     fn code(&self) -> &str {
         match self {
             AggregatorErr::UnexpectedErr(_) => "[B-AGG-500]",
+            AggregatorErr::CompressionErr(_) => "[B-AGG-400]",
         }
     }
 }
@@ -257,7 +262,7 @@ impl AggregatorService {
     ///
     /// Checks current min-deadline, batch timer, and current block.
     async fn check_finalize(
-        &mut self,
+        &self,
         batch_id: usize,
         batch: &Batch,
         pending_orders: &[AggregationOrder],
@@ -457,21 +462,22 @@ impl AggregatorService {
     }
 
     async fn aggregate_proofs(
-        &mut self,
+        &self,
         batch_id: usize,
         batch: &Batch,
         new_proofs: &[AggregationOrder],
-        groth16_proofs: &[AggregationOrder],
+        new_groth16_proofs: &[AggregationOrder],
         finalize: bool,
     ) -> Result<String> {
+        let all_orders: Vec<String> = batch
+            .orders
+            .iter()
+            .chain(new_proofs.iter().map(|p| &p.order_id))
+            .chain(new_groth16_proofs.iter().map(|p| &p.order_id))
+            .cloned()
+            .collect();
         let assessor_proof_id = if finalize {
-            let assessor_order_ids: Vec<String> = batch
-                .orders
-                .iter()
-                .chain(new_proofs.iter().map(|p| &p.order_id))
-                .chain(groth16_proofs.iter().map(|p| &p.order_id))
-                .cloned()
-                .collect();
+            let assessor_order_ids: Vec<String> = all_orders.clone();
 
             tracing::debug!(
                 "Running assessor for batch {batch_id} with orders {:x?}",
@@ -503,7 +509,7 @@ impl AggregatorService {
 
         tracing::debug!(
             "Running set builder for batch {batch_id} of orders {:x?} and proofs {:x?}",
-            batch.orders,
+            all_orders,
             proof_ids
         );
         let aggregation_state = self
@@ -513,7 +519,7 @@ impl AggregatorService {
 
         tracing::debug!(
             "Completed aggregation into batch {batch_id} of orders {:x?} and proofs {:x?}",
-            batch.orders,
+            all_orders,
             proof_ids
         );
 
@@ -521,7 +527,7 @@ impl AggregatorService {
             .update_batch(
                 batch_id,
                 &aggregation_state,
-                &[new_proofs, groth16_proofs].concat(),
+                &[new_proofs, new_groth16_proofs].concat(),
                 assessor_proof_id,
             )
             .await
@@ -530,7 +536,7 @@ impl AggregatorService {
         Ok(aggregation_state.proof_id)
     }
 
-    async fn aggregate(&mut self) -> Result<(), AggregatorErr> {
+    async fn aggregate(&self) -> Result<(), AggregatorErr> {
         // Get the current batch. This aggregator service works on one batch at a time, including
         // any proofs ready for aggregation into the current batch.
         let batch_id = self.db.get_current_batch().await.context("Failed to get current batch")?;
@@ -575,11 +581,29 @@ impl AggregatorService {
 
         if compress {
             tracing::debug!("Starting groth16 compression proof for batch {batch_id}");
-            let compress_proof_id = self
-                .prover
-                .compress(&aggregation_proof_id)
-                .await
-                .context("Failed to complete compression")?;
+
+            let (retry_count, sleep_ms) = {
+                let config = self.config.lock_all().context("Failed to lock config")?;
+                (config.prover.proof_retry_count, config.prover.proof_retry_sleep_ms)
+            };
+
+            let compress_proof_id = match retry(
+                retry_count,
+                sleep_ms,
+                || async { self.prover.compress(&aggregation_proof_id).await },
+                "compress",
+            )
+            .await
+            {
+                Ok(id) => id,
+                Err(err) => {
+                    self.db
+                        .set_batch_failure(batch_id, err.to_string())
+                        .await
+                        .map_err(|e| AggregatorErr::UnexpectedErr(e.into()))?;
+                    return Err(AggregatorErr::CompressionErr(err));
+                }
+            };
             tracing::debug!("Completed groth16 compression for batch {batch_id}");
 
             self.db
@@ -594,12 +618,17 @@ impl AggregatorService {
 
 impl RetryTask for AggregatorService {
     type Error = AggregatorErr;
-    fn spawn(&self) -> RetryRes<Self::Error> {
-        let mut self_clone = self.clone();
+    fn spawn(&self, cancel_token: CancellationToken) -> RetryRes<Self::Error> {
+        let self_clone = self.clone();
 
         Box::pin(async move {
             tracing::debug!("Starting Aggregator service");
             loop {
+                if cancel_token.is_cancelled() {
+                    tracing::debug!("Aggregator service received cancellation");
+                    break;
+                }
+
                 let conf_poll_time_ms = {
                     let config = self_clone
                         .config
@@ -613,6 +642,8 @@ impl RetryTask for AggregatorService {
                 self_clone.aggregate().await.map_err(SupervisorErr::Recover)?;
                 tokio::time::sleep(tokio::time::Duration::from_millis(conf_poll_time_ms)).await;
             }
+
+            Ok(())
         })
     }
 }
@@ -681,13 +712,13 @@ mod tests {
             prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
-        let _handle = tokio::spawn(chain_monitor.spawn());
+        let _handle = tokio::spawn(chain_monitor.spawn(CancellationToken::new()));
         let chain_id = provider.get_chain_id().await.unwrap();
         let set_builder_id = Digest::from(SET_BUILDER_ID);
         prover.upload_image(&set_builder_id.to_string(), SET_BUILDER_ELF.to_vec()).await.unwrap();
         let assessor_id = Digest::from(ASSESSOR_GUEST_ID);
         prover.upload_image(&assessor_id.to_string(), ASSESSOR_GUEST_ELF.to_vec()).await.unwrap();
-        let mut aggregator = AggregatorService::new(
+        let aggregator = AggregatorService::new(
             db.clone(),
             chain_id,
             set_builder_id,
@@ -843,12 +874,12 @@ mod tests {
             prover.prove_and_monitor_stark(&image_id_str, &input_id, vec![]).await.unwrap();
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
-        let _handle = tokio::spawn(chain_monitor.spawn());
+        let _handle = tokio::spawn(chain_monitor.spawn(CancellationToken::new()));
         let set_builder_id = Digest::from(SET_BUILDER_ID);
         prover.upload_image(&set_builder_id.to_string(), SET_BUILDER_ELF.to_vec()).await.unwrap();
         let assessor_id = Digest::from(ASSESSOR_GUEST_ID);
         prover.upload_image(&assessor_id.to_string(), ASSESSOR_GUEST_ELF.to_vec()).await.unwrap();
-        let mut aggregator = AggregatorService::new(
+        let aggregator = AggregatorService::new(
             db.clone(),
             provider.get_chain_id().await.unwrap(),
             set_builder_id,
@@ -1022,7 +1053,7 @@ mod tests {
         prover.upload_image(&set_builder_id.to_string(), SET_BUILDER_ELF.to_vec()).await.unwrap();
         let assessor_id = Digest::from(ASSESSOR_GUEST_ID);
         prover.upload_image(&assessor_id.to_string(), ASSESSOR_GUEST_ELF.to_vec()).await.unwrap();
-        let mut aggregator = AggregatorService::new(
+        let aggregator = AggregatorService::new(
             db.clone(),
             provider.get_chain_id().await.unwrap(),
             set_builder_id,
@@ -1130,13 +1161,13 @@ mod tests {
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
 
-        let _handle = tokio::spawn(chain_monitor.spawn());
+        let _handle = tokio::spawn(chain_monitor.spawn(CancellationToken::new()));
 
         let set_builder_id = Digest::from(SET_BUILDER_ID);
         prover.upload_image(&set_builder_id.to_string(), SET_BUILDER_ELF.to_vec()).await.unwrap();
         let assessor_id = Digest::from(ASSESSOR_GUEST_ID);
         prover.upload_image(&assessor_id.to_string(), ASSESSOR_GUEST_ELF.to_vec()).await.unwrap();
-        let mut aggregator = AggregatorService::new(
+        let aggregator = AggregatorService::new(
             db.clone(),
             provider.get_chain_id().await.unwrap(),
             set_builder_id,
@@ -1252,13 +1283,13 @@ mod tests {
 
         let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
 
-        let _handle = tokio::spawn(chain_monitor.spawn());
+        let _handle = tokio::spawn(chain_monitor.spawn(CancellationToken::new()));
 
         let set_builder_id = Digest::from(SET_BUILDER_ID);
         prover.upload_image(&set_builder_id.to_string(), SET_BUILDER_ELF.to_vec()).await.unwrap();
         let assessor_id = Digest::from(ASSESSOR_GUEST_ID);
         prover.upload_image(&assessor_id.to_string(), ASSESSOR_GUEST_ELF.to_vec()).await.unwrap();
-        let mut aggregator = AggregatorService::new(
+        let aggregator = AggregatorService::new(
             db.clone(),
             provider.get_chain_id().await.unwrap(),
             set_builder_id,
