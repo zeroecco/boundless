@@ -373,6 +373,9 @@ jobs:
           crate: cargo-sort
           version: "1.0"
 
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
       - name: cargo Sort
         run: cargo sort --workspace --check
         working-directory: ${{ matrix.workspace }}
@@ -388,6 +391,9 @@ jobs:
       - name: cargo build
         run: cargo build --all-features --locked
         working-directory: ${{ matrix.workspace }}
+
+      - name: cargo deny
+        run: cargo deny check bans
 
       - name: cargo clippy
         run: cargo clippy --locked --workspace
