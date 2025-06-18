@@ -28,8 +28,9 @@ use crate::{
     chain_monitor::ChainMonitorService,
     db::{DbError, DbObj},
     errors::{impl_coded_debug, CodedError},
+    format_order_id,
     task::{RetryRes, RetryTask, SupervisorErr},
-    FulfillmentType, OrderRequest,
+    FulfillmentType, OrderRequest, OrderStatus,
 };
 use thiserror::Error;
 
@@ -372,6 +373,28 @@ where
                                     }
                                 } else {
                                     tracing::warn!("Failed to get order from market or order stream for locked request {:x}. Unable to evaluate for fulfillment after lock expires.", event.requestId);
+                                }
+                            } else {
+                                let order_id = format_order_id(
+                                    &event.request,
+                                    market_addr,
+                                    chain_id,
+                                    &FulfillmentType::LockAndFulfill,
+                                );
+                                let Ok(Some(order)) = db.get_order(&order_id).await else {
+                                    // TODO(austin): in future, this can try to query for the order
+                                    //      and pass on to be proven.
+                                    tracing::warn!("Failed to get order from db that was locked by this prover: {order_id}");
+                                    continue;
+                                };
+
+                                if order.status == OrderStatus::Skipped {
+                                    tracing::warn!("Detected locked request {order_id} that was marked as skipped. Attempting to prove.");
+                                    if let Err(e) = db.commit_skipped_order(order_id.as_str()).await {
+                                        tracing::error!("Failed to commit skipped order {order_id}: {e:?}");
+                                    }
+                                } else {
+                                    tracing::trace!("Order {order_id} lock event noticed, but order is already being proven {:?}.", order.status);
                                 }
                             }
                         }
@@ -792,5 +815,83 @@ mod tests {
                 lockTimeout: 100,
             },
         )
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_skipped_order_commit_on_lock() {
+        let anvil = Anvil::new().spawn();
+
+        let ctx = create_test_ctx(&anvil).await.unwrap();
+
+        let request = new_request(1, &ctx).await;
+
+        ctx.customer_market.submit_request(&request, &ctx.customer_signer).await.unwrap();
+
+        let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
+
+        let logs = ctx.customer_market.instance().RequestSubmitted_filter().query().await.unwrap();
+
+        let (event, _) = logs.first().unwrap();
+        let request = &event.request;
+        let customer_sig = event.clientSignature.clone();
+
+        let chain_id = ctx.customer_market.get_chain_id().await.unwrap();
+
+        let order_request = OrderRequest::new(
+            request.clone(),
+            customer_sig.clone(),
+            FulfillmentType::LockAndFulfill,
+            *ctx.customer_market.instance().address(),
+            chain_id,
+        );
+        let order_id = order_request.id();
+
+        // Simulate skipping the order previously
+        db.insert_skipped_request(&order_request).await.unwrap();
+        let stored_order = db.get_order(&order_request.id()).await.unwrap().unwrap();
+        assert_eq!(stored_order.status, OrderStatus::Skipped);
+
+        let (new_order_tx, mut new_order_rx) = tokio::sync::mpsc::channel(16);
+        let cancel_token = CancellationToken::new();
+        let monitor_db = db.clone();
+        let monitor_provider = ctx.prover_provider.clone();
+        let prover_addr = ctx.prover_signer.address();
+        let monitor_cancel_token = cancel_token.clone();
+
+        tokio::spawn(async move {
+            MarketMonitor::monitor_order_locks(
+                *ctx.customer_market.instance().address(),
+                prover_addr,
+                Arc::new(monitor_provider),
+                monitor_db,
+                new_order_tx,
+                None,
+                monitor_cancel_token,
+            )
+            .await
+        });
+
+        let deposit = default_allowance();
+        ctx.prover_market.deposit_stake_with_permit(deposit, &ctx.prover_signer).await.unwrap();
+
+        ctx.prover_market.lock_request(request, customer_sig, None).await.unwrap();
+
+        let mut valid = false;
+        for _ in 0..10 {
+            if logs_contain(&format!(
+                "Detected locked request {order_id} that was marked as skipped"
+            )) {
+                valid = true;
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
+
+        assert!(valid, "Did not receive the detected locked request message");
+        assert!(new_order_rx.try_recv().is_err(), "Should not send the order to price");
+
+        let committed_order = db.get_order(&order_id).await.unwrap().unwrap();
+        assert_eq!(committed_order.status, OrderStatus::PendingProving);
     }
 }

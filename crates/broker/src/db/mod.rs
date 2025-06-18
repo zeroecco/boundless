@@ -129,6 +129,7 @@ pub trait BrokerDb {
     async fn get_order_compressed_proof_id(&self, id: &str) -> Result<String, DbError>;
     async fn set_order_failure(&self, id: &str, failure_str: &'static str) -> Result<(), DbError>;
     async fn set_order_complete(&self, id: &str) -> Result<(), DbError>;
+    async fn commit_skipped_order(&self, id: &str) -> Result<(), DbError>;
     /// Get all orders that are committed to be prove and be fulfilled.
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
     /// Get all orders that are committed to be proved but have expired based on their expire_timestamp.
@@ -420,6 +421,31 @@ impl BrokerDb for SqliteDb {
         .bind(OrderStatus::Done)
         .bind(Utc::now().timestamp())
         .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        if res.rows_affected() == 0 {
+            return Err(DbError::OrderNotFound(id.to_string()));
+        }
+
+        Ok(())
+    }
+
+    #[instrument(level = "trace", skip_all, fields(id = %id))]
+    async fn commit_skipped_order(&self, id: &str) -> Result<(), DbError> {
+        let res = sqlx::query(
+            r#"
+            UPDATE orders
+            SET data = json_set(
+                       json_set(data,
+                       '$.status', $1),
+                       '$.proving_started_at', $2)
+            WHERE id = $3 AND data->>'status' = $4"#,
+        )
+        .bind(OrderStatus::PendingProving)
+        .bind(Utc::now().timestamp())
+        .bind(id)
+        .bind(OrderStatus::Skipped)
         .execute(&self.pool)
         .await?;
 
@@ -1049,7 +1075,7 @@ impl BrokerDb for SqliteDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProofRequest;
+    use crate::{now_timestamp, ProofRequest};
     use alloy::primitives::{Address, Bytes, U256};
     use boundless_market::contracts::{
         Offer, Predicate, PredicateType, RequestId, RequestInput, RequestInputType, Requirements,
@@ -1627,6 +1653,50 @@ mod tests {
         returned_ids.sort();
         expected_ids.sort();
         assert_eq!(returned_ids, expected_ids);
+    }
+
+    #[sqlx::test]
+    async fn commit_skipped_order(pool: SqlitePool) {
+        let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
+
+        let order_request = create_order_request();
+        db.insert_skipped_request(&order_request).await.unwrap();
+
+        let stored_order = db.get_order(&order_request.id()).await.unwrap().unwrap();
+        assert_eq!(stored_order.status, OrderStatus::Skipped);
+        assert_eq!(stored_order.lock_price, None);
+        assert_eq!(stored_order.proving_started_at, None);
+
+        let before_commit = now_timestamp();
+
+        db.commit_skipped_order(&order_request.id()).await.unwrap();
+
+        let after_commit = now_timestamp();
+
+        let committed_order = db.get_order(&order_request.id()).await.unwrap().unwrap();
+        assert_eq!(committed_order.status, OrderStatus::PendingProving);
+
+        // Verify proving_started_at timestamp was set
+        let proving_started_at = committed_order.proving_started_at.unwrap();
+        assert!(proving_started_at >= before_commit && proving_started_at <= after_commit);
+
+        // Error on trying to commit an order that doesn't exist
+        let non_existent_id = "non_existent_order_id";
+        let result = db.commit_skipped_order(non_existent_id).await;
+        assert!(matches!(result, Err(DbError::OrderNotFound(_))));
+
+        // Error on trying to commit an order that is not skipped
+        let mut non_skipped_order = create_order();
+        non_skipped_order.status = OrderStatus::Proving;
+        non_skipped_order.request.id = U256::from(9999);
+        db.add_order(&non_skipped_order).await.unwrap();
+
+        let result = db.commit_skipped_order(&non_skipped_order.id()).await;
+        assert!(matches!(result, Err(DbError::OrderNotFound(_))));
+
+        // Verify the non-skipped order was not modified
+        let unchanged_order = db.get_order(&non_skipped_order.id()).await.unwrap().unwrap();
+        assert_eq!(unchanged_order.status, OrderStatus::Proving);
     }
 
     #[sqlx::test]
