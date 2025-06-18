@@ -129,7 +129,7 @@ pub trait BrokerDb {
     async fn get_order_compressed_proof_id(&self, id: &str) -> Result<String, DbError>;
     async fn set_order_failure(&self, id: &str, failure_str: &'static str) -> Result<(), DbError>;
     async fn set_order_complete(&self, id: &str) -> Result<(), DbError>;
-    async fn commit_skipped_order(&self, id: &str) -> Result<(), DbError>;
+    async fn commit_skipped_order(&self, id: &str, lock_price: U256) -> Result<(), DbError>;
     /// Get all orders that are committed to be prove and be fulfilled.
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
     /// Get all orders that are committed to be proved but have expired based on their expire_timestamp.
@@ -432,18 +432,21 @@ impl BrokerDb for SqliteDb {
     }
 
     #[instrument(level = "trace", skip_all, fields(id = %id))]
-    async fn commit_skipped_order(&self, id: &str) -> Result<(), DbError> {
+    async fn commit_skipped_order(&self, id: &str, lock_price: U256) -> Result<(), DbError> {
         let res = sqlx::query(
             r#"
             UPDATE orders
             SET data = json_set(
+                       json_set(
                        json_set(data,
                        '$.status', $1),
-                       '$.proving_started_at', $2)
-            WHERE id = $3 AND data->>'status' = $4"#,
+                       '$.proving_started_at', $2),
+                       '$.lock_price', $3)
+            WHERE id = $4 AND data->>'status' = $5"#,
         )
         .bind(OrderStatus::PendingProving)
         .bind(Utc::now().timestamp())
+        .bind(lock_price.to_string())
         .bind(id)
         .bind(OrderStatus::Skipped)
         .execute(&self.pool)
@@ -1669,12 +1672,13 @@ mod tests {
 
         let before_commit = now_timestamp();
 
-        db.commit_skipped_order(&order_request.id()).await.unwrap();
+        db.commit_skipped_order(&order_request.id(), U256::ONE).await.unwrap();
 
         let after_commit = now_timestamp();
 
         let committed_order = db.get_order(&order_request.id()).await.unwrap().unwrap();
         assert_eq!(committed_order.status, OrderStatus::PendingProving);
+        assert_eq!(committed_order.lock_price, Some(U256::ONE));
 
         // Verify proving_started_at timestamp was set
         let proving_started_at = committed_order.proving_started_at.unwrap();
@@ -1682,7 +1686,7 @@ mod tests {
 
         // Error on trying to commit an order that doesn't exist
         let non_existent_id = "non_existent_order_id";
-        let result = db.commit_skipped_order(non_existent_id).await;
+        let result = db.commit_skipped_order(non_existent_id, U256::ONE).await;
         assert!(matches!(result, Err(DbError::OrderNotFound(_))));
 
         // Error on trying to commit an order that is not skipped
@@ -1691,7 +1695,7 @@ mod tests {
         non_skipped_order.request.id = U256::from(9999);
         db.add_order(&non_skipped_order).await.unwrap();
 
-        let result = db.commit_skipped_order(&non_skipped_order.id()).await;
+        let result = db.commit_skipped_order(&non_skipped_order.id(), U256::ONE).await;
         assert!(matches!(result, Err(DbError::OrderNotFound(_))));
 
         // Verify the non-skipped order was not modified

@@ -390,7 +390,30 @@ where
 
                                 if order.status == OrderStatus::Skipped {
                                     tracing::warn!("Detected locked request {order_id} that was marked as skipped. Attempting to prove.");
-                                    if let Err(e) = db.commit_skipped_order(order_id.as_str()).await {
+
+                                    // Calculate the lock price from the event
+                                    let block_timestamp = if let Some(ts) = log.block_timestamp {
+                                        ts
+                                    } else {
+                                        let get_timestamp = async || -> Result<u64> {
+                                            let block_number = log.block_number.ok_or_else(|| anyhow::anyhow!("Log did not contain timestamp or block number"))?;
+                                            let block = provider
+                                                .get_block_by_number(block_number.into())
+                                                .await?
+                                                .ok_or_else(|| anyhow::anyhow!("Block {block_number} not found"))?;
+                                            Ok(block.header.timestamp)
+                                        };
+
+                                        get_timestamp().await.unwrap_or_else(|err| {
+                                            tracing::warn!("Failed to fetch block timestamp: {err:?}, using 0 for lock price");
+                                            0
+                                        })
+                                    };
+
+                                    let lock_price = event.request.offer.price_at(block_timestamp)
+                                        .with_context(|| format!("Failed to calculate lock price for request {:x}", event.requestId))?;
+
+                                    if let Err(e) = db.commit_skipped_order(order_id.as_str(), lock_price).await {
                                         tracing::error!("Failed to commit skipped order {order_id}: {e:?}");
                                     }
                                 } else {
@@ -893,5 +916,6 @@ mod tests {
 
         let committed_order = db.get_order(&order_id).await.unwrap().unwrap();
         assert_eq!(committed_order.status, OrderStatus::PendingProving);
+        assert!(committed_order.lock_price.is_some());
     }
 }
