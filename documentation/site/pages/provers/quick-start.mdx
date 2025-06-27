@@ -1,13 +1,11 @@
 # Quick Start
 
-:::tip[Need Help?]
-If you encounter issues that need technical support, join our [Discord community](https://discord.gg/aXRuD6spez) and claim the prover role via [Guild.xyz](https://guild.xyz/boundless-xyz) to get access to the *#prover-support-forum* channel. The Boundless team and experienced provers are there to help troubleshoot issues and share best practices.
-:::
-
-## Clone the Boundless repo
-
 :::warning[Warning]
 **Incentives for provers are not active for this phase.**
+:::
+
+:::tip[Need Help?]
+If you encounter issues that need technical support, join our [Discord community](https://discord.gg/aXRuD6spez) and claim the prover role via [Guild.xyz](https://guild.xyz/boundless-xyz) to get access to the *#prover-support-forum* channel. The Boundless team and experienced provers are there to help troubleshoot issues and share best practices.
 :::
 
 ## Clone the Boundless Repo
@@ -41,6 +39,24 @@ For a quick set up of Boundless dependencies on Ubuntu 22.04 LTS (see [Operating
 sudo ./scripts/setup.sh
 ```
 
+### Setup Environment Variables
+
+To set the `VERIFIER_ADDRESS`, `SET_VERIFIER_ADDRESS`, `BOUNDLESS_MARKET_ADDRESS` automatically for Ethereum Sepolia, run:
+
+```bash [Terminal]
+# Use the env file based on the network you are connecting to
+source .env.eth-sepolia
+```
+
+You'll need to set two more environment variables yourself:
+
+```bash [Terminal]
+export PRIVATE_KEY=""
+export RPC_URL=""
+```
+
+This is your wallet which will represent your prover on the market; make sure it has funds. For the RPC url, we recommend using [Alchemy](https://alchemy.com).
+
 ## Running a Test Proof
 
 :::tip[See all just commands]
@@ -48,7 +64,7 @@ We make use of [just](https://github.com/casey/just?tab=readme-ov-file#just) to 
 :::
 
 Boundless is comprised of two major components:
-1. *Bento* is the local proving infrastructure. Bento will take requests, prove them and return the result
+1. *Bento* is the local proving infrastructure. Bento will take requests, prove them and return the result.
 2. The *Broker* interacts with the Boundless market. Broker can submit or request proves from the market.
 
 To get started with a test proof on a new proving machine, you'll need to install the `bento_cli`:
@@ -94,28 +110,12 @@ Before we start, we'll need to install the *Boundless CLI* (which is separate to
 cargo install --locked boundless-cli
 ```
 
-### Setup Environment Variables
-
-To set the `VERIFIER_ADDRESS`, `SET_VERIFIER_ADDRESS`, `BOUNDLESS_MARKET_ADDRESS` automatically for Ethereum Sepolia, run:
-
-```bash [Terminal]
-# Use the env file based on the network you are connecting to
-source .env.eth-sepolia
-```
-
-You'll need to set two more environment variables yourself:
-
-```bash [Terminal]
-export PRIVATE_KEY=""
-export RPC_URL=""
-```
-
-This is your wallet which will represent your prover on the market; make sure it has funds. For the RPC url, we recommend using [Alchemy](https://alchemy.com).
-
 ### Deposit Stake
 
 :::note[Note]
 * To read more about depositing funds to the market, please see [Deposit / Balance](/provers/broker#deposit-stake-to-the-market).
+
+* If you need testnet USDC on Base Sepolia, please use the [Circle Testnet Faucet](https://faucet.circle.com/).
 :::
 
 With the environment variables set, you can now deposit USDC tokens as stake to your account balance:
