@@ -15,13 +15,17 @@ interface IERC20Mint is IERC20 {
 
 struct MintCalculatorUpdate {
     address workLogId;
-    uint256 initialEpoch;
-    uint256 finalEpoch;
+    bytes32 initialCommit;
+    bytes32 finalCommit;
+}
+
+struct MintCalculatorMint {
+    address recipient;
+    uint256 value;
 }
 
 struct MintCalculatorJournal {
-    address recipient;
-    uint256 value;
+    MintCalculatorMint[] mints;
     MintCalculatorUpdate[] updates;
     Steel.Commitment steelCommit;
 }
@@ -30,17 +34,29 @@ contract Mint {
     IRiscZeroVerifier internal immutable VERIFIER;
     IERC20Mint internal immutable TOKEN;
 
-    /// Image ID of the mint calculator guest. The mint calculator ensures:
-    /// * Mint authorization is signed by the ECDSA key associated with each included work log.
+    // TODO: How should the mint recipient be decided? A simple answer would be mint to the work log
+    // ID as an address. They are required to know the associated private key, to authorize the work
+    // log updates. However, this could be a headache in that the work log key, which previously
+    // has low privileges is now has custody of funds unless the owner sweeps the minted tokens into
+    // a separate account on a regular basis. Other options include setting a mint recipient on this
+    // contract, or having the work log owner sign a mint authorization message with the intended
+    // recipient.
+
+    /// @notice Image ID of the mint calculator guest.
+    /// @dev The mint calculator ensures:
     /// * An event was logged by the PoVW contract for each log update and epoch finalization.
-    ///   * Events are logged by the expected contract on the expected network.
     ///   * Each event is counted at most once.
+    ///   * Events from an unbroken chain from initialCommit to finalCommit. This constitutes an
+    ///     exhaustiveness check such that the prover cannot exclude updates, and thereby deny a reward.
     /// * Mint value is calculated correctly from the PoVW totals in each included epoch.
+    ///   * An event was logged by the PoVW contract for epoch finalization.
+    ///   * The total work from the epoch finalization event is used in the mint calculation.
+    ///   * The mint recipient is set correctly.
     bytes32 internal immutable MINT_CALCULATOR_ID;
 
-    /// Mapping from work log ID to the most recent epoch for which a mint has occurred. Each time
-    /// a mint occurs associated with a work log, this value ratchets forward.
-    mapping(address => uint256) internal lastMintEpoch;
+    /// Mapping from work log ID to the most recent work log commit for which a mint has occurred.
+    /// Each time a mint occurs associated with a work log, this value ratchets forward.
+    mapping(address => bytes32) internal lastCommit;
 
     constructor(IRiscZeroVerifier verifier, bytes32 mintCalculatorId, IERC20Mint token) {
         VERIFIER = verifier;
@@ -48,20 +64,21 @@ contract Mint {
         TOKEN = token;
     }
 
-    // TODO: Instead of using Steel, consider including the necessary data
-    // under the work log root committed by to the PoVW contract and use an
-    // inclusion proof here.
     function mint(MintCalculatorJournal calldata journal, bytes calldata seal) external {
         VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(abi.encode(journal)));
         require(Steel.validateCommitment(journal.steelCommit));
 
-        // Ensure the initial epoch for each update is correct and update the lastMintEpoch.
+        // Ensure the initial commit for each update is correct and update the final commit.
         for (uint256 i = 0; i < journal.updates.length; i++) {
             MintCalculatorUpdate calldata update = journal.updates[i];
-            require(update.initialEpoch == lastMintEpoch[update.workLogId]);
-            lastMintEpoch[update.workLogId] = update.finalEpoch;
+            require(update.initialCommit == lastCommit[update.workLogId]);
+            lastCommit[update.workLogId] = update.finalCommit;
         }
 
-        TOKEN.mint(journal.recipient, journal.value);
+        // Issue all of the mint calls indicated in the journal.
+        for (uint256 i = 0; i < journal.mints.length; i++) {
+            MintCalculatorMint calldata mintData = journal.mints[i];
+            TOKEN.mint(mintData.recipient, mintData.value);
+        }
     }
 }
