@@ -48,6 +48,9 @@ contract Mint {
         TOKEN = token;
     }
 
+    // TODO: Instead of using Steel, consider including the necessary data
+    // under the work log root committed by to the PoVW contract and use an
+    // inclusion proof here.
     function mint(MintCalculatorJournal calldata journal, bytes calldata seal) external {
         VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(abi.encode(journal)));
         require(Steel.validateCommitment(journal.steelCommit));
