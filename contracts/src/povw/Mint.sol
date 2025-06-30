@@ -7,10 +7,25 @@ pragma solidity ^0.8.24;
 import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
 import {Steel} from "risc0/steel/Steel.sol";
 import {IERC20} from "openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Math} from "openzeppelin/contracts/utils/math/Math.sol";
 
 interface IERC20Mint is IERC20 {
     /// A sender-authorized mint function as a placeholder for a real minting mechanism.
     function mint(address to, uint256 value) external;
+}
+
+struct FixedPoint {
+    uint256 value;
+}
+
+library FixedPointLib {
+    using Math for uint256;
+
+    uint256 private constant BITS = 64;
+
+    function mulUnwrap(FixedPoint self, uint256 rhs) internal pure returns (uint256) {
+        return rhs.mulShr(self.value, BITS, Math.Rounding.Trunc);
+    }
 }
 
 struct MintCalculatorUpdate {
@@ -21,7 +36,9 @@ struct MintCalculatorUpdate {
 
 struct MintCalculatorMint {
     address recipient;
-    uint256 value;
+    // Value of the mint towards the recipient, as a fraction of the epoch reward.
+    // TODO: This only works if the epoch reward is constant per epoch.
+    FixedPoint value;
 }
 
 struct MintCalculatorJournal {
@@ -31,8 +48,14 @@ struct MintCalculatorJournal {
 }
 
 contract Mint {
+    using FixedPointLib for FixedPoint;
+
     IRiscZeroVerifier internal immutable VERIFIER;
     IERC20Mint internal immutable TOKEN;
+
+    // TODO: Extract to a shared library along with EPOCH_LENGTH.
+    // NOTE: Example value of 100 tokens per epoch, assuming 18 decimals.
+    uint256 internal constant EPOCH_REWARD = 100 * 10 ** 18;
 
     // TODO: How should the mint recipient be decided? A simple answer would be mint to the work log
     // ID as an address. They are required to know the associated private key, to authorize the work
@@ -78,7 +101,8 @@ contract Mint {
         // Issue all of the mint calls indicated in the journal.
         for (uint256 i = 0; i < journal.mints.length; i++) {
             MintCalculatorMint calldata mintData = journal.mints[i];
-            TOKEN.mint(mintData.recipient, mintData.value);
+            uint256 mintValue = mintData.value.mulUnwrap(EPOCH_REWARD);
+            TOKEN.mint(mintData.recipient, mintValue);
         }
     }
 }

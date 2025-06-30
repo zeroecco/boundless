@@ -9,7 +9,7 @@ use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::{sol, SolValue};
 use risc0_steel::{
     ethereum::{EthEvmEnv, EthEvmInput, ETH_SEPOLIA_CHAIN_SPEC},
-    Commitment, Contract, Event, EvmBlockHeader, EvmEnv, SteelVerifier,
+    Commitment, Event, EvmBlockHeader, SteelVerifier,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,9 +32,14 @@ sol! {
         bytes32 finalCommit;
     }
 
+    #[derive(Default)]
+    struct FixedPoint {
+        uint256 value;
+    }
+
     struct MintCalculatorMint {
         address recipient;
-        uint256 value;
+        FixedPoint value;
     }
 
     struct MintCalculatorJournal {
@@ -50,11 +55,8 @@ struct Input {
     pub env: Vec<EthEvmInput>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-struct FixedPoint(U256);
-
 impl FixedPoint {
-    const DECIMALS: usize = 18;
+    const BASE: U256 = U256::ONE.checked_shl(64).unwrap();
 
     /// Construct a fixed-point representation of a fractional value.
     ///
@@ -63,10 +65,9 @@ impl FixedPoint {
     /// Panics if the given numerator is too close to U256::MAX, or if the represented fraction
     /// greater than one (e.g. numerator > denominator).
     fn fraction(num: U256, dem: U256) -> Self {
-        let base = U256::from(10).pow(U256::from(Self::DECIMALS));
-        let fraction = num.checked_mul(base).unwrap() / dem;
-        assert!(fraction <= base, "expected fractional value is greater than one");
-        Self(fraction)
+        let fraction = num.checked_mul(Self::BASE).unwrap() / dem;
+        assert!(fraction <= Self::BASE, "expected fractional value is greater than one");
+        Self { value: fraction }
     }
 }
 
@@ -74,13 +75,13 @@ impl Add for FixedPoint {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
+        Self { value: self.value + rhs.value }
     }
 }
 
 impl AddAssign for FixedPoint {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0
+        self.value += rhs.value
     }
 }
 
@@ -171,7 +172,7 @@ fn main() {
     let journal = MintCalculatorJournal {
         mints: mints
             .into_iter()
-            .map(|(recipient, value)| MintCalculatorMint { recipient, value: value.0 })
+            .map(|(recipient, value)| MintCalculatorMint { recipient, value })
             .collect(),
         updates: updates
             .into_iter()
