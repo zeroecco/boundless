@@ -4,10 +4,11 @@
 
 pragma solidity ^0.8.24;
 
-import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
-import {Steel} from "risc0/steel/Steel.sol";
 import {IERC20} from "openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
 import {Math} from "openzeppelin/contracts/utils/math/Math.sol";
+import {PoVW} from "./PoVW.sol";
+import {Steel} from "risc0/steel/Steel.sol";
 
 interface IERC20Mint is IERC20 {
     /// A sender-authorized mint function as a placeholder for a real minting mechanism.
@@ -43,6 +44,8 @@ struct MintCalculatorMint {
 struct MintCalculatorJournal {
     MintCalculatorMint[] mints;
     MintCalculatorUpdate[] updates;
+    // Address of the queried PoVW contract. Must be checked to be equal to the expected address.
+    address povwContractAddress;
     Steel.Commitment steelCommit;
 }
 
@@ -51,6 +54,7 @@ contract Mint {
 
     IRiscZeroVerifier internal immutable VERIFIER;
     IERC20Mint internal immutable TOKEN;
+    PoVW internal immutable POVW;
 
     // TODO: Extract to a shared library along with EPOCH_LENGTH.
     // NOTE: Example value of 100 tokens per epoch, assuming 18 decimals.
@@ -80,15 +84,17 @@ contract Mint {
     /// Each time a mint occurs associated with a work log, this value ratchets forward.
     mapping(address => bytes32) internal lastCommit;
 
-    constructor(IRiscZeroVerifier verifier, bytes32 mintCalculatorId, IERC20Mint token) {
+    constructor(IRiscZeroVerifier verifier, PoVW povw, bytes32 mintCalculatorId, IERC20Mint token) {
         VERIFIER = verifier;
         MINT_CALCULATOR_ID = mintCalculatorId;
         TOKEN = token;
+        POVW = povw;
     }
 
     function mint(MintCalculatorJournal calldata journal, bytes calldata seal) external {
         VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(abi.encode(journal)));
         require(Steel.validateCommitment(journal.steelCommit));
+        require(journal.povwContractAddress == address(POVW));
 
         // Ensure the initial commit for each update is correct and update the final commit.
         for (uint256 i = 0; i < journal.updates.length; i++) {

@@ -5,16 +5,13 @@ use std::{
 
 use risc0_zkvm::guest::env;
 
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolValue};
 use risc0_steel::{
     ethereum::{EthEvmEnv, EthEvmInput, ETH_SEPOLIA_CHAIN_SPEC},
     Commitment, Event, EvmBlockHeader, SteelVerifier,
 };
 use serde::{Deserialize, Serialize};
-
-/// Address of the deployed contract to query.
-const POVW_CONTRACT_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
 
 sol! {
     // Copied from contracts/src/povw/PoVW.sol
@@ -45,12 +42,20 @@ sol! {
     struct MintCalculatorJournal {
         MintCalculatorMint[] mints;
         MintCalculatorUpdate[] updates;
+        address povwContractAddress;
         Commitment steelCommit;
     }
 }
 
 #[derive(Serialize, Deserialize)]
 struct Input {
+    /// Address of the PoVW contract to query.
+    ///
+    /// It is not possible to be assured that this is the correct contract when the guest is
+    /// running, and so the behavior of the contract may deviate from expected. If the prover did
+    /// supply the wrong address, the proof will be rejected by the Mint contract when it checks
+    /// the address written to the journal.
+    pub povw_contract_address: Address,
     /// Vec of [EthEvmInput] for each block accessed in this execution.
     pub env: Vec<EthEvmInput>,
 }
@@ -123,7 +128,7 @@ fn main() {
         // Query all `EpochFinalized` events of the PoVW contract.
         // TODO: This is possibly wasteful, in that only a subset will have this event.
         let epoch_finalized_events =
-            Event::new::<IPoVW::EpochFinalized>(env).address(POVW_CONTRACT_ADDRESS).query();
+            Event::new::<IPoVW::EpochFinalized>(env).address(input.povw_contract_address).query();
 
         for epoch_finalized_event in epoch_finalized_events {
             let epoch_number = epoch_finalized_event.epoch.to::<u32>();
@@ -141,7 +146,7 @@ fn main() {
         // Query all `WorkLogUpdated` events of the PoVW contract.
         // TODO: This is possibly wasteful, in that only a subset will have this event.
         let update_events =
-            Event::new::<IPoVW::WorkLogUpdated>(env).address(POVW_CONTRACT_ADDRESS).query();
+            Event::new::<IPoVW::WorkLogUpdated>(env).address(input.povw_contract_address).query();
 
         for update_event in update_events {
             match updates.entry(update_event.logId) {
@@ -182,6 +187,7 @@ fn main() {
                 finalCommit: commits.1,
             })
             .collect(),
+        povwContractAddress: input.povw_contract_address,
         steelCommit: envs.values().last().unwrap().commitment().clone(),
     };
     env::commit_slice(&journal.abi_encode());
