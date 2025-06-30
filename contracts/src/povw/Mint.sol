@@ -19,12 +19,10 @@ struct FixedPoint {
 }
 
 library FixedPointLib {
-    using Math for uint256;
+    uint8 private constant BITS = 64;
 
-    uint256 private constant BITS = 64;
-
-    function mulUnwrap(FixedPoint self, uint256 rhs) internal pure returns (uint256) {
-        return rhs.mulShr(self.value, BITS, Math.Rounding.Trunc);
+    function mulUnwrap(FixedPoint memory self, uint256 rhs) internal pure returns (uint256) {
+        return Math.mulShr(self.value, rhs, BITS, Math.Rounding.Trunc);
     }
 }
 
