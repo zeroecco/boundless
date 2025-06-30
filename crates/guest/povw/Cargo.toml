@@ -7,6 +7,11 @@ homepage = { workspace = true }
 repository = { workspace = true }
 publish = false
 
+[dev-dependencies]
+anyhow = { workspace = true }
+risc0-zkvm = { workspace = true, features = ["client", "unstable"] }
+tokio = { workspace = true }
+
 [build-dependencies]
 risc0-build = { workspace = true, features = ["unstable"] }
 risc0-build-ethereum = { workspace = true }

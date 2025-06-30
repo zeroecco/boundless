@@ -2707,8 +2707,11 @@ dependencies = [
 name = "boundless-povw-guests"
 version = "0.12.0"
 dependencies = [
+ "anyhow",
  "risc0-build",
  "risc0-build-ethereum 2.2.1",
+ "risc0-zkvm",
+ "tokio",
 ]
 
 [[package]]
