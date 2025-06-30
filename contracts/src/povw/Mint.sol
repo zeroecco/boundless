@@ -35,6 +35,7 @@ struct MintCalculatorUpdate {
 struct MintCalculatorMint {
     address recipient;
     // Value of the mint towards the recipient, as a fraction of the epoch reward.
+    // NOTE: This may be larger than 1 when aggregating rewards across multiple epochs.
     // TODO: This only works if the epoch reward is constant per epoch.
     FixedPoint value;
 }
