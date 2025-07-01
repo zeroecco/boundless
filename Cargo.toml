@@ -6,6 +6,7 @@ members = [
     "crates/boundless-cli",
     "crates/boundless-market",
     "crates/boundless-market/test-utils",
+    "crates/boundless-sdk",
     "crates/broker",
     "crates/broker-stress",
     "crates/distributor",
@@ -38,6 +39,8 @@ order-stream = { path = "crates/order-stream" }
 async-stream = "0.3"
 alloy = { version = "1.0", default-features = false }
 alloy-primitives = { version = "1.0" }
+alloy-signer = { version = "1.0" }
+alloy-signer-local = { version = "1.0" }
 alloy-sol-types = { version = "1.0", features = ["json"] }
 alloy-chains = "0.2.0"
 anyhow = { version = "1.0" }

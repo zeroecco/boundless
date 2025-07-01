@@ -2671,6 +2671,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "boundless-sdk"
+version = "0.11.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-primitives 1.2.0",
+ "alloy-signer",
+ "alloy-signer-local",
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "aws-sdk-s3",
+ "bytemuck",
+ "chrono",
+ "clap",
+ "dashmap",
+ "derive_builder",
+ "futures",
+ "futures-util",
+ "hex",
+ "httpmock",
+ "rand 0.9.1",
+ "reqwest",
+ "risc0-zkvm",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "siwe",
+ "tempfile",
+ "thiserror 2.0.12",
+ "time",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "url",
+ "utoipa",
+]
+
+[[package]]
 name = "boundless-slasher"
 version = "0.11.0"
 dependencies = [
