@@ -8,12 +8,8 @@ import {IERC20} from "openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
 import {Math} from "openzeppelin/contracts/utils/math/Math.sol";
 import {PoVW} from "./PoVW.sol";
+import {IERC20Mint} from "./IERC20Mint.sol";
 import {Steel} from "risc0/steel/Steel.sol";
-
-interface IERC20Mint is IERC20 {
-    /// A sender-authorized mint function as a placeholder for a real minting mechanism.
-    function mint(address to, uint256 value) external;
-}
 
 struct FixedPoint {
     uint256 value;

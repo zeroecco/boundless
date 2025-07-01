@@ -8,7 +8,9 @@ repository = { workspace = true }
 publish = false
 
 [dev-dependencies]
+alloy = { workspace = true, features = ["network", "node-bindings", "rpc-types", "providers", "transports", "sol-types", "contract", "signers", "signer-local"] }
 anyhow = { workspace = true }
+risc0-ethereum-contracts = { workspace = true, features = ["unstable"] }
 risc0-zkvm = { workspace = true, features = ["client", "unstable"] }
 tokio = { workspace = true }
 
