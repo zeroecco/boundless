@@ -2321,7 +2321,7 @@ dependencies = [
  "rustc-hash 1.1.0",
  "shlex",
  "syn 2.0.104",
- "which",
+ "which 4.4.2",
 ]
 
 [[package]]
@@ -2681,6 +2681,31 @@ dependencies = [
  "risc0-circuit-recursion",
  "risc0-ethereum-contracts",
  "risc0-zkvm",
+]
+
+[[package]]
+name = "boundless-mcp-server"
+version = "0.12.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "async-trait",
+ "boundless-market",
+ "broker",
+ "chrono",
+ "clap",
+ "futures-util",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "which 6.0.3",
 ]
 
 [[package]]
@@ -9177,7 +9202,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bdc4f02f557e3037bbe2a379cac8be6e014a67beb7bf0996b536979392f6361"
 dependencies = [
  "cc",
- "which",
+ "which 4.4.2",
 ]
 
 [[package]]
@@ -10709,6 +10734,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "which"
+version = "6.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
+dependencies = [
+ "either",
+ "home",
+ "rustix 0.38.44",
+ "winsafe",
+]
+
+[[package]]
 name = "whoami"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11106,6 +11143,12 @@ checksum = "74c7b26e3480b707944fc872477815d29a8e429d2f93a1ce000f5fa84a15cbcd"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen-rt"

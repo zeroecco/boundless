@@ -6,6 +6,7 @@ members = [
     "crates/boundless-cli",
     "crates/boundless-market",
     "crates/boundless-market/test-utils",
+    "crates/boundless-mcp-server",
     "crates/broker",
     "crates/broker-stress",
     "crates/distributor",

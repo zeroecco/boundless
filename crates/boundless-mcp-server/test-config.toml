@@ -1,0 +1,34 @@
+# Test configuration for Boundless MCP Server
+# This configuration is for testing the server functionality
+
+[mcp]
+# Broker database paths - copied from docker volumes for testing
+broker_dbs = [
+    "/tmp/broker.db",
+    "/tmp/broker2.db"
+]
+
+# Test log file locations
+log_paths = [
+    "./logs/",
+    "/tmp/boundless-logs/"
+]
+
+# Short log search range for testing
+default_log_search_range = "1h"
+
+# Smaller limit for testing
+max_log_lines = 100
+
+# Chain configurations matching broker setup
+[chains.eth_sepolia]
+rpc_url = "https://eth-sepolia.g.alchemy.com/v2/Xzh2zP7TanZjb2BniGzWAxKgSC3NSYYO"
+chain_id = 11155111
+boundless_market_address = "0x7b36Ed56ec6045679C178205a81AE878d85B773d"
+name = "Ethereum Sepolia Staging"
+
+[chains.base_sepolia]
+rpc_url = "https://base-sepolia.g.alchemy.com/v2/Xzh2zP7TanZjb2BniGzWAxKgSC3NSYYO"
+chain_id = 84532
+boundless_market_address = "0xAD0Bd6C436658aF457736d7224a87d2EF56365C8"
+name = "Base Sepolia Staging"

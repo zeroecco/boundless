@@ -1,0 +1,61 @@
+# Boundless MCP Server Configuration
+# This file configures the Model Context Protocol server for Boundless diagnostics
+
+[mcp]
+# List of broker database paths to monitor
+# The server will connect to all available databases
+broker_dbs = [
+    "./broker.db",                              # Default broker database
+    "/var/lib/boundless/broker.db",             # System-wide installation
+    "/home/user/.boundless/broker.db",          # User-specific installation
+]
+
+# Log file locations
+# The server will search these paths for log files
+log_paths = [
+    "./logs/broker.log",                        # Local logs directory
+    "/var/log/boundless/broker.log",            # System logs
+    "/tmp/boundless-logs/",                     # Temporary logs directory
+]
+
+# Default time range for log searches
+# Format: {number}{unit} where unit is 'h' (hours), 'd' (days), 'm' (minutes)
+default_log_search_range = "24h"
+
+# Maximum number of log lines to return in a single search
+max_log_lines = 1000
+
+# Chain configurations
+# Each chain needs RPC access and contract addresses
+
+[chains.sepolia]
+rpc_url = "https://ethereum-sepolia-rpc.publicnode.com"
+chain_id = 11155111
+boundless_market_address = "0x7B97cb8448B069c3Dc00069211c9d1BA42F59Df6"
+name = "Ethereum Sepolia"
+
+[chains.base_sepolia]
+rpc_url = "https://base-sepolia-rpc.publicnode.com"
+chain_id = 84532
+boundless_market_address = "0xef2c15a68897E15d556faD8F95a1a58076C96e44"
+name = "Base Sepolia"
+
+[chains.local]
+rpc_url = "http://localhost:8545"
+chain_id = 31337
+boundless_market_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+name = "Local Development"
+
+# Example: Custom chain configuration
+# [chains.custom]
+# rpc_url = "https://your-custom-rpc.com"
+# chain_id = 12345
+# boundless_market_address = "0x1234567890123456789012345678901234567890"
+# name = "Custom Chain"
+
+# Example: Alternative RPC providers
+# [chains.sepolia_alchemy]
+# rpc_url = "https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY"
+# chain_id = 11155111
+# boundless_market_address = "0x7B97cb8448B069c3Dc00069211c9d1BA42F59Df6"
+# name = "Ethereum Sepolia (Alchemy)"
