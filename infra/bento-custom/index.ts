@@ -17,6 +17,7 @@ import { setupMonitoring } from "./components/monitoring";
 const config = new pulumi.Config();
 const environment = config.get("environment") || "custom";
 const region = aws.getRegion().then(r => r.name);
+const rdsPassword = config.requireSecret("rdsPassword");
 
 // Create tags for all resources
 const commonTags = {
@@ -31,7 +32,7 @@ async function main() {
 
     const secrets = await setupSecrets("bento-custom", commonTags);
 
-    const database = await setupDatabase("bento-custom", network, commonTags);
+    const database = await setupDatabase("bento-custom", network, commonTags, rdsPassword);
 
     const storage = await setupStorage("bento-custom", commonTags);
 

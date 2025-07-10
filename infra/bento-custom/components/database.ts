@@ -1,10 +1,44 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 
+// Create a secrets manager secret for the database password
+function createDatabaseSecret(
+    name: string,
+    password: pulumi.Output<string>,
+    databaseEndpoint: pulumi.Output<string>,
+    tags: Record<string, string>
+): aws.secretsmanager.Secret {
+    const secret = new aws.secretsmanager.Secret(`${name}-db-secret`, {
+        description: "Database credentials for Bento PostgreSQL",
+        tags: {
+            ...tags,
+            Name: `${name}-db-secret`,
+        },
+    });
+
+    // Create the secret version with the password
+    new aws.secretsmanager.SecretVersion(`${name}-db-secret-version`, {
+        secretId: secret.id,
+        secretString: pulumi.all([password, databaseEndpoint]).apply(([pwd, endpoint]) => 
+            JSON.stringify({
+                username: "worker",
+                password: pwd,
+                engine: "postgres",
+                host: endpoint,
+                port: 5432,
+                dbname: "taskdb"
+            })
+        ),
+    });
+
+    return secret;
+}
+
 export async function setupDatabase(
     name: string,
     network: any,
-    tags: Record<string, string>
+    tags: Record<string, string>,
+    rdsPassword: pulumi.Output<string>
 ) {
     // Create subnet group for RDS
     const dbSubnetGroup = new aws.rds.SubnetGroup(`${name}-db-subnet-group`, {
@@ -20,15 +54,17 @@ export async function setupDatabase(
     const database = new aws.rds.Instance(`${name}-postgres`, {
         identifier: `${name}-postgres`,
         engine: "postgres",
-        engineVersion: "15.13",
-        instanceClass: "db.t4g.micro",
+        engineVersion: "17.2",
+        instanceClass: "db.t4g.small",
         allocatedStorage: 20,
+        maxAllocatedStorage: 500,
         storageType: "gp3",
         storageEncrypted: true,
+        publiclyAccessible: false,
 
         dbName: "taskdb",
         username: "worker",
-        manageMasterUserPassword: true,
+        password: rdsPassword,
 
         vpcSecurityGroupIds: [network.databaseSecurityGroup.id],
         dbSubnetGroupName: dbSubnetGroup.name,
@@ -48,6 +84,9 @@ export async function setupDatabase(
         },
     });
 
+    // Create the database secret first
+    const databaseSecret = createDatabaseSecret(name, rdsPassword, database.endpoint, tags);
+
     // Create RDS Proxy for better connection management
     const rdsProxy = new aws.rds.Proxy(`${name}-rds-proxy`, {
         name: `${name}-rds-proxy`,
@@ -59,12 +98,12 @@ export async function setupDatabase(
         // Authentication will be set up via target group
         auths: [{
             authScheme: "SECRETS",
-            // Use the master user password from RDS
-            secretArn: database.masterUserSecrets.apply((secrets: any) => secrets[0].secretArn),
+            // Use the configured RDS password
+            secretArn: databaseSecret.arn,
         }],
 
-        // Don't require TLS for internal communication
-        requireTls: false,
+        // Require TLS for secure connections (matching order stream)
+        requireTls: true,
 
         tags: {
             ...tags,
@@ -89,27 +128,17 @@ export async function setupDatabase(
         dbInstanceIdentifier: database.identifier,
     });
 
-    // Get the database password from AWS Secrets Manager
-    const dbSecret = database.masterUserSecrets.apply((secrets: any) => secrets[0].secretArn);
-    const secretValue = dbSecret.apply(async (arn: string) => {
-        const secret = await aws.secretsmanager.getSecretVersion({
-            secretId: arn,
-        });
-        return JSON.parse(secret.secretString);
-    });
-
     return {
         instance: database,
         proxy: rdsProxy,
         endpoint: database.endpoint,
         proxyEndpoint: rdsProxy.endpoint,
-        // Use RDS proxy connection with password from secrets
-        connectionUrl: pulumi.all([secretValue, rdsProxy.endpoint]).apply(([secret, endpoint]) => {
-            // URL encode the password to handle special characters
-            const encodedPassword = encodeURIComponent(secret.password);
+        // Use RDS proxy connection with configured password and SSL mode
+        connectionUrl: pulumi.all([rdsPassword, rdsProxy.endpoint]).apply(([password, endpoint]) => {
             // Ensure endpoint includes port - proxy endpoints might not include :5432
             const host = endpoint.includes(':') ? endpoint : `${endpoint}:5432`;
-            return `postgresql://worker:${encodedPassword}@${host}/taskdb`;
+            return `postgresql://worker:${password}@${host}/taskdb?sslmode=require`;
         }),
+        secret: databaseSecret,
     };
 }
