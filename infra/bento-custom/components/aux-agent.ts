@@ -37,7 +37,7 @@ export async function setupAuxAgent(
         memory: "2048", // 2 GB
         taskRoleArn: taskRole.arn,
         executionRoleArn: executionRole.arn,
-        
+
         containerDefinitions: pulumi.all([
             database.connectionUrl,
             cache.connectionUrl,
@@ -50,7 +50,7 @@ export async function setupAuxAgent(
             image: "risczero/risc0-bento-agent:stable",
             command: ["/app/agent", "-t", "aux"],
             essential: true,
-            
+
             environment: [
                 { name: "DATABASE_URL", value: dbUrl },
                 { name: "REDIS_URL", value: redisUrl },
@@ -63,7 +63,7 @@ export async function setupAuxAgent(
                 { name: "S3_ACCESS_KEY", value: s3AccessKeyId },
                 { name: "S3_SECRET_KEY", value: s3SecretKey },
             ],
-            
+
             logConfiguration: {
                 logDriver: "awslogs",
                 options: {
@@ -72,16 +72,16 @@ export async function setupAuxAgent(
                     "awslogs-stream-prefix": "aux-agent",
                 },
             },
-            
+
             healthCheck: {
-                command: ["CMD-SHELL", "echo 'healthy'"],
+                command: ["CMD-SHELL", "pgrep -f '/app/agent' || exit 1"],
                 interval: 30,
-                timeout: 5,
-                retries: 3,
-                startPeriod: 60,
+                timeout: 10,
+                retries: 5,
+                startPeriod: 120, // Allow more time for startup
             },
         }])),
-        
+
         tags: {
             ...tags,
             Name: `${name}-aux-agent-task`,
@@ -95,16 +95,19 @@ export async function setupAuxAgent(
         taskDefinition: taskDefinition.arn,
         desiredCount: 1,
         launchType: "FARGATE",
-        
+
         networkConfiguration: {
             subnets: network.privateSubnetIds,
             securityGroups: [network.instanceSecurityGroup.id],
             assignPublicIp: false,
         },
-        
+
+        // Wait for steady state before considering deployment complete
+        waitForSteadyState: true,
+
         enableEcsManagedTags: true,
         propagateTags: "SERVICE",
-        
+
         tags: {
             ...tags,
             Name: `${name}-aux-agent-service`,

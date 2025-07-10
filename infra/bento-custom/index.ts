@@ -1,6 +1,5 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
-import * as awsx from "@pulumi/awsx";
 import { setupNetwork } from "./components/network";
 import { setupDatabase } from "./components/database";
 import { setupStorage } from "./components/storage";
@@ -58,6 +57,7 @@ async function main() {
         { execAgents, snarkAgent, gpuProvers, auxAgent, ec2Broker, bentoAPI },
         database,
         cache,
+        cluster,
         commonTags
     );
 

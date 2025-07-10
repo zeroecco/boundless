@@ -62,6 +62,7 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
                 fromPort: 5432,
                 toPort: 5432,
                 securityGroups: [instanceSecurityGroup.id],
+                description: "Allow connections from EC2 instances",
             },
         ],
         egress: [
@@ -78,6 +79,40 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
         },
     });
 
+    // Security group for broker EC2 instance (doesn't need database access)
+    const brokerSecurityGroup = new aws.ec2.SecurityGroup(`${name}-broker-sg`, {
+        vpcId: vpc.vpcId,
+        description: "Security group for broker EC2 instance",
+        ingress: [
+            {
+                protocol: "tcp",
+                fromPort: 22,
+                toPort: 22,
+                cidrBlocks: ["0.0.0.0/0"],
+                description: "SSH access",
+            },
+            {
+                protocol: "-1",
+                fromPort: 0,
+                toPort: 0,
+                self: true,
+                description: "Allow internal communication",
+            },
+        ],
+        egress: [
+            {
+                protocol: "-1",
+                fromPort: 0,
+                toPort: 0,
+                cidrBlocks: ["0.0.0.0/0"],
+            },
+        ],
+        tags: {
+            ...tags,
+            Name: `${name}-broker-sg`,
+        },
+    });
+
     // Security group for ElastiCache
     const cacheSecurityGroup = new aws.ec2.SecurityGroup(`${name}-cache-sg`, {
         vpcId: vpc.vpcId,
@@ -88,6 +123,7 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
                 fromPort: 6379,
                 toPort: 6379,
                 securityGroups: [instanceSecurityGroup.id],
+                description: "Allow Redis from EC2 instances",
             },
         ],
         egress: [
@@ -104,6 +140,17 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
         },
     });
 
+    // Allow broker to access Bento API (port 8081)
+    new aws.ec2.SecurityGroupRule(`${name}-bento-api-from-broker`, {
+        type: "ingress",
+        fromPort: 8081,
+        toPort: 8081,
+        protocol: "tcp",
+        securityGroupId: instanceSecurityGroup.id,
+        sourceSecurityGroupId: brokerSecurityGroup.id,
+        description: "Allow Bento API access from broker",
+    });
+
     // Security group for RDS Proxy
     const rdsProxySecurityGroup = new aws.ec2.SecurityGroup(`${name}-rds-proxy-sg`, {
         vpcId: vpc.vpcId,
@@ -114,6 +161,7 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
                 fromPort: 5432,
                 toPort: 5432,
                 securityGroups: [instanceSecurityGroup.id],
+                description: "Allow PostgreSQL from EC2 instances",
             },
         ],
         egress: [
@@ -122,6 +170,7 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
                 fromPort: 5432,
                 toPort: 5432,
                 securityGroups: [databaseSecurityGroup.id],
+                description: "Allow PostgreSQL to RDS",
             },
         ],
         tags: {
@@ -129,6 +178,7 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
             Name: `${name}-rds-proxy-sg`,
         },
     });
+
 
     // Update database security group to accept connections from RDS Proxy
     new aws.ec2.SecurityGroupRule(`${name}-db-from-proxy`, {
@@ -211,6 +261,7 @@ export async function setupNetwork(name: string, tags: Record<string, string>) {
         publicSubnetIds: vpc.publicSubnetIds,
         privateSubnetIds: vpc.privateSubnetIds,
         instanceSecurityGroup,
+        brokerSecurityGroup,
         databaseSecurityGroup,
         cacheSecurityGroup,
         rdsProxySecurityGroup,

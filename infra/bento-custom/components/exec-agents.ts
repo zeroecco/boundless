@@ -13,7 +13,7 @@ export async function setupExecAgents(
     tags: Record<string, string>
 ) {
     const region = await aws.getRegion().then(r => r.name);
-    
+
     // Create IAM roles for ECS
     const { taskRole, executionRole } = await createEcsTaskRole(`${name}-exec-agents`, tags);
 
@@ -36,13 +36,13 @@ export async function setupExecAgents(
         memory: "49152", // 48 GB out of 64 GB available
         taskRoleArn: taskRole.arn,
         executionRoleArn: executionRole.arn,
-        
+
         // Placement constraints for exec instances
         placementConstraints: [{
             type: "memberOf",
             expression: "attribute:ecs.instance-type == r7iz.2xlarge",
         }],
-        
+
         containerDefinitions: pulumi.all([
             database.connectionUrl,
             cache.connectionUrl,
@@ -58,7 +58,7 @@ export async function setupExecAgents(
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
-                
+
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
@@ -72,7 +72,7 @@ export async function setupExecAgents(
                     { name: "S3_ACCESS_KEY", value: s3AccessKeyId },
                     { name: "S3_SECRET_KEY", value: s3SecretKey },
                 ],
-                
+
                 logConfiguration: {
                     logDriver: "awslogs",
                     options: {
@@ -81,7 +81,7 @@ export async function setupExecAgents(
                         "awslogs-stream-prefix": "exec-agent-0",
                     },
                 },
-                
+
                 healthCheck: {
                     command: ["CMD-SHELL", "pgrep -f '/app/agent' || exit 1"],
                     interval: 30,
@@ -97,7 +97,7 @@ export async function setupExecAgents(
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
-                
+
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
@@ -111,7 +111,7 @@ export async function setupExecAgents(
                     { name: "S3_ACCESS_KEY", value: s3AccessKeyId },
                     { name: "S3_SECRET_KEY", value: s3SecretKey },
                 ],
-                
+
                 logConfiguration: {
                     logDriver: "awslogs",
                     options: {
@@ -120,7 +120,7 @@ export async function setupExecAgents(
                         "awslogs-stream-prefix": "exec-agent-1",
                     },
                 },
-                
+
                 healthCheck: {
                     command: ["CMD-SHELL", "pgrep -f '/app/agent' || exit 1"],
                     interval: 30,
@@ -136,7 +136,7 @@ export async function setupExecAgents(
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
-                
+
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
@@ -150,7 +150,7 @@ export async function setupExecAgents(
                     { name: "S3_ACCESS_KEY", value: s3AccessKeyId },
                     { name: "S3_SECRET_KEY", value: s3SecretKey },
                 ],
-                
+
                 logConfiguration: {
                     logDriver: "awslogs",
                     options: {
@@ -159,7 +159,7 @@ export async function setupExecAgents(
                         "awslogs-stream-prefix": "exec-agent-2",
                     },
                 },
-                
+
                 healthCheck: {
                     command: ["CMD-SHELL", "pgrep -f '/app/agent' || exit 1"],
                     interval: 30,
@@ -175,7 +175,7 @@ export async function setupExecAgents(
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
-                
+
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
@@ -189,7 +189,7 @@ export async function setupExecAgents(
                     { name: "S3_ACCESS_KEY", value: s3AccessKeyId },
                     { name: "S3_SECRET_KEY", value: s3SecretKey },
                 ],
-                
+
                 logConfiguration: {
                     logDriver: "awslogs",
                     options: {
@@ -198,7 +198,7 @@ export async function setupExecAgents(
                         "awslogs-stream-prefix": "exec-agent-3",
                     },
                 },
-                
+
                 healthCheck: {
                     command: ["CMD-SHELL", "pgrep -f '/app/agent' || exit 1"],
                     interval: 30,
@@ -208,7 +208,7 @@ export async function setupExecAgents(
                 },
             },
         ])),
-        
+
         tags: {
             ...tags,
             Name: `${name}-exec-agents-task`,
@@ -221,20 +221,23 @@ export async function setupExecAgents(
         cluster: cluster.cluster.id,
         taskDefinition: taskDefinition.arn,
         desiredCount: 1,
-        
+
         capacityProviderStrategies: [{
             capacityProvider: cluster.execCapacityProvider.name,
             weight: 1,
         }],
-        
+
         networkConfiguration: {
             subnets: network.privateSubnetIds, // EC2 instances in private subnets
             securityGroups: [network.instanceSecurityGroup.id],
         },
-        
+
+        // Wait for steady state before considering deployment complete
+        waitForSteadyState: true,
+
         enableEcsManagedTags: true,
         propagateTags: "SERVICE",
-        
+
         tags: {
             ...tags,
             Name: `${name}-exec-agents-service`,

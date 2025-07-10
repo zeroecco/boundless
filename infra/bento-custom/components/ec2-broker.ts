@@ -144,37 +144,7 @@ export async function setupEC2Broker(
         },
     });
 
-    // Create security group for broker
-    const brokerSecurityGroup = new aws.ec2.SecurityGroup(`${name}-broker-sg`, {
-        namePrefix: `${name}-broker-`,
-        vpcId: network.vpc.vpcId,
-        description: "Security group for Boundless broker EC2 instance",
-        
-        ingress: [
-            {
-                fromPort: 22,
-                toPort: 22,
-                protocol: "tcp",
-                cidrBlocks: ["0.0.0.0/0"],
-                description: "SSH access",
-            },
-        ],
-        
-        egress: [
-            {
-                fromPort: 0,
-                toPort: 0,
-                protocol: "-1",
-                cidrBlocks: ["0.0.0.0/0"],
-                description: "All outbound traffic",
-            },
-        ],
-        
-        tags: {
-            ...tags,
-            Name: `${name}-broker-sg`,
-        },
-    });
+    // Use the shared broker security group from network setup
 
     // User data script to set up the broker
     const userData = pulumi.all([
@@ -374,7 +344,7 @@ systemctl start boundless-broker.service
         instanceType: "t3.medium", // Sufficient for broker with SQLite
         keyName: "boundless-keypair", // Make sure this key exists
         
-        vpcSecurityGroupIds: [brokerSecurityGroup.id],
+        vpcSecurityGroupIds: [network.brokerSecurityGroup.id],
         
         iamInstanceProfile: {
             name: brokerInstanceProfile.name,
@@ -459,7 +429,7 @@ systemctl start boundless-broker.service
     return {
         instance: brokerASG,
         launchTemplate: brokerLaunchTemplate,
-        securityGroup: brokerSecurityGroup,
+        securityGroup: network.brokerSecurityGroup,
         logGroup: brokerLogGroup,
         role: brokerRole,
         config: brokerConfig,

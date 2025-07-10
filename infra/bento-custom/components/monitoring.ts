@@ -13,6 +13,7 @@ export async function setupMonitoring(
     },
     database: any,
     cache: any,
+    cluster: any,
     tags: Record<string, string>
 ) {
     // Create SNS topic for alerts
@@ -362,7 +363,7 @@ export async function setupMonitoring(
             alarmActions: [alertsTopic.arn],
             dimensions: {
                 ServiceName: instances.auxAgent.service.name,
-                ClusterName: instances.auxAgent.cluster.name,
+                ClusterName: cluster.cluster.name,
             },
             tags: {
                 ...tags,
@@ -384,7 +385,7 @@ export async function setupMonitoring(
             alarmActions: [alertsTopic.arn],
             dimensions: {
                 ServiceName: instances.auxAgent.service.name,
-                ClusterName: instances.auxAgent.cluster.name,
+                ClusterName: cluster.cluster.name,
             },
             tags: {
                 ...tags,
@@ -406,7 +407,7 @@ export async function setupMonitoring(
             alarmActions: [alertsTopic.arn],
             dimensions: {
                 ServiceName: instances.auxAgent.service.name,
-                ClusterName: instances.auxAgent.cluster.name,
+                ClusterName: cluster.cluster.name,
             },
             tags: {
                 ...tags,

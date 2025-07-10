@@ -120,6 +120,9 @@ export async function setupSnarkAgent(
             securityGroups: [network.instanceSecurityGroup.id],
         },
 
+        // Wait for steady state before considering deployment complete
+        waitForSteadyState: true,
+
         enableEcsManagedTags: true,
         propagateTags: "SERVICE",
 

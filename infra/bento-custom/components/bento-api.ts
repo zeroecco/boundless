@@ -131,7 +131,7 @@ export async function setupBentoAPI(
                         value: s3AccessKeyId
                     },
                     {
-                        name: "S3_SECRET_KEY", 
+                        name: "S3_SECRET_KEY",
                         value: s3SecretKey
                     }
                 ],
@@ -212,6 +212,9 @@ export async function setupBentoAPI(
             containerName: "bento-api",
             containerPort: 8081,
         }],
+
+        // Wait for steady state before considering deployment complete
+        waitForSteadyState: true,
 
         tags: {
             ...tags,
