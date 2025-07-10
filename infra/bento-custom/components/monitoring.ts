@@ -16,6 +16,8 @@ export async function setupMonitoring(
     cluster: any,
     tags: Record<string, string>
 ) {
+    // Get current AWS region
+    const region = await aws.getRegion();
     // Create SNS topic for alerts
     const alertsTopic = new aws.sns.Topic(`${name}-alerts`, {
         name: `${name}-alerts`,
@@ -534,7 +536,7 @@ export async function setupMonitoring(
                         ],
                         period: 300,
                         stat: "Average",
-                        region: "us-west-2",
+                        region: region.name,
                         title: "RDS Performance",
                     },
                 },
@@ -552,7 +554,7 @@ export async function setupMonitoring(
                         ],
                         period: 300,
                         stat: "Average",
-                        region: "us-west-2",
+                        region: region.name,
                         title: "ElastiCache Performance",
                     },
                 },
@@ -563,8 +565,8 @@ export async function setupMonitoring(
                     width: 24,
                     height: 6,
                     properties: {
-                        query: `SOURCE '/aws/ec2/bento-custom-exec-agents' | fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 100`,
-                        region: "us-west-2",
+                        query: `SOURCE '/aws/ec2/${name}-exec-agents' | fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 100`,
+                        region: region.name,
                         title: "Recent Errors",
                     },
                 },

@@ -86,7 +86,7 @@ async function main() {
         s3BucketName: storage.bucket.id,
         // Monitoring
         alertsTopicArn: monitoring.alertsTopicArn,
-        dashboardUrl: pulumi.interpolate`https://console.aws.amazon.com/cloudwatch/home?region=us-west-2#dashboards:name=${monitoring.dashboard.dashboardName}`,
+        dashboardUrl: pulumi.interpolate`https://console.aws.amazon.com/cloudwatch/home?region=${region}#dashboards:name=${monitoring.dashboard.dashboardName}`,
     };
 }
 

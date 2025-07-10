@@ -49,8 +49,8 @@ export async function createInstanceProfile(
                         "s3:ListBucket",
                     ],
                     Resource: [
-                        "arn:aws:s3:::bento-custom-*/*",
-                        "arn:aws:s3:::bento-custom-*",
+                        `arn:aws:s3:::${name}-*/*`,
+                        `arn:aws:s3:::${name}-*`,
                     ],
                 },
                 {
@@ -59,7 +59,7 @@ export async function createInstanceProfile(
                         "secretsmanager:GetSecretValue",
                         "secretsmanager:DescribeSecret",
                     ],
-                    Resource: "arn:aws:secretsmanager:*:*:secret:bento-custom/*",
+                    Resource: `arn:aws:secretsmanager:*:*:secret:${name}/*`,
                 },
                 {
                     Effect: "Allow",

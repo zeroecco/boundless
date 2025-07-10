@@ -311,7 +311,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
                 "collect_list": [
                     {
                         "file_path": "/var/log/messages",
-                        "log_group_name": "/aws/ec2/boundless-broker",
+                        "log_group_name": "/aws/ec2/${name}-broker",
                         "log_stream_name": "{instance_id}/messages"
                     }
                 ]
@@ -340,7 +340,7 @@ systemctl start boundless-broker.service
         namePrefix: `${name}-broker-`,
         imageId: "ami-0897831b586e1015f", // Amazon Linux 2023 in us-west-2
         instanceType: "t3.medium", // Sufficient for broker with SQLite
-        keyName: "boundless-keypair", // Make sure this key exists
+        keyName: `${name}-keypair`, // Make sure this key exists
 
         vpcSecurityGroupIds: [network.brokerSecurityGroup.id],
 
@@ -416,7 +416,7 @@ systemctl start boundless-broker.service
 
     // Create CloudWatch log group for broker
     const brokerLogGroup = new aws.cloudwatch.LogGroup(`${name}-broker-logs`, {
-        name: `/aws/ec2/boundless-broker`,
+        name: `/aws/ec2/${name}-broker`,
         retentionInDays: 7,
         tags: {
             ...tags,
