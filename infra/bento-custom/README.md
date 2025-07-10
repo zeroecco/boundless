@@ -62,7 +62,6 @@ pulumi config set brokerPrivateKey <YOUR_PRIVATE_KEY> --secret
 pulumi config set rpcUrl <YOUR_RPC_URL> --secret
 
 # Optional configuration
-pulumi config set orderStreamUrl <YOUR_ORDER_STREAM_URL> --secret
 pulumi config set boundlessMarketAddress <YOUR_MARKET_CONTRACT_ADDRESS>
 pulumi config set setVerifierAddress <YOUR_VERIFIER_CONTRACT_ADDRESS>
 ```
@@ -257,7 +256,6 @@ pulumi stack rm <stack-name>
 | `rpcUrl` | Ethereum RPC endpoint (secret) | Yes |
 | `boundlessMarketAddress` | Market contract address | No |
 | `setVerifierAddress` | Verifier contract address | No |
-| `orderStreamUrl` | Order stream URL (secret) | No |
 
 ## Instance Types
 

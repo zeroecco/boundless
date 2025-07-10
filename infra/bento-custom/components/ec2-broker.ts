@@ -12,10 +12,10 @@ export async function setupEC2Broker(
     bentoAPIUrl: pulumi.Output<string>
 ) {
     const config = new pulumi.Config();
-    
+
     // Get current AWS account ID
     const current = await aws.getCallerIdentity();
-    
+
     // Configuration
     const brokerConfig = {
         segmentSize: config.getNumber("segmentSize") || 21,
@@ -61,7 +61,7 @@ export async function setupEC2Broker(
     const brokerCustomPolicy = new aws.iam.Policy(`${name}-broker-custom-policy`, {
         policy: pulumi.all([
             storage.configBucket.arn
-        ]).apply(([bucketArn]) => 
+        ]).apply(([bucketArn]) =>
             JSON.stringify({
                 Version: "2012-10-17",
                 Statement: [
@@ -134,7 +134,6 @@ export async function setupEC2Broker(
             secretArns: {
                 privateKey: secrets.brokerPrivateKey.arn,
                 rpcUrl: secrets.rpcUrl.arn,
-                orderStreamUrl: secrets.orderStreamUrl.arn
             },
             logJson: true
         }),
@@ -190,7 +189,6 @@ export BROKER_CONFIG="$CONFIG_JSON"
 # Parse configuration
 export PRIVATE_KEY_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.privateKey')
 export RPC_URL_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.rpcUrl')
-export ORDER_STREAM_URL_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.orderStreamUrl')
 export GIT_BRANCH=$(echo $CONFIG_JSON | jq -r '.gitBranch')
 export SEGMENT_SIZE=$(echo $CONFIG_JSON | jq -r '.segmentSize')
 export SNARK_TIMEOUT=$(echo $CONFIG_JSON | jq -r '.snarkTimeout')
@@ -343,15 +341,15 @@ systemctl start boundless-broker.service
         imageId: "ami-0897831b586e1015f", // Amazon Linux 2023 in us-west-2
         instanceType: "t3.medium", // Sufficient for broker with SQLite
         keyName: "boundless-keypair", // Make sure this key exists
-        
+
         vpcSecurityGroupIds: [network.brokerSecurityGroup.id],
-        
+
         iamInstanceProfile: {
             name: brokerInstanceProfile.name,
         },
-        
+
         userData: userData,
-        
+
         blockDeviceMappings: [{
             deviceName: "/dev/sda1",
             ebs: {
@@ -361,7 +359,7 @@ systemctl start boundless-broker.service
                 deleteOnTermination: "true",
             },
         }],
-        
+
         tagSpecifications: [
             {
                 resourceType: "instance",
@@ -378,7 +376,7 @@ systemctl start boundless-broker.service
                 },
             },
         ],
-        
+
         tags: {
             ...tags,
             Name: `${name}-broker-launch-template`,
@@ -389,19 +387,19 @@ systemctl start boundless-broker.service
     const brokerASG = new aws.autoscaling.Group(`${name}-broker-asg`, {
         name: `${name}-broker-asg`,
         vpcZoneIdentifiers: network.vpc.privateSubnetIds,
-        
+
         launchTemplate: {
             id: brokerLaunchTemplate.id,
             version: "$Latest",
         },
-        
+
         minSize: 1,
         maxSize: 1,
         desiredCapacity: 1,
-        
+
         healthCheckType: "EC2",
         healthCheckGracePeriod: 300,
-        
+
         tags: [
             {
                 key: "Name",

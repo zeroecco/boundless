@@ -6,7 +6,7 @@ export async function setupSecrets(
     tags: Record<string, string>
 ) {
     const config = new pulumi.Config();
-    
+
     // Create secret for broker private key
     const brokerPrivateKey = new aws.secretsmanager.Secret(`${name}-broker-private-key`, {
         name: `${name}/broker/private-key`,
@@ -17,10 +17,10 @@ export async function setupSecrets(
         },
     });
 
-    // Set the actual secret value (you'll need to update this after creation)
+    // Set the actual secret value (must be provided via Pulumi config)
     const brokerPrivateKeyVersion = new aws.secretsmanager.SecretVersion(`${name}-broker-private-key-version`, {
         secretId: brokerPrivateKey.id,
-        secretString: config.getSecret("brokerPrivateKey") || "PLACEHOLDER_UPDATE_ME",
+        secretString: config.requireSecret("brokerPrivateKey"),
     });
 
     // Create secret for RPC URL
@@ -35,22 +35,7 @@ export async function setupSecrets(
 
     const rpcUrlVersion = new aws.secretsmanager.SecretVersion(`${name}-rpc-url-version`, {
         secretId: rpcUrl.id,
-        secretString: config.getSecret("rpcUrl") || "https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY",
-    });
-
-    // Create secret for order stream URL
-    const orderStreamUrl = new aws.secretsmanager.Secret(`${name}-order-stream-url`, {
-        name: `${name}/broker/order-stream-url`,
-        description: "Order stream WebSocket URL",
-        tags: {
-            ...tags,
-            Name: `${name}-order-stream-url`,
-        },
-    });
-
-    const orderStreamUrlVersion = new aws.secretsmanager.SecretVersion(`${name}-order-stream-url-version`, {
-        secretId: orderStreamUrl.id,
-        secretString: config.getSecret("orderStreamUrl") || "wss://order-stream.example.com",
+        secretString: config.requireSecret("rpcUrl"),
     });
 
     // S3 credentials for Bento (using IAM roles instead)
@@ -59,6 +44,5 @@ export async function setupSecrets(
     return {
         brokerPrivateKey: brokerPrivateKey.arn,
         rpcUrl: rpcUrl.arn,
-        orderStreamUrl: orderStreamUrl.arn,
     };
 }
