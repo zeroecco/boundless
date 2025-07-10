@@ -46,10 +46,9 @@ async function main() {
     const snarkAgent = await setupSnarkAgent("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
     const gpuProvers = await setupGpuProvers("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
 
-    // Aux-agent creates its own Fargate cluster which Bento-API will reuse
-    const auxAgent = await setupAuxAgent("bento-custom", network, database, cache, storage, secrets, commonTags);
+    const auxAgent = await setupAuxAgent("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
 
-    const bentoAPI = await setupBentoAPI("bento-custom", network, auxAgent.cluster, database, cache, storage, secrets, commonTags);
+    const bentoAPI = await setupBentoAPI("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
 
     const ec2Broker = await setupEC2Broker("bento-custom", network, storage, secrets, commonTags, bentoAPI.bentoApiUrl);
 

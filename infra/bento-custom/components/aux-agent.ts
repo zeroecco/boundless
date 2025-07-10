@@ -5,6 +5,7 @@ import { createEcsTaskRole } from "./iam";
 export async function setupAuxAgent(
     name: string,
     network: any,
+    cluster: any,
     database: any,
     cache: any,
     storage: any,
@@ -13,19 +14,6 @@ export async function setupAuxAgent(
 ) {
     // Get region info
     const region = await aws.getRegion().then(r => r.name);
-    
-    // Create ECS cluster for Fargate
-    const cluster = new aws.ecs.Cluster(`${name}-aux-cluster`, {
-        name: `${name}-aux-cluster`,
-        settings: [{
-            name: "containerInsights",
-            value: "enabled",
-        }],
-        tags: {
-            ...tags,
-            Name: `${name}-aux-cluster`,
-        },
-    });
 
     // Create IAM roles
     const { taskRole, executionRole } = await createEcsTaskRole(`${name}-aux-agent`, tags);
@@ -103,7 +91,7 @@ export async function setupAuxAgent(
     // Create ECS service
     const service = new aws.ecs.Service(`${name}-aux-agent-service`, {
         name: `${name}-aux-agent`,
-        cluster: cluster.id,
+        cluster: cluster.cluster.id,
         taskDefinition: taskDefinition.arn,
         desiredCount: 1,
         launchType: "FARGATE",
@@ -124,7 +112,6 @@ export async function setupAuxAgent(
     });
 
     return {
-        cluster,
         task: taskDefinition,
         service,
         logGroup,

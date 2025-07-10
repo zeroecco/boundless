@@ -4,7 +4,7 @@ import * as aws from "@pulumi/aws";
 export async function setupBentoAPI(
     name: string,
     network: any,
-    auxCluster: any,
+    cluster: any,
     database: any,
     cache: any,
     storage: any,
@@ -196,7 +196,7 @@ export async function setupBentoAPI(
     // Create ECS Service
     const service = new aws.ecs.Service(`${name}-bento-api-service`, {
         name: `${name}-bento-api-service`,
-        cluster: auxCluster.id,
+        cluster: cluster.cluster.id,
         taskDefinition: taskDefinition.arn,
         desiredCount: 1,
         launchType: "FARGATE",
