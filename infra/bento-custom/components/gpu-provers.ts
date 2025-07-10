@@ -119,8 +119,7 @@ export async function setupGpuProvers(
             securityGroups: [network.instanceSecurityGroup.id],
         },
 
-        // Wait for steady state before considering deployment complete
-        waitForSteadyState: true,
+        waitForSteadyState: false,
 
         enableEcsManagedTags: true,
         propagateTags: "SERVICE",

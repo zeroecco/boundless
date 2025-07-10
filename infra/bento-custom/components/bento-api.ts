@@ -213,8 +213,7 @@ export async function setupBentoAPI(
             containerPort: 8081,
         }],
 
-        // Wait for steady state before considering deployment complete
-        waitForSteadyState: true,
+        waitForSteadyState: false,
 
         tags: {
             ...tags,

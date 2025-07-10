@@ -102,8 +102,7 @@ export async function setupAuxAgent(
             assignPublicIp: false,
         },
 
-        // Wait for steady state before considering deployment complete
-        waitForSteadyState: true,
+        waitForSteadyState: false,
 
         enableEcsManagedTags: true,
         propagateTags: "SERVICE",

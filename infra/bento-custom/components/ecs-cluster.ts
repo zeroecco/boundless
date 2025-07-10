@@ -65,8 +65,8 @@ export async function setupEcsCluster(
             },
         }],
 
-        userData: pulumi.output(Buffer.from(`#!/bin/bash
-echo ECS_CLUSTER=${cluster.name} >> /etc/ecs/ecs.config
+        userData: cluster.name.apply(clusterName => Buffer.from(`#!/bin/bash
+echo ECS_CLUSTER=${clusterName} >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true >> /etc/ecs/ecs.config
@@ -117,8 +117,8 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
             },
         }],
 
-        userData: pulumi.output(Buffer.from(`#!/bin/bash
-echo ECS_CLUSTER=${cluster.name} >> /etc/ecs/ecs.config
+        userData: cluster.name.apply(clusterName => Buffer.from(`#!/bin/bash
+echo ECS_CLUSTER=${clusterName} >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true >> /etc/ecs/ecs.config
@@ -169,8 +169,8 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
             },
         }],
 
-        userData: pulumi.output(Buffer.from(`#!/bin/bash
-echo ECS_CLUSTER=${cluster.name} >> /etc/ecs/ecs.config
+        userData: cluster.name.apply(clusterName => Buffer.from(`#!/bin/bash
+echo ECS_CLUSTER=${clusterName} >> /etc/ecs/ecs.config
 echo ECS_ENABLE_GPU_SUPPORT=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
