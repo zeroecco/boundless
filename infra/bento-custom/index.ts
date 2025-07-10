@@ -19,42 +19,45 @@ const environment = config.get("environment") || "custom";
 const region = aws.getRegion().then(r => r.name);
 const rdsPassword = config.requireSecret("rdsPassword");
 
+// Use stack name as project name for consistent naming
+const projectName = pulumi.getStack();
+
 // Create tags for all resources
 const commonTags = {
     Environment: environment,
-    Project: "bento-custom",
+    Project: projectName,
     ManagedBy: "pulumi",
 };
 
 // Main infrastructure setup
 async function main() {
-    const network = await setupNetwork("bento-custom", commonTags);
+    const network = await setupNetwork(projectName, commonTags);
 
-    const secrets = await setupSecrets("bento-custom", commonTags);
+    const secrets = await setupSecrets(projectName, commonTags);
 
-    const database = await setupDatabase("bento-custom", network, commonTags, rdsPassword);
+    const database = await setupDatabase(projectName, network, commonTags, rdsPassword);
 
-    const storage = await setupStorage("bento-custom", commonTags);
+    const storage = await setupStorage(projectName, commonTags);
 
     // Main ECS cluster for exec/gpu/snark workers
-    const cluster = await setupEcsCluster("bento-custom", network, commonTags);
+    const cluster = await setupEcsCluster(projectName, network, commonTags);
 
     // Setup cache with GPU-compatible subnets for co-location
-    const cache = await setupCache("bento-custom", network, commonTags, cluster.gpuCompatibleSubnets);
+    const cache = await setupCache(projectName, network, commonTags, cluster.gpuCompatibleSubnets);
 
-    const execAgents = await setupExecAgents("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
-    const snarkAgent = await setupSnarkAgent("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
-    const gpuProvers = await setupGpuProvers("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
+    const execAgents = await setupExecAgents(projectName, network, cluster, database, cache, storage, secrets, commonTags);
+    const snarkAgent = await setupSnarkAgent(projectName, network, cluster, database, cache, storage, secrets, commonTags);
+    const gpuProvers = await setupGpuProvers(projectName, network, cluster, database, cache, storage, secrets, commonTags);
 
-    const auxAgent = await setupAuxAgent("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
+    const auxAgent = await setupAuxAgent(projectName, network, cluster, database, cache, storage, secrets, commonTags);
 
-    const bentoAPI = await setupBentoAPI("bento-custom", network, cluster, database, cache, storage, secrets, commonTags);
+    const bentoAPI = await setupBentoAPI(projectName, network, cluster, database, cache, storage, secrets, commonTags);
 
-    const ec2Broker = await setupEC2Broker("bento-custom", network, storage, secrets, commonTags, bentoAPI.bentoApiUrl);
+    const ec2Broker = await setupEC2Broker(projectName, network, storage, secrets, commonTags, bentoAPI.bentoApiUrl);
 
     // Setup monitoring and alerts
     const monitoring = await setupMonitoring(
-        "bento-custom",
+        projectName,
         { execAgents, snarkAgent, gpuProvers, auxAgent, ec2Broker, bentoAPI },
         database,
         cache,
