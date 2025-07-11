@@ -93,6 +93,15 @@ export async function setupEC2Broker(
                             "ssm:GetParametersByPath"
                         ],
                         Resource: `arn:aws:ssm:${brokerConfig.region}:${brokerConfig.accountId}:parameter/boundless/${name}/*`
+                    },
+                    {
+                        Effect: "Allow",
+                        Action: [
+                            "logs:CreateLogGroup",
+                            "logs:CreateLogStream",
+                            "logs:PutLogEvents",
+                        ],
+                        Resource: "arn:aws:logs:*:*:*",
                     }
                 ]
             })
