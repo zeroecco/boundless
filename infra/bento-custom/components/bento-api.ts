@@ -141,13 +141,13 @@ export async function setupBentoAPI(
                     `--snark-timeout=${config.getNumber("snarkTimeout") || 180}`
                 ],
 
-                healthCheck: {
-                    command: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"],
-                    interval: 30,
-                    timeout: 5,
-                    retries: 3,
-                    startPeriod: 60
-                },
+                // healthCheck: {
+                //     command: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"],
+                //     interval: 30,
+                //     timeout: 5,
+                //     retries: 3,
+                //     startPeriod: 60
+                // },
 
                 logConfiguration: {
                     logDriver: "awslogs",
@@ -174,17 +174,17 @@ export async function setupBentoAPI(
         vpcId: network.vpc.vpcId,
         targetType: "ip",
 
-        healthCheck: {
-            enabled: true,
-            path: "/health",
-            port: "8081",
-            protocol: "HTTP",
-            interval: 30,
-            timeout: 5,
-            healthyThreshold: 2,
-            unhealthyThreshold: 2,
-            matcher: "200"
-        },
+        // healthCheck: {
+        //     enabled: true,
+        //     path: "/health",
+        //     port: "8081",
+        //     protocol: "HTTP",
+        //     interval: 30,
+        //     timeout: 5,
+        //     healthyThreshold: 2,
+        //     unhealthyThreshold: 2,
+        //     matcher: "200"
+        // },
 
         tags: {
             ...tags,
