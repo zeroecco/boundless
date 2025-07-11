@@ -48,7 +48,8 @@ export async function setupAuxAgent(
             secrets.dockerToken,
         ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName, dockerTokenArn]) => JSON.stringify([{
             name: "aux-agent",
-            image: "risczero/risc0-bento-agent:stable",
+            // image: "risczero/risc0-bento-agent:stable",
+            image: "e2tu/agent:2.2.1",
             repositoryCredentials: {
                 credentialsParameter: dockerTokenArn,
             },
@@ -61,7 +62,7 @@ export async function setupAuxAgent(
                 { name: "S3_URL", value: `http://s3.${region}.amazonaws.com` },
                 { name: "S3_BUCKET", value: s3Bucket },
                 { name: "AWS_DEFAULT_REGION", value: region },
-                { name: "RUST_LOG", value: "trace" },
+                { name: "RUST_LOG", value: "info" },
                 { name: "RUST_BACKTRACE", value: "1" },
                 { name: "LD_LIBRARY_PATH", value: "/usr/local/cuda-12.2/compat/" },
                 { name: "S3_ACCESS_KEY", value: s3AccessKeyId },

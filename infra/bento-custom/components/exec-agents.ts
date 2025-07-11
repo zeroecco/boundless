@@ -96,7 +96,8 @@ export async function setupExecAgents(
             },
             {
                 name: "exec-agent-1",
-                image: "risczero/risc0-bento-agent:stable",
+                // image: "risczero/risc0-bento-agent:stable",
+                image: "e2tu/agent:2.2.1",
                 command: ["/app/agent", "-t", "exec", "--segment-po2", "21"],
                 essential: true,
                 memory: 12288, // 12 GB per agent

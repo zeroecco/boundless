@@ -54,7 +54,8 @@ export async function setupSnarkAgent(
         ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName, dockerTokenArn]) => JSON.stringify([
             {
                 name: "snark-agent",
-                image: "risczero/risc0-bento-agent:stable",
+                // image: "risczero/risc0-bento-agent:stable",
+                image: "e2tu/agent:2.2.1",
                 repositoryCredentials: {
                     credentialsParameter: dockerTokenArn,
                 },

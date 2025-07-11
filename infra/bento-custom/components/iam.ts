@@ -47,6 +47,7 @@ export async function createInstanceProfile(
                         "s3:PutObject",
                         "s3:DeleteObject",
                         "s3:ListBucket",
+                        // "s3:CreateBucket",
                     ],
                     Resource: [
                         `arn:aws:s3:::${name}-*/*`,

@@ -85,7 +85,7 @@ export async function setupBentoAPI(
         ]).apply(([dbUrl, redisUrl, bucketId, s3AccessKeyId, s3SecretKey, logGroupName]) =>
             JSON.stringify([{
                 name: "bento-api",
-                image: "risczero/risc0-bento-rest-api:stable",
+                image: "e2tu/bento-rest_api:2.2.1",
                 essential: true,
 
                 portMappings: [{
@@ -137,7 +137,6 @@ export async function setupBentoAPI(
                 ],
 
                 command: [
-                    "/app/rest_api",
                     "--bind-addr", "0.0.0.0:8081",
                     `--snark-timeout=${config.getNumber("snarkTimeout") || 180}`
                 ],
