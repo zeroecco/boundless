@@ -331,8 +331,9 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
 EOF
 
 # Start CloudWatch agent
-systemctl start amazon-cloudwatch-agent
+systemctl daemon-reload
 systemctl enable amazon-cloudwatch-agent
+systemctl start amazon-cloudwatch-agent
 
 # Start the broker service
 systemctl start boundless-broker.service
