@@ -16,7 +16,7 @@ export async function setupSecrets(
             ...tags,
             Name: `${name}-broker-private-key`,
         },
-    });
+    }, { protect: true });
 
     // Set the actual secret value (must be provided via Pulumi config)
     const brokerPrivateKeyVersion = new aws.secretsmanager.SecretVersion(`${name}-broker-private-key-version`, {
@@ -33,7 +33,7 @@ export async function setupSecrets(
             ...tags,
             Name: `${name}-rpc-url`,
         },
-    });
+    }, { protect: true });
 
     const rpcUrlVersion = new aws.secretsmanager.SecretVersion(`${name}-rpc-url-version`, {
         secretId: rpcUrl.id,
@@ -50,7 +50,7 @@ export async function setupSecrets(
             ...tags,
             Name: `${name}-docker-token`,
         },
-    });
+    }, { protect: true });
 
     const dockerTokenVersion = new aws.secretsmanager.SecretVersion(`${name}-docker-token-version`, {
         secretId: dockerToken.id,

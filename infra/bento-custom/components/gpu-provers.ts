@@ -71,7 +71,7 @@ export async function setupGpuProvers(
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
-                    { name: "S3_URL", value: "http://s3.us-west-2.amazonaws.com" },
+                    { name: "S3_URL", value: `http://s3.${region}.amazonaws.com` },
                     { name: "S3_BUCKET", value: s3Bucket },
                     { name: "AWS_DEFAULT_REGION", value: region },
                     { name: "RUST_LOG", value: "info" },
