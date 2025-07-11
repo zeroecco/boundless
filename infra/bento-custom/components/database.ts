@@ -10,6 +10,7 @@ function createDatabaseSecret(
 ): aws.secretsmanager.Secret {
     const secret = new aws.secretsmanager.Secret(`${name}-db-secret`, {
         description: "Database credentials for Bento PostgreSQL",
+        recoveryWindowInDays: 0, // TODO(ec2): fixme
         tags: {
             ...tags,
             Name: `${name}-db-secret`,
