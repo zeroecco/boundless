@@ -54,7 +54,8 @@ export async function setupExecAgents(
         ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName, dockerTokenArn]) => JSON.stringify([
             {
                 name: "exec-agent-0",
-                image: "risczero/risc0-bento-agent:stable",
+                // image: "risczero/risc0-bento-agent:stable",
+                image: "e2tu/agent:latest",
                 repositoryCredentials: {
                     credentialsParameter: dockerTokenArn,
                 },
@@ -97,8 +98,11 @@ export async function setupExecAgents(
             {
                 name: "exec-agent-1",
                 // image: "risczero/risc0-bento-agent:stable",
-                image: "e2tu/agent:2.2.1",
-                command: ["/app/agent", "-t", "exec", "--segment-po2", "21"],
+                image: "e2tu/agent:latest",
+                repositoryCredentials: {
+                    credentialsParameter: dockerTokenArn,
+                },
+                command: ["-t", "exec", "--segment-po2", "21"],
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
@@ -136,8 +140,12 @@ export async function setupExecAgents(
             },
             {
                 name: "exec-agent-2",
-                image: "risczero/risc0-bento-agent:stable",
-                command: ["/app/agent", "-t", "exec", "--segment-po2", "21"],
+                image: "e2tu/agent:latest",
+                // image: "risczero/risc0-bento-agent:stable",
+                repositoryCredentials: {
+                    credentialsParameter: dockerTokenArn,
+                },
+                command: ["-t", "exec", "--segment-po2", "21"],
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
@@ -175,8 +183,12 @@ export async function setupExecAgents(
             },
             {
                 name: "exec-agent-3",
-                image: "risczero/risc0-bento-agent:stable",
-                command: ["/app/agent", "-t", "exec", "--segment-po2", "21"],
+                image: "e2tu/agent:latest",
+                // image: "risczero/risc0-bento-agent:stable",
+                repositoryCredentials: {
+                    credentialsParameter: dockerTokenArn,
+                },
+                command: ["-t", "exec", "--segment-po2", "21"],
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent

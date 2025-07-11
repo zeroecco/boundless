@@ -55,7 +55,7 @@ export async function setupSnarkAgent(
             {
                 name: "snark-agent",
                 // image: "risczero/risc0-bento-agent:stable",
-                image: "e2tu/agent:2.2.1",
+                image: "e2tu/agent:latest",
                 repositoryCredentials: {
                     credentialsParameter: dockerTokenArn,
                 },
