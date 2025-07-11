@@ -16,7 +16,7 @@ export async function setupAuxAgent(
     const region = await aws.getRegion().then(r => r.name);
 
     // Create IAM roles
-    const { taskRole, executionRole } = await createEcsTaskRole(`${name}-aux-agent`, tags);
+    const { taskRole, executionRole } = await createEcsTaskRole(`${name}-aux-agent`, tags, secrets);
 
     // Create CloudWatch log group
     const logGroup = new aws.cloudwatch.LogGroup(`${name}-aux-agent-logs`, {
@@ -45,19 +45,24 @@ export async function setupAuxAgent(
             storage.s3AccessKeyId,
             storage.s3SecretKey,
             logGroup.name,
-        ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName]) => JSON.stringify([{
+            secrets.dockerToken,
+        ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName, dockerTokenArn]) => JSON.stringify([{
             name: "aux-agent",
             image: "risczero/risc0-bento-agent:stable",
-            command: ["/app/agent", "-t", "aux"],
+            repositoryCredentials: {
+                credentialsParameter: dockerTokenArn,
+            },
+            command: ["-t", "aux"],
             essential: true,
 
             environment: [
                 { name: "DATABASE_URL", value: dbUrl },
                 { name: "REDIS_URL", value: redisUrl },
-                { name: "S3_URL", value: "https://s3.amazonaws.com" },
+                { name: "S3_URL", value: "https://s3.us-west-2.amazonaws.com" },
                 { name: "S3_BUCKET", value: s3Bucket },
                 { name: "AWS_DEFAULT_REGION", value: region },
                 { name: "RUST_LOG", value: "info" },
+                { name: "RUST_BACKTRACE", value: "1" },
                 { name: "LD_LIBRARY_PATH", value: "/usr/local/cuda-12.2/compat/" },
                 { name: "RUST_BACKTRACE", value: "1" },
                 { name: "S3_ACCESS_KEY", value: s3AccessKeyId },

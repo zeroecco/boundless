@@ -97,7 +97,8 @@ export async function createInstanceProfile(
 
 export async function createEcsTaskRole(
     name: string,
-    tags: Record<string, string>
+    tags: Record<string, string>,
+    secrets: any,
 ) {
     // Create IAM role for ECS tasks
     const taskRole = new aws.iam.Role(`${name}-task-role`, {
@@ -127,12 +128,40 @@ export async function createEcsTaskRole(
                 Principal: {
                     Service: "ecs-tasks.amazonaws.com",
                 },
+
             }],
         }),
         tags: {
             ...tags,
             Name: `${name}-execution-role`,
         },
+    });
+
+
+
+    const customPolicy = new aws.iam.Policy(`${name}-execution-custom-policy`, {
+        description: "Custom policy for docker img pull access",
+        policy: pulumi.all([secrets.dockerToken]).apply(([dockerToken]) => JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+                {
+                    Effect: "Allow",
+                    Action: [
+                        "secretsmanager:GetSecretValue",
+                    ],
+                    Resource: dockerToken,
+                },
+            ],
+        })),
+        tags: {
+            ...tags,
+            Name: `${name}-custom-policy`,
+        },
+    });
+
+    const customPolicyAttachment = new aws.iam.RolePolicyAttachment(`${name}-execution-custom-policy-attachment`, {
+        role: executionRole.name,
+        policyArn: customPolicy.arn,
     });
 
     // Attach basic execution policy

@@ -84,6 +84,7 @@ async function main() {
         databaseProxyEndpoint: database.proxy.endpoint,
         redisEndpoint: cache.cluster.cacheNodes[0].address,
         s3BucketName: storage.bucket.id,
+        dockerTokenArn: secrets.dockerToken,
         // Monitoring
         alertsTopicArn: monitoring.alertsTopicArn,
         dashboardUrl: pulumi.interpolate`https://console.aws.amazon.com/cloudwatch/home?region=${region}#dashboards:name=${monitoring.dashboard.dashboardName}`,

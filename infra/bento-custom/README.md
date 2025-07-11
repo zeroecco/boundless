@@ -60,6 +60,8 @@ pulumi config set snarkTimeout 180
 # Required secrets (encrypted)
 pulumi config set brokerPrivateKey <YOUR_PRIVATE_KEY> --secret
 pulumi config set rpcUrl <YOUR_RPC_URL> --secret
+pulumi config set rdsPassword <YOUR_PASSWORD> --secret
+pulumi config set dockerToken '{"username":"<DOCKER_USERNAME>", "password":"<PERSONAL_ACCESS_TOKEN>"}' --secret
 
 # Optional configuration
 pulumi config set boundlessMarketAddress <YOUR_MARKET_CONTRACT_ADDRESS>

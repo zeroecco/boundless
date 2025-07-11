@@ -15,7 +15,7 @@ export async function setupGpuProvers(
     const region = await aws.getRegion().then(r => r.name);
 
     // Create IAM roles for ECS
-    const { taskRole, executionRole } = await createEcsTaskRole(`${name}-gpu-provers`, tags);
+    const { taskRole, executionRole } = await createEcsTaskRole(`${name}-gpu-provers`, tags, secrets);
 
     // Create CloudWatch log group
     const logGroup = new aws.cloudwatch.LogGroup(`${name}-gpu-provers-logs`, {
@@ -50,11 +50,15 @@ export async function setupGpuProvers(
             storage.s3AccessKeyId,
             storage.s3SecretKey,
             logGroup.name,
-        ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName]) => JSON.stringify([
+            secrets.dockerToken,
+        ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName, dockerTokenArn]) => JSON.stringify([
             {
                 name: "gpu-prover",
                 image: "risczero/risc0-bento-agent:stable",
-                command: ["/app/agent", "-t", "prove"],
+                repositoryCredentials: {
+                    credentialsParameter: dockerTokenArn,
+                },
+                command: ["-t", "prove"],
                 essential: true,
 
                 resourceRequirements: [
@@ -67,7 +71,7 @@ export async function setupGpuProvers(
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
-                    { name: "S3_URL", value: "https://s3.amazonaws.com" },
+                    { name: "S3_URL", value: "https://s3.us-west-2.amazonaws.com" },
                     { name: "S3_BUCKET", value: s3Bucket },
                     { name: "AWS_DEFAULT_REGION", value: region },
                     { name: "RUST_LOG", value: "info" },

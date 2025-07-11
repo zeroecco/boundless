@@ -38,11 +38,28 @@ export async function setupSecrets(
         secretString: config.requireSecret("rpcUrl"),
     });
 
+
+    // Create secret for docker token
+    const dockerToken = new aws.secretsmanager.Secret(`${name}-docker-token`, {
+        name: `${name}/broker/docker-token`,
+        description: "Docker token for image access",
+        tags: {
+            ...tags,
+            Name: `${name}-docker-token`,
+        },
+    });
+
+    const dockerTokenVersion = new aws.secretsmanager.SecretVersion(`${name}-docker-token-version`, {
+        secretId: dockerToken.id,
+        secretString: config.requireSecret("dockerToken"),
+    });
+
     // S3 credentials for Bento (using IAM roles instead)
     // We'll use IAM instance profiles for S3 access
 
     return {
         brokerPrivateKey: brokerPrivateKey.arn,
         rpcUrl: rpcUrl.arn,
+        dockerToken: dockerToken.arn,
     };
 }

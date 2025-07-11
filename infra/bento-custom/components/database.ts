@@ -19,7 +19,7 @@ function createDatabaseSecret(
     // Create the secret version with the password
     new aws.secretsmanager.SecretVersion(`${name}-db-secret-version`, {
         secretId: secret.id,
-        secretString: pulumi.all([password, databaseEndpoint]).apply(([pwd, endpoint]) => 
+        secretString: pulumi.all([password, databaseEndpoint]).apply(([pwd, endpoint]) =>
             JSON.stringify({
                 username: "worker",
                 password: pwd,
@@ -136,8 +136,10 @@ export async function setupDatabase(
         // Use RDS proxy connection with configured password and SSL mode
         connectionUrl: pulumi.all([rdsPassword, rdsProxy.endpoint]).apply(([password, endpoint]) => {
             // Ensure endpoint includes port - proxy endpoints might not include :5432
-            const host = endpoint.includes(':') ? endpoint : `${endpoint}:5432`;
-            return `postgresql://worker:${password}@${host}/taskdb?sslmode=require`;
+            // const host = endpoint.includes(':') ? endpoint : `${endpoint}:5432`;
+            // let ret = `postgresql://worker:${password}@${host}/taskdb?sslmode=require`;
+            // return encodeURI(ret);
+            return pulumi.interpolate`postgresql://worker:${password}@${rdsProxy.endpoint}/taskdb?sslmode=require`;
         }),
         secret: databaseSecret,
     };

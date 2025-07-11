@@ -15,7 +15,7 @@ export async function setupExecAgents(
     const region = await aws.getRegion().then(r => r.name);
 
     // Create IAM roles for ECS
-    const { taskRole, executionRole } = await createEcsTaskRole(`${name}-exec-agents`, tags);
+    const { taskRole, executionRole } = await createEcsTaskRole(`${name}-exec-agents`, tags, secrets);
 
     // Create CloudWatch log group
     const logGroup = new aws.cloudwatch.LogGroup(`${name}-exec-agents-logs`, {
@@ -50,11 +50,15 @@ export async function setupExecAgents(
             storage.s3AccessKeyId,
             storage.s3SecretKey,
             logGroup.name,
-        ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName]) => JSON.stringify([
+            secrets.dockerToken,
+        ]).apply(([dbUrl, redisUrl, s3Bucket, s3AccessKeyId, s3SecretKey, logGroupName, dockerTokenArn]) => JSON.stringify([
             {
                 name: "exec-agent-0",
                 image: "risczero/risc0-bento-agent:stable",
-                command: ["/app/agent", "-t", "exec", "--segment-po2", "21"],
+                repositoryCredentials: {
+                    credentialsParameter: dockerTokenArn,
+                },
+                command: ["-t", "exec", "--segment-po2", "21"],
                 essential: true,
                 memory: 12288, // 12 GB per agent
                 cpu: 1536, // 1.5 vCPUs per agent
@@ -62,7 +66,7 @@ export async function setupExecAgents(
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
                     { name: "REDIS_URL", value: redisUrl },
-                    { name: "S3_URL", value: "https://s3.amazonaws.com" },
+                    { name: "S3_URL", value: "https://s3.us-west-2-amazonaws.com" },
                     { name: "S3_BUCKET", value: s3Bucket },
                     { name: "AWS_DEFAULT_REGION", value: region },
                     { name: "RUST_LOG", value: "info" },
