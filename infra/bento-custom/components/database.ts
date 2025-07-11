@@ -104,7 +104,7 @@ export async function setupDatabase(
         }],
 
         // Require TLS for secure connections (matching order stream)
-        requireTls: true,
+        requireTls: false,
 
         tags: {
             ...tags,
@@ -140,7 +140,7 @@ export async function setupDatabase(
             // const host = endpoint.includes(':') ? endpoint : `${endpoint}:5432`;
             // let ret = `postgresql://worker:${password}@${host}/taskdb?sslmode=require`;
             // return encodeURI(ret);
-            return pulumi.interpolate`postgresql://worker:${password}@${rdsProxy.endpoint}/taskdb?sslmode=require`;
+            return pulumi.interpolate`postgresql://worker:${password}@${rdsProxy.endpoint}/taskdb`;
         }),
         secret: databaseSecret,
     };

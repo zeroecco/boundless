@@ -80,14 +80,14 @@ export async function setupStorage(
     // Create IAM policy for S3 bucket access
     const bucketPolicy = new aws.iam.UserPolicy(`${name}-bucket-access`, {
         user: agentUser.name,
-        policy: pulumi.all([workflowBucket.arn, configBucket.arn]).apply(([workflowArn, configArn]) => 
+        policy: pulumi.all([workflowBucket.arn, configBucket.arn]).apply(([workflowArn, configArn]) =>
             JSON.stringify({
                 Version: "2012-10-17",
                 Statement: [{
                     Action: ["s3:*"],
                     Effect: "Allow",
                     Resource: [
-                        workflowArn, 
+                        workflowArn,
                         `${workflowArn}/*`,
                         configArn,
                         `${configArn}/*`
