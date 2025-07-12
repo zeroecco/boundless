@@ -321,7 +321,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
                     {
                         "file_path": "/var/log/messages",
                         "log_group_name": "/aws/ec2/${name}-broker",
-                        "log_stream_name": "{instance_id}/messages"
+                        "log_stream_name": "/aws/ec2/${name}-broker"
                     }
                 ]
             }
@@ -331,7 +331,6 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
 EOF
 
 # Start CloudWatch agent
-systemctl daemon-reload
 systemctl enable amazon-cloudwatch-agent
 systemctl start amazon-cloudwatch-agent
 
