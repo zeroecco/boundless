@@ -32,8 +32,6 @@ export async function setupGpuProvers(
         family: `${name}-gpu-provers`,
         networkMode: "awsvpc",
         requiresCompatibilities: ["EC2"],
-        cpu: "3584", // 3.5 vCPUs out of 4 available on g6e.xlarge
-        memory: "14336", // 14 GB out of 16 GB available
         taskRoleArn: taskRole.arn,
         executionRoleArn: executionRole.arn,
 
@@ -61,6 +59,8 @@ export async function setupGpuProvers(
                 },
                 command: ["-t", "prove"],
                 essential: true,
+                cpu: 3584, // 3.5 vCPUs out of 4 available on g6e.xlarge
+                memory: 14336, // 14 GB out of 16 GB available
 
                 resourceRequirements: [
                     {

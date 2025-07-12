@@ -32,8 +32,6 @@ export async function setupExecAgents(
         family: `${name}-exec-agents`,
         networkMode: "awsvpc",
         requiresCompatibilities: ["EC2"],
-        cpu: "6144", // 6 vCPUs out of 8 available on r7iz.2xlarge
-        memory: "49152", // 48 GB out of 64 GB available
         taskRoleArn: taskRole.arn,
         executionRoleArn: executionRole.arn,
 

@@ -32,8 +32,6 @@ export async function setupSnarkAgent(
         family: `${name}-snark-agent`,
         networkMode: "awsvpc",
         requiresCompatibilities: ["EC2"],
-        cpu: "15360", // 15 vCPUs out of 16 available on c7a.4xlarge
-        memory: "28672", // 28 GB out of 32 GB available
         taskRoleArn: taskRole.arn,
         executionRoleArn: executionRole.arn,
 
@@ -61,6 +59,8 @@ export async function setupSnarkAgent(
                 },
                 command: ["-t", "snark"],
                 essential: true,
+                cpu: 15360, // 15 vCPUs out of 16 available on c7a.4xlarge
+                memory: 28672, // 28 GB out of 32 GB available
 
                 environment: [
                     { name: "DATABASE_URL", value: dbUrl },
