@@ -34,6 +34,17 @@ export async function createInstanceProfile(
         policyArn: "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     });
 
+    const cloudWatchAgentPolicy = new aws.iam.RolePolicyAttachment(`${name}-cloudwatch-agent-policy`, {
+        role: role.name,
+        policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+    });
+
+    // Attach ECS policy for container instances
+    const ecsPolicy = new aws.iam.RolePolicyAttachment(`${name}-ecs-policy`, {
+        role: role.name,
+        policyArn: "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
+    });
+
     // Custom policy for S3 and Secrets Manager access
     const customPolicy = new aws.iam.Policy(`${name}-custom-policy`, {
         description: "Custom policy for Bento cluster access",
@@ -69,6 +80,24 @@ export async function createInstanceProfile(
                         "logs:PutLogEvents",
                     ],
                     Resource: "arn:aws:logs:*:*:*",
+                },
+                {
+                    Effect: "Allow",
+                    Action: [
+                        "ecs:CreateCluster",
+                        "ecs:DeregisterContainerInstance",
+                        "ecs:DiscoverPollEndpoint",
+                        "ecs:Poll",
+                        "ecs:RegisterContainerInstance",
+                        "ecs:StartTelemetrySession",
+                        "ecs:UpdateContainerInstancesState",
+                        "ecs:Submit*",
+                        "ecr:GetAuthorizationToken",
+                        "ecr:BatchCheckLayerAvailability",
+                        "ecr:GetDownloadUrlForLayer",
+                        "ecr:BatchGetImage",
+                    ],
+                    Resource: "*",
                 },
             ],
         }),
@@ -137,7 +166,10 @@ export async function createEcsTaskRole(
         },
     });
 
-
+    const containerEc2Attachment = new aws.iam.RolePolicyAttachment(`${name}-task-container-ec2-attachment`, {
+        role: taskRole.name,
+        policyArn: "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
+    });
 
     const customPolicy = new aws.iam.Policy(`${name}-execution-custom-policy`, {
         description: "Custom policy for docker img pull access",

@@ -92,4 +92,4 @@ async function main() {
 }
 
 // Export the main outputs
-export const outputs = main();
+export default main();

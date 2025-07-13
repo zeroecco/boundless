@@ -23,7 +23,7 @@ export async function setupEcsCluster(
     // Create instance profile for EC2 instances
     const instanceProfile = await createInstanceProfile(`${name}-ecs-instances`, tags);
 
-    // Get standard AMI for CPU instances
+    // Get standard AMI for CPU instances. Note AMI comes with ECS agent installed.
     const standardAmi = aws.ec2.getAmi({
         mostRecent: true,
         owners: ["amazon"],
@@ -33,7 +33,7 @@ export async function setupEcsCluster(
         ],
     });
 
-    // Get GPU-compatible AMI
+    // Get GPU-compatible AMI. Note AMI comes with ECS agent installed.
     const gpuAmi = aws.ec2.getAmi({
         mostRecent: true,
         owners: ["amazon"],
@@ -48,7 +48,7 @@ export async function setupEcsCluster(
         name: `${name}-exec-launch-template`,
         imageId: standardAmi.then(ami => ami.id),
         instanceType: "r7iz.2xlarge", // 8 vCPUs, 64 GB RAM, NVMe SSD
-        
+
         iamInstanceProfile: {
             name: instanceProfile.name,
         },
@@ -70,12 +70,43 @@ echo ECS_CLUSTER=${clusterName} >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true >> /etc/ecs/ecs.config
-echo ECS_LOGLEVEL=info >> /etc/ecs/ecs.config
-echo ECS_AVAILABLE_LOGGING_DRIVERS=["json-file","awslogs"] >> /etc/ecs/ecs.config
 echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
 echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
+echo ECS_BACKEND_HOST= >> /etc/ecs/ecs.config
+
+yum install -y amazon-cloudwatch-agent
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.d/ecs_default.json <<"EOL"
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/ecs/ecs-init.log",
+                      "log_group_name": "/${name}/ecs-init",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/ecs/ecs-agent.log",
+                      "log_group_name": "/${name}/ecs-agent",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/ecs/audit.log",
+                      "log_group_name": "/${name}/audit",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOL
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a start -m ec2
+          echo "Installing SSM Agent"
+          yum install -y https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/latest/linux_amd64/amazon-ssm-agent.rpm
 `).toString('base64')),
 
         tagSpecifications: [{
@@ -98,7 +129,7 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
         name: `${name}-snark-launch-template`,
         imageId: standardAmi.then(ami => ami.id),
         instanceType: "c7a.4xlarge", // 16 vCPUs, 32 GB RAM, compute optimized
-        
+
         iamInstanceProfile: {
             name: instanceProfile.name,
         },
@@ -122,8 +153,6 @@ echo ECS_CLUSTER=${clusterName} >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true >> /etc/ecs/ecs.config
-echo ECS_LOGLEVEL=info >> /etc/ecs/ecs.config
-echo ECS_AVAILABLE_LOGGING_DRIVERS=["json-file","awslogs"] >> /etc/ecs/ecs.config
 echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
@@ -150,7 +179,7 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
         name: `${name}-gpu-launch-template`,
         imageId: gpuAmi.then(ami => ami.id),
         instanceType: "g6e.xlarge", // 4 vCPUs, 16 GB RAM, 1x NVIDIA L40S GPU
-        
+
         iamInstanceProfile: {
             name: instanceProfile.name,
         },
@@ -176,7 +205,7 @@ echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true >> /etc/ecs/ecs.config
 echo ECS_LOGLEVEL=info >> /etc/ecs/ecs.config
-echo ECS_AVAILABLE_LOGGING_DRIVERS=["json-file","awslogs"] >> /etc/ecs/ecs.config
+echo ECS_AVAILABLE_LOGGING_DRIVERS='["json-file","awslogs"]' >> /etc/ecs/ecs.config
 echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
@@ -209,9 +238,9 @@ systemctl restart ecs
         desiredCapacity: 1,
         maxSize: 1,
         minSize: 1,
-        
+
         vpcZoneIdentifiers: network.privateSubnetIds,
-        
+
         launchTemplate: {
             id: execLaunchTemplate.id,
             version: "$Latest",
@@ -219,7 +248,7 @@ systemctl restart ecs
 
         healthCheckType: "EC2",
         healthCheckGracePeriod: 300,
-        
+
         enabledMetrics: [
             "GroupInServiceInstances",
             "GroupTotalInstances",
@@ -242,9 +271,9 @@ systemctl restart ecs
         desiredCapacity: 1,
         maxSize: 1,
         minSize: 1,
-        
+
         vpcZoneIdentifiers: network.privateSubnetIds,
-        
+
         launchTemplate: {
             id: snarkLaunchTemplate.id,
             version: "$Latest",
@@ -252,7 +281,7 @@ systemctl restart ecs
 
         healthCheckType: "EC2",
         healthCheckGracePeriod: 300,
-        
+
         enabledMetrics: [
             "GroupInServiceInstances",
             "GroupTotalInstances",
@@ -275,9 +304,9 @@ systemctl restart ecs
         desiredCapacity: 8,
         maxSize: 8,
         minSize: 8,
-        
+
         vpcZoneIdentifiers: network.privateSubnetIds,
-        
+
         launchTemplate: {
             id: gpuLaunchTemplate.id,
             version: "$Latest",
@@ -285,7 +314,7 @@ systemctl restart ecs
 
         healthCheckType: "EC2",
         healthCheckGracePeriod: 300,
-        
+
         enabledMetrics: [
             "GroupInServiceInstances",
             "GroupTotalInstances",
@@ -307,7 +336,7 @@ systemctl restart ecs
     // Create capacity providers
     const execCapacityProvider = new aws.ecs.CapacityProvider(`${name}-exec-capacity-provider`, {
         name: `${name}-exec-capacity-provider`,
-        
+
         autoScalingGroupProvider: {
             autoScalingGroupArn: execAsg.arn,
             managedScaling: {
@@ -326,7 +355,7 @@ systemctl restart ecs
 
     const snarkCapacityProvider = new aws.ecs.CapacityProvider(`${name}-snark-capacity-provider`, {
         name: `${name}-snark-capacity-provider`,
-        
+
         autoScalingGroupProvider: {
             autoScalingGroupArn: snarkAsg.arn,
             managedScaling: {
@@ -345,7 +374,7 @@ systemctl restart ecs
 
     const gpuCapacityProvider = new aws.ecs.CapacityProvider(`${name}-gpu-capacity-provider`, {
         name: `${name}-gpu-capacity-provider`,
-        
+
         autoScalingGroupProvider: {
             autoScalingGroupArn: gpuAsg.arn,
             managedScaling: {
@@ -371,7 +400,7 @@ systemctl restart ecs
             gpuCapacityProvider.name,
             "FARGATE"
         ],
-        
+
         defaultCapacityProviderStrategies: [{
             capacityProvider: "FARGATE",
             weight: 1,

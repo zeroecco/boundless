@@ -100,8 +100,27 @@ export async function setupEC2Broker(
                             "logs:CreateLogGroup",
                             "logs:CreateLogStream",
                             "logs:PutLogEvents",
+                            "logs:DescribeLogGroups",
+                            "logs:DescribeLogStreams",
                         ],
                         Resource: "arn:aws:logs:*:*:*",
+                    },
+                    {
+                        Effect: "Allow",
+                        Action: [
+                            "ec2:DescribeInstanceStatus",
+                            "ec2:DescribeTags",
+                            "ec2:DescribeVolumes",
+                            "ec2:DescribeTags"
+                        ],
+                        Resource: "*"
+                    },
+                    {
+                        Effect: "Allow",
+                        Action: [
+                            "cloudwatch:PutMetricData",
+                        ],
+                        Resource: "*"
                     }
                 ]
             })
@@ -166,7 +185,7 @@ set -e
 
 # Update system
 apt-get update -y
-apt-get install -y awscli jq docker.io docker-compose-plugin
+apt-get install -y awscli jq docker.io docker-compose-plugin git
 
 # Install cloudwatch agent
 wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
@@ -185,6 +204,9 @@ usermod -aG docker ubuntu
 # Create directory for broker data
 mkdir -p /opt/boundless/data
 chown -R ubuntu:ubuntu /opt/boundless
+apt-get install -y acl
+setfacl -R -d -m u::rwx,g::rwx,o::rx /opt/boundless
+setfacl -R -m u::rwx,g::rwx,o::rx /opt/boundless
 
 # Create script to fetch configuration and secrets
 cat > /opt/boundless/setup-env.sh << 'EOF'
@@ -275,60 +297,60 @@ systemctl daemon-reload
 systemctl enable boundless-broker.service
 
 # Setup CloudWatch agent configuration
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
+cat > /opt/aws/amazon-cloudwatch-agent/bin/config.json << 'EOF'
 {
     "agent": {
         "metrics_collection_interval": 60,
-        "run_as_user": "ubuntu"
+        "run_as_user": "root"
     },
     "metrics": {
-        "namespace": "Boundless/Broker",
+        "namespace": "Boundless/Services/${name}",
         "metrics_collected": {
-            "cpu": {
+	        "mem": {
                 "measurement": [
-                    "cpu_usage_idle",
-                    "cpu_usage_iowait",
-                    "cpu_usage_user",
-                    "cpu_usage_system"
-                ],
-                "metrics_collection_interval": 60,
-                "resources": [
-                    "*"
-                ],
-                "totalcpu": false
-            },
-            "disk": {
-                "measurement": [
-                    "used_percent"
-                ],
-                "metrics_collection_interval": 60,
-                "resources": [
-                    "*"
+                    "mem_used_percent",
+                    "mem_available",
+                    "mem_free",
+                    "mem_total"
                 ]
-            },
-            "mem": {
-                "measurement": [
-                    "mem_used_percent"
-                ],
-                "metrics_collection_interval": 60
             }
-        }
+        },
+        "aggregation_dimensions": [[]]
     },
     "logs": {
         "logs_collected": {
             "files": {
                 "collect_list": [
                     {
-                        "file_path": "/var/log/messages",
-                        "log_group_name": "/aws/ec2/${name}-broker",
-                        "log_stream_name": "/aws/ec2/${name}-broker"
-                    }
+                        "file_path": "/var/log/journal/*/system.journal",
+                        "log_group_name": "${name}/broker-logs",
+                        "log_stream_name": "${name}/broker-logs"
+                    },
+                    {
+                        "file_path": "/var/log/setup.log",
+                        "log_group_name": "${name}/setup-script-logs",
+                        "log_stream_name": "${name}/setup-script-logs"
+                    },
+                    {
+                        "file_path": "/var/log/syslog",
+                        "log_group_name": "${name}/syslog",
+                        "log_stream_name": "${name}/syslog"
+                    },
+                    {
+                        "file_path": "/var/log/*.log",
+                        "log_group_name": "${name}/all-var-logs",
+                        "log_stream_name": "${name}/all-var-logs"
+                    },
                 ]
             }
         }
     }
 }
 EOF
+
+# Copy config to default location. Restart CloudWatch agent.
+sudo cp /opt/aws/amazon-cloudwatch-agent/bin/config.json \
+   /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
 # Start CloudWatch agent
 systemctl enable amazon-cloudwatch-agent
@@ -347,7 +369,7 @@ systemctl start boundless-broker.service
     // Create launch template for broker
     const brokerLaunchTemplate = new aws.ec2.LaunchTemplate(`${name}-broker-launch-template`, {
         namePrefix: `${name}-broker-`,
-        imageId: "ami-0897831b586e1015f", // Amazon Linux 2023 in us-west-2
+        imageId: "ami-0c7217cdde317cfec", // Ubuntu 22.04 LTS in us-west-2
         instanceType: "t3.medium", // Sufficient for broker with SQLite
         keyName: `${name}-keypair`, // Make sure this key exists
 

@@ -29,7 +29,9 @@ This directory contains the Pulumi infrastructure code for deploying a custom Be
 1. AWS CLI configured with appropriate credentials
 2. Pulumi CLI installed
 3. Node.js and npm installed
-4. SSH key pair named `boundless-keypair` in AWS
+4. SSH key pair named `<stack_name>-keypair` in AWS
+   1. `aws ec2 create-key-pair --key-name <stack_name>-keypair --query "KeyMaterial" --output text > <stack_name>-keypair.pem
+chmod 400 <stack_name>-keypair.pem`
 
 ## Deployment
 
@@ -43,6 +45,7 @@ npm install
 ### 2. Initialize Pulumi Stack
 
 ```bash
+pulumi login --local
 pulumi stack init <stack-name>
 pulumi stack select <stack-name>
 pulumi config set aws:region us-west-2

@@ -140,7 +140,7 @@ export async function setupDatabase(
             // const host = endpoint.includes(':') ? endpoint : `${endpoint}:5432`;
             // let ret = `postgresql://worker:${password}@${host}/taskdb?sslmode=require`;
             // return encodeURI(ret);
-            return pulumi.interpolate`postgresql://worker:${password}@${rdsProxy.endpoint}/taskdb`;
+            return pulumi.interpolate`postgresql://worker:${password}@${rdsProxy.endpoint}/taskdb?sslmode=require`;
         }),
         secret: databaseSecret,
     };
