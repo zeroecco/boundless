@@ -208,9 +208,6 @@ echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
 echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
-
-systemctl restart docker
-systemctl restart ecs
 `).toString('base64')),
 
         tagSpecifications: [{
