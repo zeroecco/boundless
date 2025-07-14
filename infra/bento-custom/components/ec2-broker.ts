@@ -299,7 +299,6 @@ export ORDER_STREAM_URL=$(aws secretsmanager get-secret-value --secret-id "$ORDE
 
 # Create environment file for broker
 cat > /opt/boundless/.env.broker << EOL
-PRIVATE_KEY=$PRIVATE_KEY
 RPC_URL=$RPC_URL
 ORDER_STREAM_URL=$ORDER_STREAM_URL
 DATABASE_URL=sqlite:///opt/boundless/data/broker.db
@@ -348,7 +347,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/boundless/repo
 ExecStartPre=/opt/boundless/setup-env.sh
-ExecStart=/opt/boundless/repo/target/release/broker --db-url sqlite:///opt/boundless/data/broker.db --config-file /opt/boundless/broker.toml --bento-api-url ${bentoApiUrl}
+ExecStart=/opt/boundless/repo/target/release/broker --db-url sqlite:///opt/boundless/data/broker.db --config-file /opt/boundless/broker.toml --bento-api-url ${bentoApiUrl} --private-key $PRIVATE_KEY
 ExecStop=/bin/kill -TERM $MAINPID
 Restart=always
 RestartSec=10
