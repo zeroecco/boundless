@@ -1,15 +1,18 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import { createEcsTaskRole } from "./iam";
+import { Secrets } from "./secrets";
+import { Network } from "./network";
+import { Storage } from "./storage";
 
 export async function setupExecAgents(
     name: string,
-    network: any,
+    network: Network,
     cluster: any,
     database: any,
     cache: any,
-    storage: any,
-    secrets: any,
+    storage: Storage,
+    secrets: Secrets,
     tags: Record<string, string>
 ) {
     const region = await aws.getRegion().then(r => r.name);

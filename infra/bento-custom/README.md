@@ -96,11 +96,14 @@ pulumi stack output alertsTopicArn     # Get alerts topic
 
 ```bash
 # Get broker instance ID
-BROKER_ASG_NAME=$(pulumi stack output brokerInstanceArn | cut -d'/' -f2)
+BROKER_ASG_NAME=$(pulumi stack output --json | jq -r '.default.brokerInstanceArn' | cut -d'/' -f2)
 BROKER_INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $BROKER_ASG_NAME --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text)
 
 # SSH access (requires bastion/VPN)
 aws ssm start-session --target $BROKER_INSTANCE_ID
+
+# Check logs from userdata start up
+sudo cat /var/log/cloud-init-output.log
 
 # Check service status
 sudo systemctl status boundless-broker.service

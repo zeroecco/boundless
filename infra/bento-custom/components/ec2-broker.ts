@@ -2,12 +2,15 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as fs from "fs";
 import * as path from "path";
+import { Secrets } from "./secrets";
+import { Storage } from "./storage";
+import { Network } from "./network";
 
 export async function setupEC2Broker(
     name: string,
-    network: any,
-    storage: any,
-    secrets: any,
+    network: Network,
+    storage: Storage,
+    secrets: Secrets,
     tags: Record<string, string>,
     bentoAPIUrl: pulumi.Output<string>
 ) {
@@ -149,8 +152,9 @@ export async function setupEC2Broker(
     const brokerConfigParam = new aws.ssm.Parameter(`${name}-broker-config`, {
         name: `/boundless/${name}/broker-config`,
         type: "String",
-        value: JSON.stringify({
+        value: pulumi.jsonStringify({
             name,
+            orderStreamUrl: secrets.orderStreamUrl,
             region: brokerConfig.region,
             bucketName: storage.configBucket.id,
             setVerifierAddress: brokerConfig.setVerifierAddress,
@@ -160,8 +164,8 @@ export async function setupEC2Broker(
             snarkTimeout: brokerConfig.snarkTimeout,
             environment: brokerConfig.environment,
             secretArns: {
-                privateKey: secrets.brokerPrivateKey.arn,
-                rpcUrl: secrets.rpcUrl.arn,
+                privateKey: secrets.brokerPrivateKey,
+                rpcUrl: secrets.rpcUrl,
             },
             logJson: true
         }),
@@ -182,119 +186,16 @@ export async function setupEC2Broker(
     ]).apply(([configParamName, bucketName, region, bentoApiUrl]) => {
         const userDataScript = `#!/bin/bash
 set -e
+export HOME=/home/ubuntu
 
 # Update system
 apt-get update -y
-apt-get install -y awscli jq docker.io docker-compose-plugin git
+apt-get install -y build-essential awscli jq git pkg-config libssl-dev
 
 # Install cloudwatch agent
 wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
 dpkg -i amazon-cloudwatch-agent.deb
 rm amazon-cloudwatch-agent.deb
-
-# Install Rust for building the broker
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source ~/.cargo/env
-
-# Start and enable docker
-systemctl start docker
-systemctl enable docker
-usermod -aG docker ubuntu
-
-# Create directory for broker data
-mkdir -p /opt/boundless/data
-chown -R ubuntu:ubuntu /opt/boundless
-apt-get install -y acl
-setfacl -R -d -m u::rwx,g::rwx,o::rx /opt/boundless
-setfacl -R -m u::rwx,g::rwx,o::rx /opt/boundless
-
-# Create script to fetch configuration and secrets
-cat > /opt/boundless/setup-env.sh << 'EOF'
-#!/bin/bash
-set -e
-
-# Fetch configuration from SSM
-CONFIG_JSON=$(aws ssm get-parameter --name "${configParamName}" --region ${region} --query 'Parameter.Value' --output text)
-export BROKER_CONFIG="$CONFIG_JSON"
-
-# Parse configuration
-export PRIVATE_KEY_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.privateKey')
-export RPC_URL_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.rpcUrl')
-export GIT_BRANCH=$(echo $CONFIG_JSON | jq -r '.gitBranch')
-export SEGMENT_SIZE=$(echo $CONFIG_JSON | jq -r '.segmentSize')
-export SNARK_TIMEOUT=$(echo $CONFIG_JSON | jq -r '.snarkTimeout')
-export BOUNDLESS_MARKET_ADDRESS=$(echo $CONFIG_JSON | jq -r '.boundlessMarketAddress')
-export SET_VERIFIER_ADDRESS=$(echo $CONFIG_JSON | jq -r '.setVerifierAddress')
-
-# Fetch secrets
-export PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id "$PRIVATE_KEY_ARN" --region ${region} --query 'SecretString' --output text)
-export RPC_URL=$(aws secretsmanager get-secret-value --secret-id "$RPC_URL_ARN" --region ${region} --query 'SecretString' --output text)
-export ORDER_STREAM_URL=$(aws secretsmanager get-secret-value --secret-id "$ORDER_STREAM_URL_ARN" --region ${region} --query 'SecretString' --output text)
-
-# Create environment file for broker
-cat > /opt/boundless/.env.broker << EOL
-PRIVATE_KEY=$PRIVATE_KEY
-RPC_URL=$RPC_URL
-ORDER_STREAM_URL=$ORDER_STREAM_URL
-DATABASE_URL=sqlite:///opt/boundless/data/broker.db
-BENTO_API_URL=${bentoApiUrl}
-RUST_LOG=info
-RUST_BACKTRACE=1
-BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS
-SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS
-SEGMENT_SIZE=$SEGMENT_SIZE
-SNARK_TIMEOUT=$SNARK_TIMEOUT
-EOL
-
-chmod 600 /opt/boundless/.env.broker
-chown ubuntu:ubuntu /opt/boundless/.env.broker
-EOF
-
-chmod +x /opt/boundless/setup-env.sh
-chown ubuntu:ubuntu /opt/boundless/setup-env.sh
-
-# Clone the Boundless repository
-cd /opt/boundless
-git clone https://github.com/boundless-xyz/boundless.git repo
-cd repo
-git checkout ${brokerConfig.gitBranch}
-chown -R ubuntu:ubuntu /opt/boundless
-
-# Build the broker binary
-cd /opt/boundless/repo
-RISC0_SKIP_BUILD=1 cargo build --release --bin broker
-chown -R ubuntu:ubuntu /opt/boundless
-
-# Copy default broker configuration
-cp broker-template.toml /opt/boundless/broker.toml
-chown ubuntu:ubuntu /opt/boundless/broker.toml
-
-# Create systemd service for broker
-cat > /etc/systemd/system/boundless-broker.service << 'EOF'
-[Unit]
-Description=Boundless Broker Service
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/opt/boundless/repo
-ExecStartPre=/opt/boundless/setup-env.sh
-ExecStart=/opt/boundless/repo/target/release/broker --db-url sqlite:///opt/boundless/data/broker.db --config-file /opt/boundless/broker.toml --bento-api-url ${bentoApiUrl}
-ExecStop=/bin/kill -TERM $MAINPID
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable and start the service
-systemctl daemon-reload
-systemctl enable boundless-broker.service
 
 # Setup CloudWatch agent configuration
 cat > /opt/aws/amazon-cloudwatch-agent/bin/config.json << 'EOF'
@@ -356,11 +257,114 @@ sudo cp /opt/aws/amazon-cloudwatch-agent/bin/config.json \
 systemctl enable amazon-cloudwatch-agent
 systemctl start amazon-cloudwatch-agent
 
+# Install Rust for building the broker
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source ~/.cargo/env
+
+# Start and enable docker
+# systemctl start docker
+# systemctl enable docker
+# usermod -aG docker ubuntu
+
+# Create directory for broker data
+mkdir -p /opt/boundless/data
+chown -R ubuntu:ubuntu /opt/boundless
+apt-get install -y acl
+setfacl -R -d -m u::rwx,g::rwx,o::rx /opt/boundless
+setfacl -R -m u::rwx,g::rwx,o::rx /opt/boundless
+
+# Create script to fetch configuration and secrets
+cat > /opt/boundless/setup-env.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Fetch configuration from SSM
+CONFIG_JSON=$(aws ssm get-parameter --name "${configParamName}" --region ${region} --query 'Parameter.Value' --output text)
+export BROKER_CONFIG="$CONFIG_JSON"
+
+# Parse configuration
+export PRIVATE_KEY_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.privateKey')
+export RPC_URL_ARN=$(echo $CONFIG_JSON | jq -r '.secretArns.rpcUrl')
+export GIT_BRANCH=$(echo $CONFIG_JSON | jq -r '.gitBranch')
+export SEGMENT_SIZE=$(echo $CONFIG_JSON | jq -r '.segmentSize')
+export SNARK_TIMEOUT=$(echo $CONFIG_JSON | jq -r '.snarkTimeout')
+export BOUNDLESS_MARKET_ADDRESS=$(echo $CONFIG_JSON | jq -r '.boundlessMarketAddress')
+export SET_VERIFIER_ADDRESS=$(echo $CONFIG_JSON | jq -r '.setVerifierAddress')
+export ORDER_STREAM_URL_ARN=$(echo $CONFIG_JSON | jq -r '.orderStreamUrl')
+
+# Fetch secrets
+export PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id "$PRIVATE_KEY_ARN" --region ${region} --query 'SecretString' --output text)
+export RPC_URL=$(aws secretsmanager get-secret-value --secret-id "$RPC_URL_ARN" --region ${region} --query 'SecretString' --output text)
+export ORDER_STREAM_URL=$(aws secretsmanager get-secret-value --secret-id "$ORDER_STREAM_URL_ARN" --region ${region} --query 'SecretString' --output text)
+
+# Create environment file for broker
+cat > /opt/boundless/.env.broker << EOL
+PRIVATE_KEY=$PRIVATE_KEY
+RPC_URL=$RPC_URL
+ORDER_STREAM_URL=$ORDER_STREAM_URL
+DATABASE_URL=sqlite:///opt/boundless/data/broker.db
+BENTO_API_URL=${bentoApiUrl}
+RUST_LOG=info
+RUST_BACKTRACE=1
+BOUNDLESS_MARKET_ADDRESS=$BOUNDLESS_MARKET_ADDRESS
+SET_VERIFIER_ADDRESS=$SET_VERIFIER_ADDRESS
+SEGMENT_SIZE=$SEGMENT_SIZE
+SNARK_TIMEOUT=$SNARK_TIMEOUT
+EOL
+
+chmod 600 /opt/boundless/.env.broker
+chown ubuntu:ubuntu /opt/boundless/.env.broker
+EOF
+
+chmod +x /opt/boundless/setup-env.sh
+chown ubuntu:ubuntu /opt/boundless/setup-env.sh
+
+# Clone the Boundless repository
+cd /opt/boundless
+git clone https://github.com/boundless-xyz/boundless.git repo
+cd repo
+git config --global --add safe.directory /opt/boundless/repo
+
+git checkout ${brokerConfig.gitBranch}
+chown -R ubuntu:ubuntu /opt/boundless
+
+# Build the broker binary
+cd /opt/boundless/repo
+RISC0_SKIP_BUILD=1 cargo build --release --bin broker
+chown -R ubuntu:ubuntu /opt/boundless
+
+# Copy default broker configuration
+cp broker-template.toml /opt/boundless/broker.toml
+chown ubuntu:ubuntu /opt/boundless/broker.toml
+
+# Create systemd service for broker
+cat > /etc/systemd/system/boundless-broker.service << 'EOF'
+[Unit]
+Description=Boundless Broker Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/boundless/repo
+ExecStartPre=/opt/boundless/setup-env.sh
+ExecStart=/opt/boundless/repo/target/release/broker --db-url sqlite:///opt/boundless/data/broker.db --config-file /opt/boundless/broker.toml --bento-api-url ${bentoApiUrl}
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+systemctl daemon-reload
+systemctl enable boundless-broker.service
+
 # Start the broker service
 systemctl start boundless-broker.service
-
-# Signal success
-/opt/aws/bin/cfn-signal -e $? --stack ${name} --resource BrokerInstance --region ${region}
 `;
 
         return Buffer.from(userDataScript).toString('base64');
@@ -369,8 +373,8 @@ systemctl start boundless-broker.service
     // Create launch template for broker
     const brokerLaunchTemplate = new aws.ec2.LaunchTemplate(`${name}-broker-launch-template`, {
         namePrefix: `${name}-broker-`,
-        imageId: "ami-0c7217cdde317cfec", // Ubuntu 22.04 LTS in us-west-2
-        instanceType: "t3.medium", // Sufficient for broker with SQLite
+        imageId: "ami-016d360a89daa11ba", // Ubuntu 22.04 LTS amd64 AMI us-west-2
+        instanceType: "t3.xlarge", // Sufficient for broker with SQLite (medium hits out of memory)
         keyName: `${name}-keypair`, // Make sure this key exists
 
         vpcSecurityGroupIds: [network.brokerSecurityGroup.id],
@@ -421,7 +425,14 @@ systemctl start boundless-broker.service
 
         launchTemplate: {
             id: brokerLaunchTemplate.id,
-            version: "$Latest",
+            version: pulumi.interpolate`${brokerLaunchTemplate.latestVersion}`,
+        },
+
+        instanceRefresh: {
+            strategy: "Rolling",
+            preferences: {
+                minHealthyPercentage: 0,
+            },
         },
 
         minSize: 1,

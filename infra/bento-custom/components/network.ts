@@ -2,7 +2,22 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 
-export async function setupNetwork(name: string, tags: Record<string, string>) {
+export type Network = {
+    vpc: awsx.ec2.Vpc;
+    publicSubnetIds: pulumi.Output<string[]>;
+    privateSubnetIds: pulumi.Output<string[]>;
+    instanceSecurityGroup: aws.ec2.SecurityGroup;
+    brokerSecurityGroup: aws.ec2.SecurityGroup;
+    databaseSecurityGroup: aws.ec2.SecurityGroup;
+    cacheSecurityGroup: aws.ec2.SecurityGroup;
+    rdsProxySecurityGroup: aws.ec2.SecurityGroup;
+    rdsProxyRole: aws.iam.Role;
+    s3VpcEndpoint: aws.ec2.VpcEndpoint;
+    getPrimaryPublicSubnetId: () => pulumi.Output<string>;
+    getPrimaryPrivateSubnetId: () => pulumi.Output<string>;
+};
+
+export async function setupNetwork(name: string, tags: Record<string, string>): Promise<Network> {
     // Create VPC with public and private subnets
     const vpc = new awsx.ec2.Vpc(`${name}-vpc`, {
         cidrBlock: "10.0.0.0/16",

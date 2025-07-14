@@ -1,10 +1,19 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 
+export type Storage = {
+    bucket: aws.s3.BucketV2;
+    configBucket: aws.s3.BucketV2;
+    bucketName: pulumi.Output<string>;
+    configBucketName: pulumi.Output<string>;
+    s3AccessKeyId: pulumi.Output<string>;
+    s3SecretKey: pulumi.Output<string>;
+};
+
 export async function setupStorage(
     name: string,
     tags: Record<string, string>
-) {
+): Promise<Storage> {
     // Create S3 bucket for workflow artifacts
     const workflowBucket = new aws.s3.BucketV2(`${name}-workflow`, {
         bucketPrefix: `${name}-workflow-`,
@@ -159,7 +168,7 @@ export async function setupStorage(
 
     return {
         bucket: workflowBucket,
-        configBucket: configBucket,
+        configBucket,
         bucketName: workflowBucket.id,
         configBucketName: configBucket.id,
         s3AccessKeyId: accessKey.id,

@@ -31,25 +31,27 @@ const commonTags = {
 
 // Main infrastructure setup
 async function main() {
-    const network = await setupNetwork(projectName, commonTags);
+    const [network, secrets, storage] = await Promise.all([
+        setupNetwork(projectName, commonTags),
+        setupSecrets(projectName, commonTags),
+        setupStorage(projectName, commonTags),
+    ]);
 
-    const secrets = await setupSecrets(projectName, commonTags);
-
-    const database = await setupDatabase(projectName, network, commonTags, rdsPassword);
-
-    const storage = await setupStorage(projectName, commonTags);
-
-    // Main ECS cluster for exec/gpu/snark workers
-    const cluster = await setupEcsCluster(projectName, network, commonTags);
+    const [database, cluster] = await Promise.all([
+        setupDatabase(projectName, network, commonTags, rdsPassword),
+        // Main ECS cluster for exec/gpu/snark workers
+        setupEcsCluster(projectName, network, commonTags),
+    ]);
 
     // Setup cache with GPU-compatible subnets for co-location
     const cache = await setupCache(projectName, network, commonTags, cluster.gpuCompatibleSubnets);
 
-    const execAgents = await setupExecAgents(projectName, network, cluster, database, cache, storage, secrets, commonTags);
-    const snarkAgent = await setupSnarkAgent(projectName, network, cluster, database, cache, storage, secrets, commonTags);
-    const gpuProvers = await setupGpuProvers(projectName, network, cluster, database, cache, storage, secrets, commonTags);
-
-    const auxAgent = await setupAuxAgent(projectName, network, cluster, database, cache, storage, secrets, commonTags);
+    const [execAgents, snarkAgent, gpuProvers, auxAgent] = await Promise.all([
+        setupExecAgents(projectName, network, cluster, database, cache, storage, secrets, commonTags),
+        setupSnarkAgent(projectName, network, cluster, database, cache, storage, secrets, commonTags),
+        setupGpuProvers(projectName, network, cluster, database, cache, storage, secrets, commonTags),
+        setupAuxAgent(projectName, network, cluster, database, cache, storage, secrets, commonTags),
+    ]);
 
     const bentoAPI = await setupBentoAPI(projectName, network, cluster, database, cache, storage, secrets, commonTags);
 

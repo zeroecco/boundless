@@ -204,15 +204,11 @@ echo ECS_ENABLE_GPU_SUPPORT=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true >> /etc/ecs/ecs.config
-echo ECS_LOGLEVEL=info >> /etc/ecs/ecs.config
-echo ECS_AVAILABLE_LOGGING_DRIVERS='["json-file","awslogs"]' >> /etc/ecs/ecs.config
 echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
 echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
 
-# Install nvidia-container-runtime for GPU support
-amazon-linux-extras install -y nvidia-docker2
 systemctl restart docker
 systemctl restart ecs
 `).toString('base64')),
@@ -243,7 +239,14 @@ systemctl restart ecs
 
         launchTemplate: {
             id: execLaunchTemplate.id,
-            version: "$Latest",
+            version: pulumi.interpolate`${execLaunchTemplate.latestVersion}`,
+        },
+
+        instanceRefresh: {
+            strategy: "Rolling",
+            preferences: {
+                minHealthyPercentage: 0,
+            },
         },
 
         healthCheckType: "EC2",
@@ -276,7 +279,14 @@ systemctl restart ecs
 
         launchTemplate: {
             id: snarkLaunchTemplate.id,
-            version: "$Latest",
+            version: pulumi.interpolate`${snarkLaunchTemplate.latestVersion}`,
+        },
+
+        instanceRefresh: {
+            strategy: "Rolling",
+            preferences: {
+                minHealthyPercentage: 0,
+            },
         },
 
         healthCheckType: "EC2",
@@ -309,7 +319,14 @@ systemctl restart ecs
 
         launchTemplate: {
             id: gpuLaunchTemplate.id,
-            version: "$Latest",
+            version: pulumi.interpolate`${gpuLaunchTemplate.latestVersion}`,
+        },
+
+        instanceRefresh: {
+            strategy: "Rolling",
+            preferences: {
+                minHealthyPercentage: 0,
+            },
         },
 
         healthCheckType: "EC2",
