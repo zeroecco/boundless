@@ -106,7 +106,7 @@ export async function setupEC2Broker(
                             "logs:DescribeLogGroups",
                             "logs:DescribeLogStreams",
                         ],
-                        Resource: "arn:aws:logs:*:*:*",
+                        Resource: "arn:aws:logs:*:*:log-group:*",
                     },
                     {
                         Effect: "Allow",
@@ -331,7 +331,7 @@ User=ubuntu
 WorkingDirectory=/opt/boundless/repo
 ExecStartPre=/opt/boundless/setup-env.sh
 EnvironmentFile=-/opt/boundless/.env.broker
-ExecStart=/opt/boundless/repo/target/release/broker --db-url sqlite:///opt/boundless/data/broker.db --config-file /opt/boundless/broker.toml --bento-api-url ${bentoApiUrl} --private-key $PRIVATE_KEY
+ExecStart=/opt/boundless/repo/target/release/broker --db-url sqlite:///opt/boundless/data/broker.db --config-file /opt/boundless/broker.toml --bento-api-url ${bentoApiUrl}
 ExecStop=/bin/kill -TERM $MAINPID
 Restart=always
 RestartSec=10
