@@ -10,7 +10,7 @@ export async function setupBroker(
     tags: Record<string, string>
 ) {
     const config = new pulumi.Config();
-    
+
     // Simple broker configuration - no complex SSM or S3 setup needed
     // ECS services will get configuration directly via environment variables
     const brokerConfig = {
@@ -18,6 +18,7 @@ export async function setupBroker(
         snarkTimeout: config.getNumber("snarkTimeout") || 180,
         setVerifierAddress: config.get("setVerifierAddress") || "",
         boundlessMarketAddress: config.get("boundlessMarketAddress") || "",
+        orderStreamUrl: config.get("orderStreamUrl") || "",
         gitBranch: config.get("gitBranch") || "main",
     };
 

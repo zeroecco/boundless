@@ -104,7 +104,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.d/ecs_default
             }
           }
           EOL
-          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a start -m ec2
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s
           echo "Installing SSM Agent"
           yum install -y https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/latest/linux_amd64/amazon-ssm-agent.rpm
 `).toString('base64')),
@@ -157,6 +157,37 @@ echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
 echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
+yum install -y amazon-cloudwatch-agent
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.d/ecs_default.json <<"EOL"
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/ecs/ecs-init.log",
+                      "log_group_name": "/${name}/ecs-init",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/ecs/ecs-agent.log",
+                      "log_group_name": "/${name}/ecs-agent",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/ecs/audit.log",
+                      "log_group_name": "/${name}/audit",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOL
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s
+          echo "Installing SSM Agent"
+          yum install -y https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/latest/linux_amd64/amazon-ssm-agent.rpm
 `).toString('base64')),
 
         tagSpecifications: [{
@@ -211,10 +242,58 @@ echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
 echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
 
-# Install nvidia-container-runtime for GPU support
-amazon-linux-extras install -y nvidia-docker2
+# Install NVIDIA Container Toolkit (replacement for nvidia-docker2)
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
+sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo
+yum clean expire
+yum install -y nvidia-container-toolkit
+
+# Configure Docker to use NVIDIA runtime
+mkdir -p /etc/docker
+cat <<EOF > /etc/docker/daemon.json
+{
+    "default-runtime": "nvidia",
+    "runtimes": {
+        "nvidia": {
+            "path": "/usr/bin/nvidia-container-runtime",
+            "runtimeArgs": []
+        }
+    }
+}
+EOF
 systemctl restart docker
 systemctl restart ecs
+yum install -y amazon-cloudwatch-agent
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.d/ecs_default.json <<"EOL"
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/ecs/ecs-init.log",
+                      "log_group_name": "/${name}/ecs-init",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/ecs/ecs-agent.log",
+                      "log_group_name": "/${name}/ecs-agent",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/ecs/audit.log",
+                      "log_group_name": "/${name}/audit",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOL
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s
+          echo "Installing SSM Agent"
+          yum install -y https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/latest/linux_amd64/amazon-ssm-agent.rpm
 `).toString('base64')),
 
         tagSpecifications: [{
@@ -258,10 +337,6 @@ systemctl restart ecs
             key: "Name",
             value: `${name}-exec-asg`,
             propagateAtLaunch: false,
-        }, {
-            key: "AmazonECSManaged",
-            value: "true",
-            propagateAtLaunch: false,
         }],
     });
 
@@ -291,10 +366,6 @@ systemctl restart ecs
             key: "Name",
             value: `${name}-snark-asg`,
             propagateAtLaunch: false,
-        }, {
-            key: "AmazonECSManaged",
-            value: "true",
-            propagateAtLaunch: false,
         }],
     });
 
@@ -323,10 +394,6 @@ systemctl restart ecs
         tags: [{
             key: "Name",
             value: `${name}-gpu-asg`,
-            propagateAtLaunch: false,
-        }, {
-            key: "AmazonECSManaged",
-            value: "true",
             propagateAtLaunch: false,
         }],
     }, {

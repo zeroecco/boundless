@@ -9,7 +9,7 @@ export async function setupSecrets(
 
     // Create secret for broker private key
     const brokerPrivateKey = new aws.secretsmanager.Secret(`${name}-broker-private-key`, {
-        name: `${name}/broker/private-key`,
+        name: `${name}-broker-private-key-6`,
         description: "Private key for broker wallet",
         recoveryWindowInDays: 0, // TODO(ec2): fixme
         tags: {
@@ -26,7 +26,7 @@ export async function setupSecrets(
 
     // Create secret for RPC URL
     const rpcUrl = new aws.secretsmanager.Secret(`${name}-rpc-url`, {
-        name: `${name}/broker/rpc-url`,
+        name: `${name}-broker-rpc-url-6`,
         description: "RPC URL for blockchain access",
         recoveryWindowInDays: 0, // TODO(ec2): fixme
         tags: {
@@ -43,7 +43,7 @@ export async function setupSecrets(
 
     // Create secret for docker token
     const dockerToken = new aws.secretsmanager.Secret(`${name}-docker-token`, {
-        name: `${name}/broker/docker-token`,
+        name: `${name}/broker/docker-token-6`,
         description: "Docker token for image access",
         recoveryWindowInDays: 0, // TODO(ec2): fixme
         tags: {
