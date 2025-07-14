@@ -106,7 +106,7 @@ export async function setupEC2Broker(
                             "logs:DescribeLogGroups",
                             "logs:DescribeLogStreams",
                         ],
-                        Resource: "arn:aws:logs:*:*:log-group:*",
+                        Resource: "arn:aws:logs:*:*:*",
                     },
                     {
                         Effect: "Allow",
@@ -241,7 +241,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/bin/config.json << 'EOF'
                         "file_path": "/var/log/*.log",
                         "log_group_name": "${name}/all-var-logs",
                         "log_stream_name": "${name}/all-var-logs"
-                    },
+                    }
                 ]
             }
         }
