@@ -1,14 +1,24 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
     chain_monitor::ChainMonitorService,
-    config::{ConfigLock, OrderPricingPriority},
+    config::ConfigLock,
     db::DbObj,
     errors::CodedError,
     provers::{ProverError, ProverObj},
@@ -98,6 +108,7 @@ pub struct OrderPicker<P> {
     priced_orders_tx: mpsc::Sender<Box<OrderRequest>>,
     stake_token_decimals: u8,
     order_cache: OrderCache,
+    active_tasks: Arc<Mutex<HashMap<String, Box<OrderRequest>>>>,
 }
 
 #[derive(Debug)]
@@ -159,6 +170,7 @@ where
                     .time_to_live(Duration::from_secs(60 * 60)) // 1 hour
                     .build(),
             ),
+            active_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -260,6 +272,17 @@ where
                 .context("Failed to check if request is locked before pricing")?
         {
             tracing::debug!("Order {order_id} is already locked, skipping");
+            return Ok(Skip);
+        }
+
+        if order.fulfillment_type == FulfillmentType::FulfillAfterLockExpire
+            && self
+                .db
+                .is_request_fulfilled(U256::from(order.request.id))
+                .await
+                .context("Failed to check if request is fulfilled before pricing")?
+        {
+            tracing::debug!("Order {order_id} is already fulfilled, skipping");
             return Ok(Skip);
         }
 
@@ -789,36 +812,47 @@ where
         Box::pin(async move {
             tracing::info!("Starting order picking monitor");
 
-            let read_config = || -> Result<(usize, OrderPricingPriority), Self::Error> {
+            let read_config = || -> Result<_, Self::Error> {
                 let cfg = picker.config.lock_all().map_err(|err| {
                     OrderPickerErr::UnexpectedErr(anyhow::anyhow!("Failed to read config: {err}"))
                 })?;
                 Ok((
                     cfg.market.max_concurrent_preflights as usize,
                     cfg.market.order_pricing_priority,
+                    cfg.market.priority_requestor_addresses.clone(),
                 ))
             };
 
-            let (mut current_capacity, mut priority_mode) =
+            let (mut current_capacity, mut priority_mode, mut priority_addresses) =
                 read_config().map_err(SupervisorErr::Fault)?;
             let mut tasks: JoinSet<()> = JoinSet::new();
             let mut rx = picker.new_order_rx.lock().await;
             let mut capacity_check_interval = tokio::time::interval(MIN_CAPACITY_CHECK_INTERVAL);
-            let mut pending_orders: VecDeque<Box<OrderRequest>> = VecDeque::new();
+            let mut pending_orders: Vec<Box<OrderRequest>> = Vec::new();
 
             loop {
                 tokio::select! {
                     // This channel is cancellation safe, so it's fine to use in the select!
                     Some(order) = rx.recv() => {
-                        tracing::debug!("Queued order {} to be priced", order.id());
-                        pending_orders.push_back(order);
+                        let order_id = order.id();
+                        pending_orders.push(order);
+                        tracing::debug!(
+                            "Queued order {} to be priced. Currently {} queued pricing tasks: {}",
+                            order_id,
+                            pending_orders.len(),
+                            pending_orders
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
                     }
                     _ = tasks.join_next(), if !tasks.is_empty() => {
                         tracing::trace!("Pricing task completed ({} remaining)", tasks.len());
                     }
                     _ = capacity_check_interval.tick() => {
                         // Check capacity on an interval for capacity changes in config
-                        let (new_capacity, new_priority_mode) = read_config().map_err(SupervisorErr::Fault)?;
+                        let (new_capacity, new_priority_mode, new_priority_addresses) = read_config().map_err(SupervisorErr::Fault)?;
                         if new_capacity != current_capacity{
                             tracing::debug!("Pricing capacity changed from {} to {}", current_capacity, new_capacity);
                             current_capacity = new_capacity;
@@ -827,7 +861,12 @@ where
                             tracing::debug!("Order pricing priority changed from {:?} to {:?}", priority_mode, new_priority_mode);
                             priority_mode = new_priority_mode;
                         }
+                        if new_priority_addresses != priority_addresses {
+                            tracing::debug!("Priority requestor addresses changed");
+                            priority_addresses = new_priority_addresses;
+                        }
                     }
+
                     _ = cancel_token.cancelled() => {
                         tracing::debug!("Order picker received cancellation, shutting down gracefully");
 
@@ -838,10 +877,16 @@ where
                 }
 
                 // Process pending orders if we have capacity
-                while !pending_orders.is_empty() && tasks.len() < current_capacity {
-                    if let Some(order) =
-                        picker.select_next_pricing_order(&mut pending_orders, priority_mode)
-                    {
+                if !pending_orders.is_empty() && tasks.len() < current_capacity {
+                    let available_capacity = current_capacity - tasks.len();
+                    let selected_orders = picker.select_pricing_orders(
+                        &mut pending_orders,
+                        priority_mode,
+                        priority_addresses.as_deref(),
+                        available_capacity,
+                    );
+
+                    for order in selected_orders {
                         let order_id = order.id();
 
                         // Check if we've already started processing this order ID
@@ -857,10 +902,43 @@ where
 
                         let picker_clone = picker.clone();
                         let task_cancel_token = cancel_token.child_token();
+                        let order_id = order.id();
+
+                        // Track this task as active
+                        {
+                            let mut active_tasks = picker_clone.active_tasks.lock().await;
+                            active_tasks.insert(order_id.clone(), order.clone());
+
+                            // Log current active tasks
+                            let task_details = active_tasks
+                                .values()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            tracing::debug!("Current pricing tasks: [{}]", task_details);
+                        }
+
                         tasks.spawn(async move {
                             picker_clone
                                 .price_order_and_update_state(order, task_cancel_token)
                                 .await;
+
+                            // Remove this task from active tracking
+                            {
+                                let mut active_tasks = picker_clone.active_tasks.lock().await;
+                                active_tasks.remove(&order_id);
+
+                                // Log current active tasks
+                                let task_details = active_tasks
+                                    .values()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                tracing::info!(
+                                    "Removed pricing task. Current in-progress pricing tasks: [{}]",
+                                    task_details
+                                );
+                            }
                         });
                     }
                 }
@@ -1942,5 +2020,71 @@ pub(crate) mod tests {
         )));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_order_is_fulfilled_check() -> Result<()> {
+        let ctx = PickerTestCtxBuilder::default().build().await;
+
+        let mut order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                ..Default::default()
+            })
+            .await;
+        let order_id = order.id();
+
+        ctx.db.set_request_fulfilled(U256::from(order.request.id), 1000).await?;
+
+        assert!(ctx.db.is_request_fulfilled(U256::from(order.request.id)).await?);
+
+        let pricing_outcome = ctx.picker.price_order(&mut order).await?;
+        assert!(matches!(pricing_outcome, OrderPricingOutcome::Skip));
+
+        assert!(logs_contain(&format!("Order {order_id} is already fulfilled, skipping")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_active_tasks_logging() {
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
+        }
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
+
+        // Start the order picker task
+        let picker_task = tokio::spawn(ctx.picker.spawn(Default::default()));
+
+        // Send an order to trigger the logging
+        let order1 =
+            ctx.generate_next_order(OrderParams { order_index: 1, ..Default::default() }).await;
+        let order1_id = order1.id();
+        ctx.new_order_tx.send(order1).await.unwrap();
+
+        // Wait for the order to be processed and check for the "Added" log
+        tokio::time::timeout(Duration::from_secs(5), ctx.priced_orders_rx.recv()).await.unwrap();
+
+        // Check that we logged the task being added
+        assert!(logs_contain("Current pricing tasks: ["));
+        assert!(logs_contain(&order1_id));
+
+        // Send another order to see the task being removed and a new one added
+        let order2 =
+            ctx.generate_next_order(OrderParams { order_index: 2, ..Default::default() }).await;
+        let order2_id = order2.id();
+        ctx.new_order_tx.send(order2).await.unwrap();
+
+        // Wait for the second order to be processed
+        tokio::time::timeout(Duration::from_secs(5), ctx.priced_orders_rx.recv()).await.unwrap();
+
+        // Check that we logged the task being removed and the new one being added
+        assert!(logs_contain("Removed pricing task. Current in-progress pricing tasks: ["));
+        assert!(logs_contain(&order2_id));
+
+        picker_task.abort();
     }
 }
