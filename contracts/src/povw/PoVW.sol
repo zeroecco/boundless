@@ -21,11 +21,12 @@ struct PendingEpoch {
 contract PoVW {
     IRiscZeroVerifier public immutable VERIFIER;
 
+    // TODO: Update this with the work log updater. Should the updater commit the builder ID to make it more flexible?
     /// Image ID of the work log builder guest. The log builder ensures:
     /// * Update authorization is signed by the ECDSA key associated with the log ID.
     /// * State transition from initial to updated root is append-only.
     /// * The update value is equal to the sum of work associated with new proofs.
-    bytes32 public immutable LOG_BUILDER_ID;
+    bytes32 public immutable LOG_UPDATER_ID;
 
     uint256 public constant EPOCH_LENGTH = 7 days;
 
@@ -46,9 +47,9 @@ contract PoVW {
         address indexed workLogId, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
     );
 
-    constructor(IRiscZeroVerifier verifier, bytes32 logBuilderId) {
+    constructor(IRiscZeroVerifier verifier, bytes32 logUpdaterId) {
         VERIFIER = verifier;
-        LOG_BUILDER_ID = logBuilderId;
+        LOG_UPDATER_ID = logUpdaterId;
 
         pendingEpoch = PendingEpoch({number: currentEpoch(), totalWork: 0});
     }
@@ -92,7 +93,7 @@ contract PoVW {
             updatedCommit: updatedCommit,
             updateWork: updateWork
         });
-        VERIFIER.verify(seal, LOG_BUILDER_ID, sha256(abi.encode(update)));
+        VERIFIER.verify(seal, LOG_UPDATER_ID, sha256(abi.encode(update)));
 
         workLogRoots[workLogId] = updatedCommit;
 
