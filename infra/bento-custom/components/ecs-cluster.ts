@@ -177,7 +177,8 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
     // Create launch template for GPU instances (g6e.xlarge)
     const gpuLaunchTemplate = new aws.ec2.LaunchTemplate(`${name}-gpu-launch-template`, {
         name: `${name}-gpu-launch-template`,
-        imageId: gpuAmi.then(ami => ami.id),
+        // imageId: gpuAmi.then(ami => ami.id),
+        imageId: "ami-016d360a89daa11ba", // Ubuntu 22.04 LTS amd64 AMI us-west-2
         instanceType: "g6e.xlarge", // 4 vCPUs, 16 GB RAM, 1x NVIDIA L40S GPU
 
         iamInstanceProfile: {
@@ -187,9 +188,9 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
         vpcSecurityGroupIds: [network.instanceSecurityGroup.id],
 
         blockDeviceMappings: [{
-            deviceName: "/dev/xvda",
+            deviceName: "/dev/sda1",
             ebs: {
-                volumeSize: 200, // More space for GPU drivers
+                volumeSize: 300, // More space for GPU drivers
                 volumeType: "gp3",
                 encrypted: "true",
                 deleteOnTermination: "true",
@@ -199,6 +200,41 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
         }],
 
         userData: cluster.name.apply(clusterName => Buffer.from(`#!/bin/bash
+set -euxo pipefail
+export SUDO_USER=ubuntu
+export HOME=/home/ubuntu
+
+# Update packages and install prerequisites)
+apt-get update -y
+apt-get install -y curl git acl awscli jq
+snap install --edge --classic just
+
+# Create directory for broker data
+mkdir -p /opt/boundless/data
+chown -R ubuntu:ubuntu /opt/boundless
+setfacl -R -d -m u::rwx,g::rwx,o::rx /opt/boundless
+setfacl -R -m u::rwx,g::rwx,o::rx /opt/boundless
+chown -R ubuntu:ubuntu /opt/boundless
+chmod 775 /opt/boundless
+
+# Clone the Boundless repository
+cd /opt/boundless
+git clone https://github.com/boundless-xyz/boundless.git repo
+cd repo
+git checkout main
+git config --global --add safe.directory /opt/boundless/repo
+
+# Run Boundless setup scripts to install dependencies (docker, nvidia-container-toolkit, etc).
+chmod +x /opt/boundless/repo/scripts/setup.sh
+/opt/boundless/repo/scripts/setup.sh
+
+# Download the latest ECS agent deb package for amd64 (adjust for arm64 if needed)
+curl -O https://s3.us-west-2.amazonaws.com/amazon-ecs-agent-us-west-2/amazon-ecs-init-latest.amd64.deb
+
+# Install the deb package
+dpkg -i amazon-ecs-init-latest.amd64.deb
+
+# Configure ECS agent settings
 echo ECS_CLUSTER=${clusterName} >> /etc/ecs/ecs.config
 echo ECS_ENABLE_GPU_SUPPORT=true >> /etc/ecs/ecs.config
 echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config
@@ -208,6 +244,23 @@ echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=10m >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_STOP_TIMEOUT=30s >> /etc/ecs/ecs.config
 echo ECS_CONTAINER_START_TIMEOUT=3m >> /etc/ecs/ecs.config
 echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
+
+mkdir -p /etc/systemd/system/ecs.service.d
+cat <<EOF | sudo tee /etc/systemd/system/ecs.service.d/override.conf
+[Unit]
+After=docker.service
+Requires=docker.service
+EOF
+
+# Reload systemd and start/enable the ECS service
+systemctl daemon-reload
+systemctl enable --now --no-block ecs.service
+# systemctl restart ecs --no-block
+
+# Clean up the deb file
+rm amazon-ecs-init-latest.amd64.deb
+
+reboot
 `).toString('base64')),
 
         tagSpecifications: [{
@@ -308,9 +361,9 @@ echo ECS_DISABLE_PRIVILEGED=false >> /etc/ecs/ecs.config
     // Create Auto Scaling Group for GPU instances (8 instances)
     const gpuAsg = new aws.autoscaling.Group(`${name}-gpu-asg`, {
         name: `${name}-gpu-asg`,
-        desiredCapacity: 8,
-        maxSize: 8,
-        minSize: 8,
+        desiredCapacity: 1,
+        maxSize: 1,
+        minSize: 1,
 
         vpcZoneIdentifiers: network.privateSubnetIds,
 

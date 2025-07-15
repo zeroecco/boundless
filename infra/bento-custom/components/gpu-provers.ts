@@ -115,7 +115,7 @@ export async function setupGpuProvers(
         name: `${name}-gpu-provers`,
         cluster: cluster.cluster.id,
         taskDefinition: taskDefinition.arn,
-        desiredCount: 8, // 8 GPU instances as specified in README
+        desiredCount: 1, // 8 GPU instances as specified in README
 
         capacityProviderStrategies: [{
             capacityProvider: cluster.gpuCapacityProvider.name,
