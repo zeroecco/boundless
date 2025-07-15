@@ -7,7 +7,7 @@ pragma solidity ^0.8.24;
 import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
 
 struct WorkLogUpdate {
-    address id;
+    address workLogId;
     bytes32 initialCommit;
     bytes32 updatedCommit;
     uint64 updateWork;
@@ -36,14 +36,14 @@ contract PoVW {
     event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
     // TODO: Compress the data in this event? epochNumber is a simple view function of the block timestamp.
     /// @notice Event emitted when when a work log update is processed.
-    /// @param id The work log identifier, which also serves as an authentication public key.
+    /// @param workLogId The work log identifier, which also serves as an authentication public key.
     /// @param epochNumber The number of the epoch in which the update is processed.
     ///        The value of the update will be weighted against the total work completed in this epoch.
     /// @param initialCommit The initial work log commitment for the update.
     /// @param updatedCommit The updated work log commitment after the update has been processed.
     /// @param work Value of the work in this update.
     event WorkLogUpdated(
-        address indexed id, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
+        address indexed workLogId, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
     );
 
     constructor(IRiscZeroVerifier verifier, bytes32 logBuilderId) {
@@ -79,7 +79,7 @@ contract PoVW {
     /// log builder is used to ensure the integrity of the update.
     ///
     /// If an epoch is pending finalization, this occurs atomically with this call.
-    function updateWorkLog(address id, bytes32 updatedCommit, uint64 updateWork, bytes calldata seal) public {
+    function updateWorkLog(address workLogId, bytes32 updatedCommit, uint64 updateWork, bytes calldata seal) public {
         if (pendingEpoch.number < currentEpoch()) {
             finalizeEpoch();
         }
@@ -87,18 +87,18 @@ contract PoVW {
         // Verify the receipt from the work log builder, binding the initial root as the currently
         // stored value. Note that for a new work log, this will be all zeroes.
         WorkLogUpdate memory update = WorkLogUpdate({
-            id: id,
-            initialCommit: workLogRoots[id],
+            workLogId: workLogId,
+            initialCommit: workLogRoots[workLogId],
             updatedCommit: updatedCommit,
             updateWork: updateWork
         });
         VERIFIER.verify(seal, LOG_BUILDER_ID, sha256(abi.encode(update)));
 
-        workLogRoots[id] = updatedCommit;
+        workLogRoots[workLogId] = updatedCommit;
 
         // Emit the update event, accessed with Steel to construct the mint authorization.
         // Note that there is no restriction on multiple updates in the same epoch. Posting more than
         // one update in an epoch strictly increases the gas costs and proving work required for mint.
-        emit WorkLogUpdated(id, currentEpoch(), update.initialCommit, update.updatedCommit, uint256(updateWork));
+        emit WorkLogUpdated(workLogId, currentEpoch(), update.initialCommit, update.updatedCommit, uint256(updateWork));
     }
 }
