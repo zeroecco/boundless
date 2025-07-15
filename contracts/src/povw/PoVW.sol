@@ -27,7 +27,7 @@ contract PoVW {
     /// * The update value is equal to the sum of work associated with new proofs.
     bytes32 public immutable LOG_BUILDER_ID;
 
-    uint256 public constant EPOCH_LENGTH = 1 days;
+    uint256 public constant EPOCH_LENGTH = 7 days;
 
     mapping(address => bytes32) internal workLogRoots;
 
