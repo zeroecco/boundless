@@ -19,7 +19,7 @@ risc0-build = { workspace = true, features = ["unstable"] }
 risc0-build-ethereum = { workspace = true }
 
 [package.metadata.risc0]
-methods = ["mint-calculator"]
+methods = ["mint-calculator", "log-updater"]
 
 [package.metadata.release]
 release = false
