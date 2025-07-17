@@ -13,7 +13,6 @@ x-base-environment: &base-environment
 x-agent-common: &agent-common
   image: risczero/risc0-bento-agent:2.3.0@sha256:5b029fb8074b3273b45e6e8fb4d6dbd86000a216688d8f1429eb893686cc1ff8
   restart: always
-  runtime: nvidia
   depends_on:
     - postgres
     - redis
@@ -27,6 +26,7 @@ x-exec-agent-common: &exec-agent-common
   cpus: 3
   environment:
     <<: *base-environment
+    LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-/usr/local/cuda-12.2/compat/}
     RISC0_KECCAK_PO2: ${RISC0_KECCAK_PO2:-17}
   entrypoint: /app/agent -t exec --segment-po2 ${SEGMENT_SIZE:-21} --redis-ttl ${REDIS_TTL:-57600}
 
@@ -146,11 +146,15 @@ services:
     <<: *agent-common
     mem_limit: 256M
     cpus: 1
+    environment:
+      <<: *base-environment
+      LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-/usr/local/cuda-12.2/compat/}
 
     entrypoint: /app/agent -t aux --monitor-requeue --redis-ttl ${REDIS_TTL:-57600}
 
   gpu_prove_agent0:
     <<: *agent-common
+    runtime: nvidia
     mem_limit: 4G
     cpus: 4
     entrypoint: /app/agent -t prove --redis-ttl ${REDIS_TTL:-57600}
@@ -168,6 +172,9 @@ services:
   snark_agent:
     <<: *agent-common
     entrypoint: /app/agent -t snark --redis-ttl ${REDIS_TTL:-57600}
+    environment:
+      <<: *base-environment
+      LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-/usr/local/cuda-12.2/compat/}
 
     ulimits:
       # Needed for stark_verify bin
