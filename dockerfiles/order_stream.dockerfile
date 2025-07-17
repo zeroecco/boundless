@@ -4,7 +4,7 @@ RUN apt-get -qq update && \
     apt-get install -y -q clang
 
 SHELL ["/bin/bash", "-c"]
-ARG CACHE_DATE=2025-06-11  # update this date to force rebuild
+ARG CACHE_DATE=2025-07-17  # update this date to force rebuild
 RUN curl -L https://foundry.paradigm.xyz | bash && \
     source /root/.bashrc && \
     foundryup
