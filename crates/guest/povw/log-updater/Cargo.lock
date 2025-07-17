@@ -611,8 +611,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "boundless-povw-log-updater"
-version = "0.1.0"
+name = "boundless-povw-guests"
+version = "0.12.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -620,9 +620,21 @@ dependencies = [
  "borsh",
  "risc0-povw",
  "risc0-povw-guests",
- "risc0-zkvm",
  "ruint",
  "serde",
+]
+
+[[package]]
+name = "boundless-povw-log-updater"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "borsh",
+ "boundless-povw-guests",
+ "risc0-povw",
+ "risc0-zkvm",
 ]
 
 [[package]]
