@@ -616,8 +616,12 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "anyhow",
+ "borsh",
+ "risc0-povw",
  "risc0-povw-guests",
  "risc0-zkvm",
+ "ruint",
  "serde",
 ]
 
@@ -1300,6 +1304,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hybrid-array"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891d15931895091dea5c47afa5b3c9a01ba634b311919fd4d41388fa0e3d76af"
+dependencies = [
+ "serde",
+ "typenum",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1957,6 +1971,21 @@ dependencies = [
  "risc0-zkp",
  "serde",
  "stability",
+]
+
+[[package]]
+name = "risc0-povw"
+version = "0.1.0"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "bytemuck",
+ "hybrid-array",
+ "risc0-binfmt",
+ "risc0-zkvm",
+ "ruint",
+ "serde",
 ]
 
 [[package]]
