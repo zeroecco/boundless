@@ -1,9 +1,7 @@
 use alloy_sol_types::sol;
-use risc0_zkvm::{digest, sha::Digest};
-
-// TODO: Provide a real value here, and extract to a file than can be auto-generated.
-const _LOG_BUILDER_ID: Digest =
-    digest!("0000000000000000000000000000000000000000000000000000000000000000");
+use risc0_zkvm::guest::env;
+// TODO: Provide a way to fix this value to a reproducible build for deployment.
+use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 
 // NOTE: Copied from PoVW.sol. Must be kept in sync.
 // TODO: Avoid copying this data type here.
@@ -22,5 +20,5 @@ fn main() {
     // 2. Combine the work log updates with the same work log ID into a single update per ID.
     // 3. Verify a signature from the log owner (workLogId) over the final update.
     // 4. ABI encode and commit the results.
-    unimplemented!()
+    env::commit_slice(&RISC0_POVW_LOG_BUILDER_ID);
 }

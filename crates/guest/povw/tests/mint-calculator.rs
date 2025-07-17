@@ -2,6 +2,8 @@
 //
 // All rights reserved.
 
+#![allow(unused_imports)] // DO NOT MERGE
+
 use alloy::{
     network::EthereumWallet,
     node_bindings::Anvil,
@@ -17,31 +19,28 @@ use risc0_ethereum_contracts::{encode_seal, selector::Selector};
 // NOTE: This requires running `forge build` before running this test.
 // TODO: Work on making this more robust.
 sol!(
-    #[allow(missing_docs)]
     #[sol(rpc)]
     MockRiscZeroVerifier,
-    "../../../contracts/out/RiscZeroMockVerifier.sol/RiscZeroMockVerifier.json"
+    "../../../out/RiscZeroMockVerifier.sol/RiscZeroMockVerifier.json"
 );
 
 sol!(
-    #[allow(missing_docs)]
+    #[allow(clippy::too_many_arguments)]
     #[sol(rpc)]
     MockERC20Mint,
-    "../../../contracts/out/MockERC20Mint.sol/MockERC20Mint.json"
+    "../../../out/MockERC20Mint.sol/MockERC20Mint.json"
 );
 
 sol!(
-    #[allow(missing_docs)]
     #[sol(rpc)]
     PoVW,
-    "../../../contracts/out/PoVW.sol/PoVW.json"
+    "../../../out/PoVW.sol/PoVW.json"
 );
 
 sol!(
-    #[allow(missing_docs)]
     #[sol(rpc)]
     Mint,
-    "../../../contracts/out/Mint.sol/Mint.json"
+    "../../../out/Mint.sol/Mint.json"
 );
 
 #[tokio::test]
