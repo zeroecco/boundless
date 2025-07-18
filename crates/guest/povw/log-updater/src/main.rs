@@ -1,17 +1,16 @@
 use alloy_sol_types::SolValue;
-use anyhow::Context;
 use boundless_povw_guests::log_updater::{
     Input, Journal, WorkLogUpdate, RISC0_POVW_LOG_BUILDER_ID,
 };
 use risc0_zkvm::guest::env;
 
-fn main() -> anyhow::Result<()> {
-    let input: Input = borsh::from_slice(&env::read_frame())?;
+fn main() {
+    let input: Input = borsh::from_slice(&env::read_frame()).unwrap();
 
     // Verify that the update was produced by the work log builder.
     // NOTE: The povw log builder supports self-recursion by accepting its own image ID as input.
     // This means the verifier must check the value `self_image_id` written to the journal.
-    env::verify(RISC0_POVW_LOG_BUILDER_ID, &borsh::to_vec(&input.update)?)?;
+    env::verify(RISC0_POVW_LOG_BUILDER_ID, &borsh::to_vec(&input.update).unwrap()).unwrap();
     assert_eq!(input.update.self_image_id, RISC0_POVW_LOG_BUILDER_ID.into());
 
     // Convert the input to the Solidity struct and verify the EIP-712 signature, using the work
@@ -24,7 +23,7 @@ fn main() -> anyhow::Result<()> {
             input.contract_address,
             input.chain_id,
         )
-        .context("failed to verify signature on work log update")?;
+        .expect("failed to verify signature on work log update");
 
     // Write the journal, including the EIP-712 domain hash for the verifying contract.
     let journal = Journal {
@@ -33,5 +32,4 @@ fn main() -> anyhow::Result<()> {
             .hash_struct(),
     };
     env::commit_slice(&journal.abi_encode());
-    Ok(())
 }
