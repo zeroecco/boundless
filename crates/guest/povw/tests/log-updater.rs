@@ -36,6 +36,8 @@ fn execute_guest(input: &Input) -> anyhow::Result<Journal> {
     let session_info = default_executor().execute(env, BOUNDLESS_POVW_LOG_UPDATER_ELF)?;
     assert_eq!(session_info.exit_code, ExitCode::Halted(0));
 
+    println!("foo");
+
     let decoded_journal = Journal::abi_decode(&session_info.journal.bytes)?;
     println!("log updater journal: {decoded_journal:#?}");
 
@@ -75,5 +77,36 @@ async fn basic() -> anyhow::Result<()> {
         journal.eip712Domain,
         WorkLogUpdate::eip712_domain(contract_address, chain_id).hash_struct()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_wrong_signer() -> anyhow::Result<()> {
+    let signer = PrivateKeySigner::random();
+    let chain_id = 31337;
+    let contract_address = address!("0x0000000000000000000000000000000000000f00");
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: Digest::new(rand::random()),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 5,
+        work_log_id: signer.address().into(),
+    };
+
+    let wrong_signer = PrivateKeySigner::random();
+    let signature =
+        WorkLogUpdate::from(update.clone()).sign(&wrong_signer, contract_address, chain_id).await?;
+
+    let input = Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address,
+        chain_id,
+    };
+    let err = execute_guest(&input).unwrap_err();
+    println!("execute_guest failed with: {err}");
+    assert!(err.to_string().contains("recovered signer does not match expected"));
+
     Ok(())
 }
