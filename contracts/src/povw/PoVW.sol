@@ -29,6 +29,9 @@ struct PendingEpoch {
 contract PoVW is EIP712 {
     IRiscZeroVerifier public immutable VERIFIER;
 
+    /// Precomputed value of the empty work log root. This is expected to be the initial commit of any new log.
+    bytes32 public constant EMPTY_LOG_ROOT = hex"180fedca06656cb910077013ad2679695090269fad1589e290162fe90e97d4aa";
+
     // TODO: Update this with the work log updater. Should the updater commit the builder ID to make it more flexible?
     /// Image ID of the work log builder guest. The log builder ensures:
     /// * Update authorization is signed by the ECDSA key associated with the log ID.
@@ -93,11 +96,17 @@ contract PoVW is EIP712 {
             finalizeEpoch();
         }
 
+        // Fetch the initial commit value, substituting with the precomputed empty root if new.
+        bytes32 initialCommit = workLogRoots[workLogId];
+        if (initialCommit == bytes32(0)) {
+            initialCommit = EMPTY_LOG_ROOT;
+        }
+
         // Verify the receipt from the work log builder, binding the initial root as the currently
         // stored value. Note that for a new work log, this will be all zeroes.
         WorkLogUpdate memory update = WorkLogUpdate({
             workLogId: workLogId,
-            initialCommit: workLogRoots[workLogId],
+            initialCommit: initialCommit,
             updatedCommit: updatedCommit,
             updateWork: updateWork
         });
