@@ -20,6 +20,8 @@ use boundless_povw_guests::{
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 use risc0_zkvm::{default_executor, Digest, ExecutorEnv, ExitCode, FakeReceipt, ReceiptClaim};
 
+mod setup;
+
 // TODO: Add rejection tests
 
 fn execute_guest(input: &Input) -> anyhow::Result<Journal> {
@@ -109,4 +111,10 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
     assert!(err.to_string().contains("recovered signer does not match expected"));
 
     Ok(())
+}
+
+#[tokio::test]
+async fn contract_integration() -> anyhow::Result<()> {
+    let ctx = setup::text_ctx().await?;
+    todo!()
 }
