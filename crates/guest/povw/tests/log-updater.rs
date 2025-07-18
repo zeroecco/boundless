@@ -11,8 +11,8 @@
 // ```
 
 use alloy::signers::local::PrivateKeySigner;
-use alloy_primitives::{address, B256};
-use alloy_sol_types::SolValue;
+use alloy_primitives::{address, B256, U256};
+use alloy_sol_types::{SolEvent, SolValue};
 use boundless_povw_guests::{
     log_updater::{Input, Journal, LogBuilderJournal, WorkLogUpdate},
     BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
@@ -167,6 +167,26 @@ async fn contract_integration() -> anyhow::Result<()> {
     println!("updateWorkLog transaction sent: {:?}", tx_result.tx_hash());
 
     // Query for the expected WorkLogUpdated event.
+    let receipt = tx_result.get_receipt().await?;
+    let logs = receipt.logs();
+    
+    // Find the WorkLogUpdated event
+    let work_log_updated_events = logs.iter()
+        .filter_map(|log| {
+            log.log_decode::<setup::PoVW::WorkLogUpdated>().ok()
+        })
+        .collect::<Vec<_>>();
+    
+    assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
+    let event = &work_log_updated_events[0].inner.data;
+    
+    assert_eq!(event.workLogId, journal.update.workLogId);
+    assert_eq!(event.epochNumber, U256::from(initial_epoch));
+    assert_eq!(event.initialCommit, journal.update.initialCommit);
+    assert_eq!(event.updatedCommit, journal.update.updatedCommit);
+    assert_eq!(event.work, U256::from(journal.update.updateWork));
+    println!("WorkLogUpdated event verified: {:?}", event);
+
     // 7. Check for the expected change to the workLogRoots.
     // 8. Advance time on the AnvilInstance (using the AnvilApi trait on the provider).
     // 9. Call finalizeEpoch().

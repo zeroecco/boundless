@@ -37,6 +37,7 @@ sol!(
 
 sol!(
     #[sol(rpc)]
+    #[derive(Debug)]
     PoVW,
     "../../../out/PoVW.sol/PoVW.json"
 );
