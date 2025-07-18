@@ -116,5 +116,16 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
 #[tokio::test]
 async fn contract_integration() -> anyhow::Result<()> {
     let ctx = setup::text_ctx().await?;
+
+    // 1. Check the current epoch.
+    // 2. Construct and sign a WorkLogUpdate.
+    // 3. Use execute_guest to get a Journal.
+    // 4. Create a FakeReceipt for the journal.
+    // 5. Call the PoVW.updateWorkLog function and confirm that it does not revert.
+    // 6. Query for the expected WorkLogUpdated event.
+    // 7. Check for the expected change to the workLogRoots.
+    // 8. Advance time on the AnvilInstance (using the AnvilApi trait on the provider).
+    // 9. Call finalizeEpoch().
+    // 10. Check for the epoch number to be advanced and the EpochFinalized event to be emitted.
     todo!()
 }
