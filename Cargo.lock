@@ -2720,6 +2720,7 @@ dependencies = [
  "risc0-ethereum-contracts",
  "risc0-povw",
  "risc0-povw-guests",
+ "risc0-steel 2.2.2",
  "risc0-zkvm 3.0.0",
  "ruint",
  "serde",
@@ -3777,7 +3778,7 @@ dependencies = [
  "glob",
  "postcard",
  "regex",
- "risc0-steel",
+ "risc0-steel 2.2.0",
  "risc0-zkvm 2.1.0",
  "tracing",
  "url",
@@ -8311,6 +8312,28 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "risc0-steel"
+version = "2.2.2"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=release-2.2#15db3fe560f6174839d676a9b5e732a81131347c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives 1.2.1",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "alloy-sol-types",
+ "alloy-trie 0.8.1",
+ "anyhow",
+ "bincode",
+ "enumn",
+ "revm",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

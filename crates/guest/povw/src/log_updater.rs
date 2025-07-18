@@ -2,7 +2,8 @@
 //
 // All rights reserved.
 
-/// Shared library for the Log Updater guest between guest and host.
+//! Shared library for the Log Updater guest between guest and host.
+
 use alloy_primitives::{Address, Signature, B256};
 use alloy_sol_types::{eip712_domain, sol, Eip712Domain, SolStruct};
 use anyhow::bail;
