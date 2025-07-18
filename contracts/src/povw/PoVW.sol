@@ -5,6 +5,7 @@
 pragma solidity ^0.8.24;
 
 import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 struct WorkLogUpdate {
     address workLogId;
@@ -13,12 +14,19 @@ struct WorkLogUpdate {
     uint64 updateWork;
 }
 
+struct Journal {
+    WorkLogUpdate update;
+    /// EIP712 domain digest. The verifying contract must validate this to be equal to it own
+    /// expected EIP712 domain digest.
+    bytes32 eip712Domain;
+}
+
 struct PendingEpoch {
     uint96 totalWork;
     uint32 number;
 }
 
-contract PoVW {
+contract PoVW is EIP712 {
     IRiscZeroVerifier public immutable VERIFIER;
 
     // TODO: Update this with the work log updater. Should the updater commit the builder ID to make it more flexible?
@@ -47,7 +55,7 @@ contract PoVW {
         address indexed workLogId, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
     );
 
-    constructor(IRiscZeroVerifier verifier, bytes32 logUpdaterId) {
+    constructor(IRiscZeroVerifier verifier, bytes32 logUpdaterId) EIP712("PoVW", "1") {
         VERIFIER = verifier;
         LOG_UPDATER_ID = logUpdaterId;
 
@@ -93,7 +101,8 @@ contract PoVW {
             updatedCommit: updatedCommit,
             updateWork: updateWork
         });
-        VERIFIER.verify(seal, LOG_UPDATER_ID, sha256(abi.encode(update)));
+        Journal memory journal = Journal({update: update, eip712Domain: _domainSeparatorV4()});
+        VERIFIER.verify(seal, LOG_UPDATER_ID, sha256(abi.encode(journal)));
 
         workLogRoots[workLogId] = updatedCommit;
 
