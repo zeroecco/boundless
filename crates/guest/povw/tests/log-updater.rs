@@ -12,7 +12,7 @@
 
 use alloy::providers::ext::AnvilApi;
 use alloy::signers::local::PrivateKeySigner;
-use alloy_primitives::{address, B256, U256};
+use alloy_primitives::{address, aliases::U96, B256, U256};
 use alloy_sol_types::SolValue;
 use boundless_povw_guests::{
     log_updater::{Input, Journal, LogBuilderJournal, WorkLogUpdate},
@@ -218,6 +218,10 @@ async fn contract_integration() -> anyhow::Result<()> {
     println!("EpochFinalized event: {:?}", finalized_event);
     assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
     assert_eq!(finalized_event.totalWork, U256::from(journal.update.updateWork));
+
+    let pending_epoch = ctx.povw_contract.pendingEpoch().call().await?;
+    assert_eq!(pending_epoch.number, new_epoch);
+    assert_eq!(pending_epoch.totalWork, U96::ZERO);
     
     Ok(())
 }

@@ -43,7 +43,7 @@ contract PoVW is EIP712 {
 
     mapping(address => bytes32) internal workLogRoots;
 
-    PendingEpoch internal pendingEpoch;
+    PendingEpoch public pendingEpoch;
 
     event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
     // TODO: Compress the data in this event? epochNumber is a simple view function of the block timestamp.
