@@ -114,6 +114,7 @@ contract PoVW is EIP712 {
         VERIFIER.verify(seal, LOG_UPDATER_ID, sha256(abi.encode(journal)));
 
         workLogRoots[workLogId] = updatedCommit;
+        pendingEpoch.totalWork += updateWork;
 
         // Emit the update event, accessed with Steel to construct the mint authorization.
         // Note that there is no restriction on multiple updates in the same epoch. Posting more than
