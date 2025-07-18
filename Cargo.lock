@@ -4090,7 +4090,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7200,7 +7200,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.104",
@@ -7278,7 +7278,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7895,7 +7895,7 @@ dependencies = [
 [[package]]
 name = "risc0-binfmt"
 version = "3.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "borsh",
@@ -7940,7 +7940,7 @@ dependencies = [
 [[package]]
 name = "risc0-build"
 version = "3.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -8027,7 +8027,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-keccak"
 version = "4.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -8084,7 +8084,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-recursion"
 version = "4.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -8143,7 +8143,7 @@ dependencies = [
 [[package]]
 name = "risc0-circuit-rv32im"
 version = "4.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "bit-vec 0.8.0",
@@ -8190,7 +8190,7 @@ dependencies = [
 [[package]]
 name = "risc0-core"
 version = "2.0.1"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -8244,7 +8244,7 @@ dependencies = [
 [[package]]
 name = "risc0-groth16"
 version = "3.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "ark-bn254",
@@ -8264,7 +8264,7 @@ dependencies = [
 [[package]]
 name = "risc0-povw"
 version = "0.1.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "borsh",
@@ -8279,7 +8279,7 @@ dependencies = [
 [[package]]
 name = "risc0-povw-guests"
 version = "0.1.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "risc0-build 3.0.0",
 ]
@@ -8338,7 +8338,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkos-v1compat"
 version = "2.0.2"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "include_bytes_aligned",
  "no_std_strings",
@@ -8379,7 +8379,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkp"
 version = "3.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "blake2",
@@ -8450,7 +8450,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkvm"
 version = "3.0.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "anyhow",
  "bincode",
@@ -8498,7 +8498,7 @@ dependencies = [
 [[package]]
 name = "risc0-zkvm-platform"
 version = "2.0.4"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -8699,7 +8699,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8712,7 +8712,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8860,7 +8860,7 @@ dependencies = [
 [[package]]
 name = "rzup"
 version = "0.5.0"
-source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#7729cc9a2969ab9146ca8a49e02e905ffe21ac93"
+source = "git+https://github.com/risc0/risc0?branch=victor%2Fpovw-circuit-updates#3f86258f4c5569af9d11961d7f4e33e16c2bac47"
 dependencies = [
  "semver 1.0.26",
  "serde",
@@ -9928,7 +9928,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

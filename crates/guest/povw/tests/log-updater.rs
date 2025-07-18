@@ -15,10 +15,13 @@ use alloy_primitives::{address, B256};
 use alloy_sol_types::SolValue;
 use boundless_povw_guests::{
     log_updater::{Input, Journal, LogBuilderJournal, WorkLogUpdate},
-    BOUNDLESS_POVW_LOG_UPDATER_ELF,
+    BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
 };
+use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-use risc0_zkvm::{default_executor, Digest, ExecutorEnv, ExitCode, FakeReceipt, ReceiptClaim};
+use risc0_zkvm::{
+    default_executor, Digest, ExecutorEnv, ExitCode, FakeReceipt, Receipt, ReceiptClaim,
+};
 
 mod setup;
 
@@ -117,12 +120,53 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
 async fn contract_integration() -> anyhow::Result<()> {
     let ctx = setup::text_ctx().await?;
 
-    // 1. Check the current epoch.
-    // 2. Construct and sign a WorkLogUpdate.
-    // 3. Use execute_guest to get a Journal.
-    // 4. Create a FakeReceipt for the journal.
-    // 5. Call the PoVW.updateWorkLog function and confirm that it does not revert.
-    // 6. Query for the expected WorkLogUpdated event.
+    let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    println!("Initial epoch: {}", initial_epoch);
+
+    // Construct and sign a WorkLogUpdate.
+    let signer = PrivateKeySigner::random();
+    let chain_id = ctx.anvil.chain_id();
+    let contract_address = *ctx.povw_contract.address();
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 10,
+        work_log_id: signer.address().into(),
+    };
+
+    let signature =
+        WorkLogUpdate::from(update.clone()).sign(&signer, contract_address, chain_id).await?;
+
+    // Use execute_guest to get a Journal.
+    let input = Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address,
+        chain_id,
+    };
+    let journal = execute_guest(&input)?;
+    println!("Guest execution completed, journal: {:#?}", journal);
+
+    let fake_receipt: Receipt =
+        FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
+            .try_into()?;
+
+    // Call the PoVW.updateWorkLog function and confirm that it does not revert.
+    let tx_result = ctx
+        .povw_contract
+        .updateWorkLog(
+            journal.update.workLogId,
+            journal.update.updatedCommit,
+            journal.update.updateWork,
+            setup::encode_seal(&fake_receipt)?.into(),
+        )
+        .send()
+        .await?;
+    println!("updateWorkLog transaction sent: {:?}", tx_result.tx_hash());
+
+    // Query for the expected WorkLogUpdated event.
     // 7. Check for the expected change to the workLogRoots.
     // 8. Advance time on the AnvilInstance (using the AnvilApi trait on the provider).
     // 9. Call finalizeEpoch().
