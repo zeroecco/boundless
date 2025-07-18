@@ -10,9 +10,10 @@
 // cargo update -p risc0-povw-guests --manifest-path Cargo.toml && cargo update -p risc0-povw-guests --manifest-path crates/guest/povw/log-updater/Cargo.toml
 // ```
 
+use alloy::providers::ext::AnvilApi;
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{address, B256, U256};
-use alloy_sol_types::{SolEvent, SolValue};
+use alloy_sol_types::SolValue;
 use boundless_povw_guests::{
     log_updater::{Input, Journal, LogBuilderJournal, WorkLogUpdate},
     BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
@@ -169,27 +170,54 @@ async fn contract_integration() -> anyhow::Result<()> {
     // Query for the expected WorkLogUpdated event.
     let receipt = tx_result.get_receipt().await?;
     let logs = receipt.logs();
-    
+
     // Find the WorkLogUpdated event
-    let work_log_updated_events = logs.iter()
-        .filter_map(|log| {
-            log.log_decode::<setup::PoVW::WorkLogUpdated>().ok()
-        })
+    let work_log_updated_events = logs
+        .iter()
+        .filter_map(|log| log.log_decode::<setup::PoVW::WorkLogUpdated>().ok())
+        .collect::<Vec<_>>();
+
+    assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
+    let update_event = &work_log_updated_events[0].inner.data;
+
+    println!("WorkLogUpdated event: {:?}", update_event);
+    assert_eq!(update_event.workLogId, journal.update.workLogId);
+    assert_eq!(update_event.epochNumber, U256::from(initial_epoch));
+    assert_eq!(update_event.initialCommit, journal.update.initialCommit);
+    assert_eq!(update_event.updatedCommit, journal.update.updatedCommit);
+    assert_eq!(update_event.work, U256::from(journal.update.updateWork));
+
+    // Advance time on the Anvil instance.
+    let epoch_length = ctx.povw_contract.EPOCH_LENGTH().call().await?;
+    let advance_time = epoch_length.to::<u64>() + 1; // Advance by more than one epoch
+
+    ctx.provider.anvil_increase_time(advance_time).await?;
+    ctx.provider.anvil_mine(Some(1), None).await?;
+
+    let new_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    assert_eq!(new_epoch, initial_epoch + 1, "Epoch should have advanced by 1");
+    println!("Time advanced: epoch {} -> {}", initial_epoch, new_epoch);
+
+    // Call finalizeEpoch().
+    let finalize_tx = ctx.povw_contract.finalizeEpoch().send().await?;
+    println!("finalizeEpoch transaction sent: {:?}", finalize_tx.tx_hash());
+
+    // Check for the epoch number to be advanced and the EpochFinalized event to be emitted.
+    let finalize_receipt = finalize_tx.get_receipt().await?;
+    let finalize_logs = finalize_receipt.logs();
+    
+    // Find the EpochFinalized event
+    let epoch_finalized_events = finalize_logs
+        .iter()
+        .filter_map(|log| log.log_decode::<setup::PoVW::EpochFinalized>().ok())
         .collect::<Vec<_>>();
     
-    assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
-    let event = &work_log_updated_events[0].inner.data;
+    assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
+    let finalized_event = &epoch_finalized_events[0].inner.data;
     
-    assert_eq!(event.workLogId, journal.update.workLogId);
-    assert_eq!(event.epochNumber, U256::from(initial_epoch));
-    assert_eq!(event.initialCommit, journal.update.initialCommit);
-    assert_eq!(event.updatedCommit, journal.update.updatedCommit);
-    assert_eq!(event.work, U256::from(journal.update.updateWork));
-    println!("WorkLogUpdated event verified: {:?}", event);
-
-    // 7. Check for the expected change to the workLogRoots.
-    // 8. Advance time on the AnvilInstance (using the AnvilApi trait on the provider).
-    // 9. Call finalizeEpoch().
-    // 10. Check for the epoch number to be advanced and the EpochFinalized event to be emitted.
-    todo!()
+    println!("EpochFinalized event: {:?}", finalized_event);
+    assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
+    assert_eq!(finalized_event.totalWork, U256::from(journal.update.updateWork));
+    
+    Ok(())
 }
