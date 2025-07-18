@@ -38,7 +38,7 @@ fn main() {
 
     // Ensure that the envs form a valid chain from the earlier block to the latest block.
     let mut env_prev =
-        envs.values().nth(1).expect("mint calculator requires at least one block as input");
+        envs.values().next().expect("mint calculator requires at least one block as input");
     for env in envs.values() {
         SteelVerifier::new(env).verify(env_prev.commitment());
         env_prev = env;
