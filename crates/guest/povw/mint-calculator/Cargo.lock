@@ -1442,7 +1442,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3078,8 +3078,8 @@ dependencies = [
 
 [[package]]
 name = "risc0-steel"
-version = "2.2.1"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=release-2.2#7d09ffb0504d5634a74ffa19108a8aa84fd3ddb8"
+version = "2.2.2"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=victor%2Fpatch-jul18#1b76e25aa4df75456f5231fc0634ce1dc06338c8"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

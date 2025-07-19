@@ -3073,7 +3073,7 @@ dependencies = [
 [[package]]
 name = "risc0-steel"
 version = "2.2.2"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=release-2.2#15db3fe560f6174839d676a9b5e732a81131347c"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=victor%2Fpatch-jul18#1aadee9b256eeb83a823180c6a6cbc3b5cb7afc7"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

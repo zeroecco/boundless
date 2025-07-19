@@ -27,26 +27,11 @@ fn main() {
     let input: Input = env::read();
 
     // Converts the input into a `EvmEnv` structs for execution.
-    let envs: BTreeMap<u64, EthEvmEnv<_, _>> = input
-        .env
-        .into_iter()
-        .map(|env_input| {
-            let env = env_input.into_env(&ETH_SEPOLIA_CHAIN_SPEC);
-            (env.header().number(), env)
-        })
-        .collect();
-
-    // Ensure that the envs form a valid chain from the earlier block to the latest block.
-    let mut env_prev =
-        envs.values().next().expect("mint calculator requires at least one block as input");
-    for env in envs.values() {
-        SteelVerifier::new(env).verify(env_prev.commitment());
-        env_prev = env;
-    }
+    let envs = input.envs.into_env();
 
     // Construct a mapping with the total work value for each finalized epoch.
     let mut epochs = BTreeMap::<u32, U256>::new();
-    for env in envs.values() {
+    for env in envs.0.values() {
         // Query all `EpochFinalized` events of the PoVW contract.
         // TODO(povw): This is possibly wasteful, in that only a subset will have this event.
         let epoch_finalized_events =
@@ -64,7 +49,7 @@ fn main() {
     // mapping of work log id to (initial commit, final commit) pairs.
     let mut mints = BTreeMap::<Address, FixedPoint>::new();
     let mut updates = BTreeMap::<Address, (B256, B256)>::new();
-    for env in envs.values() {
+    for env in envs.0.values() {
         // Query all `WorkLogUpdated` events of the PoVW contract.
         // TODO(povw): This is possibly wasteful, in that only a subset will have this event.
         let update_events =
@@ -110,7 +95,7 @@ fn main() {
             })
             .collect(),
         povwContractAddress: input.povw_contract_address,
-        steelCommit: envs.values().last().unwrap().commitment().clone(),
+        steelCommit: envs.commitment().clone(),
     };
     env::commit_slice(&journal.abi_encode());
 }

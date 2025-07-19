@@ -205,16 +205,16 @@ async fn contract_integration() -> anyhow::Result<()> {
     // Check for the epoch number to be advanced and the EpochFinalized event to be emitted.
     let finalize_receipt = finalize_tx.get_receipt().await?;
     let finalize_logs = finalize_receipt.logs();
-    
+
     // Find the EpochFinalized event
     let epoch_finalized_events = finalize_logs
         .iter()
         .filter_map(|log| log.log_decode::<setup::PoVW::EpochFinalized>().ok())
         .collect::<Vec<_>>();
-    
+
     assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
     let finalized_event = &epoch_finalized_events[0].inner.data;
-    
+
     println!("EpochFinalized event: {:?}", finalized_event);
     assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
     assert_eq!(finalized_event.totalWork, U256::from(journal.update.updateWork));
@@ -222,6 +222,6 @@ async fn contract_integration() -> anyhow::Result<()> {
     let pending_epoch = ctx.povw_contract.pendingEpoch().call().await?;
     assert_eq!(pending_epoch.number, new_epoch);
     assert_eq!(pending_epoch.totalWork, U96::ZERO);
-    
+
     Ok(())
 }
