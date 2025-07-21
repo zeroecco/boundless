@@ -116,10 +116,11 @@ pub mod host {
         P: Provider + Clone + 'static,
         C: Clone + BlockHeaderCommit<EthBlockHeader>,
     {
+        // TODO(povw): Integrate this call into the construction of the input?
         /// Preflight the verification that the blocks in the multiblock environment form a
         /// subsequence of a single chain.
         ///
-        /// NOTE: The verify call within the guest occurs atomically with
+        /// The verify call within the guest occurs atomically with
         /// [MutltiblockEthEvmInput::into_env]. If this method is not called by the host, the
         /// conversion of the input into an env will fail in the guest, as the required Merkle
         /// proofs will not be available.
@@ -133,7 +134,7 @@ pub mod host {
                 SteelVerifier::preflight(env)
                     .verify(&env_prev.commitment())
                     .await
-                    .with_context(|| format!("failed to preflight SteelVerifier verify of commit for {} using env of block {}", env.header().number, env_prev.header().number))?;
+                    .with_context(|| format!("failed to preflight SteelVerifier verify of commit for block {} using env of block {}", env.header().number, env_prev.header().number))?;
                 env_prev = env;
             }
             Ok(())

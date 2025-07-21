@@ -7,10 +7,7 @@ use alloy_sol_types::SolValue;
 use boundless_povw_guests::mint_calculator::{
     FixedPoint, IPoVW, Input, MintCalculatorJournal, MintCalculatorMint, MintCalculatorUpdate,
 };
-use risc0_steel::{
-    ethereum::{EthEvmEnv, ETH_SEPOLIA_CHAIN_SPEC},
-    Event, EvmBlockHeader, SteelVerifier,
-};
+use risc0_steel::{ethereum::ETH_SEPOLIA_CHAIN_SPEC, Event};
 
 // The mint calculator ensures:
 // * An event was logged by the PoVW contract for each log update and epoch finalization.
@@ -27,7 +24,7 @@ fn main() {
     let input: Input = env::read();
 
     // Converts the input into a `EvmEnv` structs for execution.
-    let envs = input.envs.into_env();
+    let envs = input.env.into_env(&ETH_SEPOLIA_CHAIN_SPEC);
 
     // Construct a mapping with the total work value for each finalized epoch.
     let mut epochs = BTreeMap::<u32, U256>::new();
@@ -95,7 +92,7 @@ fn main() {
             })
             .collect(),
         povwContractAddress: input.povw_contract_address,
-        steelCommit: envs.commitment().clone(),
+        steelCommit: envs.commitment().unwrap().clone(),
     };
     env::commit_slice(&journal.abi_encode());
 }
