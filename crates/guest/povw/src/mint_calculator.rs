@@ -101,14 +101,45 @@ pub mod host {
     use risc0_steel::{
         alloy::network::Ethereum,
         beacon::BeaconCommit,
-        ethereum::EthEvmFactory,
+        ethereum::{EthBlockHeader, EthEvmFactory},
         host::{
             db::{ProofDb, ProviderDb},
             Beacon, BlockNumberOrTag, EvmEnvBuilder, HostCommit,
         },
+        BlockHeaderCommit,
     };
 
     use super::*;
+
+    impl<P, C> MultiblockEthEvmEnv<ProofDb<ProviderDb<Ethereum, P>>, HostCommit<C>>
+    where
+        P: Provider + Clone + 'static,
+        C: Clone + BlockHeaderCommit<EthBlockHeader>,
+    {
+        /// Preflight the verification that the blocks in the multiblock environment form a
+        /// subsequence of a single chain.
+        ///
+        /// NOTE: The verify call within the guest occurs atomically with
+        /// [MutltiblockEthEvmInput::into_env]. If this method is not called by the host, the
+        /// conversion of the input into an env will fail in the guest, as the required Merkle
+        /// proofs will not be available.
+        pub async fn preflight_verify_continuity(&mut self) -> anyhow::Result<()> {
+            let mut env_iter = self.0.values_mut();
+            let Some(mut env_prev) = env_iter.next() else {
+                // If the env is empty, return early as it is a trivial subsequence.
+                return Ok(());
+            };
+            for env in env_iter {
+                SteelVerifier::preflight(env)
+                    .verify(&env_prev.commitment())
+                    .await
+                    .with_context(|| format!("failed to preflight SteelVerifier verify of commit for {} using env of block {}", env.header().number, env_prev.header().number))?;
+                env_prev = env;
+            }
+            Ok(())
+        }
+    }
+
     // TODO(povw): Based on how this is implemented right now, the caller must provide a chain of block
     // number that can be verified via chaining with SteelVerifier. This means, for example, if there
     // is a 3 days gap in the subsequence of blocks I am processing, I need to additionally provide 2-3
