@@ -5714,7 +5714,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -8318,7 +8318,7 @@ dependencies = [
 [[package]]
 name = "risc0-steel"
 version = "2.2.2"
-source = "git+https://github.com/risc0/risc0-ethereum?branch=victor%2Fpatch-jul18#1b76e25aa4df75456f5231fc0634ce1dc06338c8"
+source = "git+https://github.com/risc0/risc0-ethereum?branch=victor%2Fpatch-jul18#a405e69dfbc609eed3f4ae112f970e44c4ed52db"
 dependencies = [
  "alloy",
  "alloy-consensus",
