@@ -52,9 +52,9 @@ sol! {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct MutltiblockEthEvmInput(pub Vec<EthEvmInput>);
+pub struct MultiblockEthEvmInput(pub Vec<EthEvmInput>);
 
-impl MutltiblockEthEvmInput {
+impl MultiblockEthEvmInput {
     pub fn into_env(self, chain_spec: &EthChainSpec) -> MultiblockEthEvmEnv<StateDb, Commitment> {
         // Converts the input into `EvmEnv` structs for execution.
         let mut multiblock_env = MultiblockEthEvmEnv(Default::default());
@@ -94,6 +94,49 @@ impl MultiblockEthEvmEnv<StateDb, Commitment> {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Input {
+    /// Address of the PoVW contract to query.
+    ///
+    /// It is not possible to be assured that this is the correct contract when the guest is
+    /// running, and so the behavior of the contract may deviate from expected. If the prover did
+    /// supply the wrong address, the proof will be rejected by the Mint contract when it checks
+    /// the address written to the journal.
+    pub povw_contract_address: Address,
+    /// Input for constructing a [MultiblockEthEvmEnv] to query a sequence of blocks.
+    pub env: MultiblockEthEvmInput,
+}
+
+impl FixedPoint {
+    const BASE: U256 = U256::ONE.checked_shl(64).unwrap();
+
+    /// Construct a fixed-point representation of a fractional value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the given numerator is too close to U256::MAX, or if the represented fraction
+    /// greater than one (e.g. numerator > denominator).
+    pub fn fraction(num: U256, dem: U256) -> Self {
+        let fraction = num.checked_mul(Self::BASE).unwrap() / dem;
+        assert!(fraction <= Self::BASE, "expected fractional value is greater than one");
+        Self { value: fraction }
+    }
+}
+
+impl Add for FixedPoint {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self { value: self.value + rhs.value }
+    }
+}
+
+impl AddAssign for FixedPoint {
+    fn add_assign(&mut self, rhs: Self) {
+        self.value += rhs.value
+    }
+}
+
 #[cfg(feature = "host")]
 pub mod host {
     use alloy_provider::Provider;
@@ -106,7 +149,7 @@ pub mod host {
             db::{ProofDb, ProviderDb},
             Beacon, BlockNumberOrTag, EvmEnvBuilder, HostCommit,
         },
-        BlockHeaderCommit,
+        BlockHeaderCommit, Event,
     };
 
     use super::*;
@@ -141,6 +184,38 @@ pub mod host {
         }
     }
 
+    impl<P> MultiblockEthEvmEnv<ProofDb<ProviderDb<Ethereum, P>>, HostCommit<()>>
+    where
+        P: Provider + Clone + 'static,
+    {
+        pub async fn into_input(self) -> anyhow::Result<MultiblockEthEvmInput> {
+            let mut input = MultiblockEthEvmInput(Vec::with_capacity(self.0.len()));
+            for (block_number, env) in self.0 {
+                let block_input = env.into_input().await.with_context(|| {
+                    format!("failed to convert env for block number {block_number} into input")
+                })?;
+                input.0.push(block_input);
+            }
+            Ok(input)
+        }
+    }
+
+    impl<P> MultiblockEthEvmEnv<ProofDb<ProviderDb<Ethereum, P>>, HostCommit<BeaconCommit>>
+    where
+        P: Provider + Clone + 'static,
+    {
+        pub async fn into_input(self) -> anyhow::Result<MultiblockEthEvmInput> {
+            let mut input = MultiblockEthEvmInput(Vec::with_capacity(self.0.len()));
+            for (block_number, env) in self.0 {
+                let block_input = env.into_input().await.with_context(|| {
+                    format!("failed to convert env for block number {block_number} into input")
+                })?;
+                input.0.push(block_input);
+            }
+            Ok(input)
+        }
+    }
+
     // TODO(povw): Based on how this is implemented right now, the caller must provide a chain of block
     // number that can be verified via chaining with SteelVerifier. This means, for example, if there
     // is a 3 days gap in the subsequence of blocks I am processing, I need to additionally provide 2-3
@@ -153,9 +228,9 @@ pub mod host {
     }
 
     impl<P, B> MultiblockEthEvmEnvBuilder<P, B> {
-        pub fn block_numbers<Id: Into<BlockNumberOrTag>>(
+        pub fn block_numbers(
             self,
-            numbers: impl IntoIterator<Item = Id>,
+            numbers: impl IntoIterator<Item = impl Into<BlockNumberOrTag>>,
         ) -> Self {
             Self { block_refs: numbers.into_iter().map(Into::into).collect(), ..self }
         }
@@ -206,65 +281,59 @@ pub mod host {
         }
     }
 
-    type EthEvmEnvBuilder<P, B> =
-        EvmEnvBuilder<ProofDb<ProviderDb<Ethereum, P>>, EthEvmFactory, &'static EthChainSpec, B>;
+    type EthEvmEnvBuilder<P, B> = EvmEnvBuilder<P, EthEvmFactory, &'static EthChainSpec, B>;
 
-    impl<P: Provider> From<EthEvmEnvBuilder<P, Beacon>>
-        for MultiblockEthEvmEnvBuilder<ProofDb<ProviderDb<Ethereum, P>>, Beacon>
-    {
+    impl<P: Provider> From<EthEvmEnvBuilder<P, Beacon>> for MultiblockEthEvmEnvBuilder<P, Beacon> {
         fn from(builder: EthEvmEnvBuilder<P, Beacon>) -> Self {
             Self { builder, block_refs: Vec::new() }
         }
     }
 
-    impl<P: Provider> From<EthEvmEnvBuilder<P, ()>>
-        for MultiblockEthEvmEnvBuilder<ProofDb<ProviderDb<Ethereum, P>>, ()>
-    {
+    impl<P: Provider> From<EthEvmEnvBuilder<P, ()>> for MultiblockEthEvmEnvBuilder<P, ()> {
         fn from(builder: EthEvmEnvBuilder<P, ()>) -> Self {
             Self { builder, block_refs: Vec::new() }
         }
     }
-}
 
-#[derive(Serialize, Deserialize)]
-pub struct Input {
-    /// Address of the PoVW contract to query.
-    ///
-    /// It is not possible to be assured that this is the correct contract when the guest is
-    /// running, and so the behavior of the contract may deviate from expected. If the prover did
-    /// supply the wrong address, the proof will be rejected by the Mint contract when it checks
-    /// the address written to the journal.
-    pub povw_contract_address: Address,
-    /// Input for constructing a [MultiblockEthEvmEnv] to query a sequence of blocks.
-    pub env: MutltiblockEthEvmInput,
-}
+    impl Input {
+        // TODO(povw): Provide a way to do this with Beacon commits.
+        pub async fn build<P>(
+            povw_contract_address: Address,
+            provider: P,
+            chain_spec: &'static EthChainSpec,
+            block_refs: impl IntoIterator<Item = impl Into<BlockNumberOrTag>>,
+        ) -> anyhow::Result<Self>
+        where
+            P: Provider + Clone + 'static,
+        {
+            let mut envs = MultiblockEthEvmEnvBuilder::from(
+                EthEvmEnv::builder().chain_spec(chain_spec).provider(provider),
+            )
+            .block_numbers(block_refs)
+            .build()
+            .await?;
+            envs.preflight_verify_continuity()
+                .await
+                .context("failed to preflight verify_continuity")?;
 
-impl FixedPoint {
-    const BASE: U256 = U256::ONE.checked_shl(64).unwrap();
-
-    /// Construct a fixed-point representation of a fractional value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the given numerator is too close to U256::MAX, or if the represented fraction
-    /// greater than one (e.g. numerator > denominator).
-    pub fn fraction(num: U256, dem: U256) -> Self {
-        let fraction = num.checked_mul(Self::BASE).unwrap() / dem;
-        assert!(fraction <= Self::BASE, "expected fractional value is greater than one");
-        Self { value: fraction }
-    }
-}
-
-impl Add for FixedPoint {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self { value: self.value + rhs.value }
-    }
-}
-
-impl AddAssign for FixedPoint {
-    fn add_assign(&mut self, rhs: Self) {
-        self.value += rhs.value
+            for env in envs.0.values_mut() {
+                Event::preflight::<IPoVW::EpochFinalized>(env)
+                    .address(povw_contract_address)
+                    .query()
+                    .await
+                    .context("failed to query EpochFinalized events")?;
+            }
+            for env in envs.0.values_mut() {
+                Event::preflight::<IPoVW::WorkLogUpdated>(env)
+                    .address(povw_contract_address)
+                    .query()
+                    .await
+                    .context("failed to query WorkLogUpdated events")?;
+            }
+            Ok(Self {
+                povw_contract_address,
+                env: envs.into_input().await.context("failed to convert env to input")?,
+            })
+        }
     }
 }
