@@ -296,7 +296,8 @@ pub mod host {
     }
 
     impl Input {
-        // TODO(povw): Provide a way to do this with Beacon commits.
+        // TODO(povw): Provide a way to do this with Beacon commits. Also, its not really ideal to
+        // have to pass in each of the block numbers here.
         pub async fn build<P>(
             povw_contract_address: Address,
             provider: P,
