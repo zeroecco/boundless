@@ -6,13 +6,10 @@
 // its own dead code analysis and so will report code used only by the other as dead.
 #![allow(dead_code)]
 
+use std::collections::BTreeSet;
+
 use alloy::{
-    network::EthereumWallet,
-    node_bindings::{Anvil, AnvilInstance},
-    primitives::FixedBytes,
-    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder},
-    signers::local::PrivateKeySigner,
-    sol,
+    network::EthereumWallet, node_bindings::{Anvil, AnvilInstance}, primitives::FixedBytes, providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder}, rpc::types::TransactionReceipt, signers::local::PrivateKeySigner, sol
 };
 use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
@@ -24,6 +21,7 @@ use boundless_povw_guests::{
     BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
+use risc0_steel::ethereum::ANVIL_CHAIN_SPEC;
 use risc0_zkvm::{
     default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt, Receipt,
     ReceiptClaim,
@@ -198,6 +196,79 @@ impl TextCtx {
 
         assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
         Ok(epoch_finalized_events[0].inner.data.clone())
+    }
+
+    // TODO(povw): Provide a way to specify an initial_epoch block to query, possibly by epoch.
+    pub async fn run_mint(&self) -> anyhow::Result<TransactionReceipt> {
+        // Query for WorkLogUpdated and EpochFinalized events, recording the block numbers that include these events.
+        let latest_block = self.provider.get_block_number().await?;
+        println!("Running mint operation for blocks: 0 to {latest_block}");
+
+        // Query for WorkLogUpdated events
+        let work_log_filter =
+            self.povw_contract.WorkLogUpdated_filter().from_block(0).to_block(latest_block);
+        let work_log_events = work_log_filter.query().await?;
+        println!("Found {} WorkLogUpdated events", work_log_events.len());
+
+        // Query for EpochFinalized events
+        let epoch_finalized_filter =
+            self.povw_contract.EpochFinalized_filter().from_block(0).to_block(latest_block);
+        let epoch_finalized_events = epoch_finalized_filter.query().await?;
+        println!("Found {} EpochFinalized events", epoch_finalized_events.len());
+
+        // Collect and sort unique block numbers that contain events.
+        let mut block_numbers = BTreeSet::new();
+        for (_, log) in &work_log_events {
+            if let Some(block_number) = log.block_number {
+                block_numbers.insert(block_number);
+                println!("WorkLogUpdated event at block {}", block_number);
+            }
+        }
+        for (_, log) in &epoch_finalized_events {
+            if let Some(block_number) = log.block_number {
+                block_numbers.insert(block_number);
+                println!("EpochFinalized event at block {}", block_number);
+            }
+        }
+
+        let sorted_blocks: Vec<u64> = block_numbers.into_iter().collect();
+        println!("Block numbers with events: {:?}", sorted_blocks);
+
+        // Build the input for the mint_calculator, including input for Steel.
+        let mint_input = mint_calculator::Input::build(
+            *self.povw_contract.address(),
+            self.provider.clone(),
+            &ANVIL_CHAIN_SPEC,
+            sorted_blocks,
+        )
+        .await?;
+
+        println!("Mint calculator input built with {} blocks", mint_input.env.0.len());
+
+        // Execute the mint calculator guest
+        let mint_journal = execute_mint_calculator_guest(&mint_input)?;
+        println!(
+            "Mint calculator guest executed: {} mints, {} updates",
+            mint_journal.mints.len(),
+            mint_journal.updates.len()
+        );
+
+        // Assemble a fake receipt and use it to call the mint function on the Mint contract.
+        let mint_receipt: Receipt = FakeReceipt::new(ReceiptClaim::ok(
+            BOUNDLESS_POVW_MINT_CALCULATOR_ID,
+            mint_journal.abi_encode(),
+        ))
+        .try_into()?;
+
+        let mint_tx = self
+            .mint_contract
+            .mint(mint_journal.abi_encode().into(), encode_seal(&mint_receipt)?.into())
+            .send()
+            .await?;
+
+        println!("Mint transaction sent: {:?}", mint_tx.tx_hash());
+
+        Ok(mint_tx.get_receipt().await?)
     }
 }
 
