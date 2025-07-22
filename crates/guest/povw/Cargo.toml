@@ -8,6 +8,7 @@ repository = { workspace = true }
 publish = false
 
 [dependencies]
+alloy-contract = { version = "1.0", optional = true }
 alloy-primitives = { version = "1.0", features = ["serde", "k256"] }
 alloy-provider = { version = "1.0", optional = true }
 alloy-signer = { version = "1.0", optional = true }
@@ -41,7 +42,7 @@ release = false
 
 [features]
 default = ["build-guest", "host"]
-host = ["signer", "risc0-steel/host", "dep:alloy-provider"]
+host = ["signer", "risc0-steel/host", "dep:alloy-provider", "dep:alloy-contract"]
 signer = ["dep:alloy-signer"]
 build-guest = [
   "dep:risc0-build",

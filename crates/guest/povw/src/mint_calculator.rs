@@ -158,7 +158,7 @@ pub mod host {
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
-        interface Mint {
+        interface IMint {
             function mint(bytes calldata journalBytes, bytes calldata seal) external;
         }
     }
