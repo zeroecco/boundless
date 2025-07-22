@@ -13,13 +13,19 @@ use alloy::{
     sol,
 };
 use alloy_primitives::B256;
+use alloy_sol_types::SolValue;
 use anyhow::bail;
 use boundless_povw_guests::{
-    mint_calculator::host::IMint::IMintInstance, BOUNDLESS_POVW_LOG_UPDATER_ID,
-    BOUNDLESS_POVW_MINT_CALCULATOR_ID,
+    log_updater, mint_calculator, mint_calculator::host::IMint::IMintInstance,
+    BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
+    BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
 use risc0_ethereum_contracts::selector::Selector;
-use risc0_zkvm::{sha::Digestible, InnerReceipt};
+use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
+use risc0_zkvm::{
+    default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt,
+    ReceiptClaim,
+};
 
 // Import the Solidity contracts using alloy's sol! macro
 // Use the compiled contracts output to allow for deploying the contracts.
@@ -127,13 +133,8 @@ pub fn encode_seal(receipt: &risc0_zkvm::Receipt) -> anyhow::Result<Vec<u8>> {
 
 // Execute the log updater guest with the given input
 pub fn execute_log_updater_guest(
-    input: &boundless_povw_guests::log_updater::Input,
-) -> anyhow::Result<boundless_povw_guests::log_updater::Journal> {
-    use alloy_sol_types::SolValue;
-    use boundless_povw_guests::BOUNDLESS_POVW_LOG_UPDATER_ELF;
-    use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-    use risc0_zkvm::{default_executor, ExecutorEnv, ExitCode, FakeReceipt, ReceiptClaim};
-
+    input: &log_updater::Input,
+) -> anyhow::Result<log_updater::Journal> {
     let log_builder_receipt = FakeReceipt::new(ReceiptClaim::ok(
         RISC0_POVW_LOG_BUILDER_ID,
         borsh::to_vec(&input.update)?,
@@ -145,26 +146,19 @@ pub fn execute_log_updater_guest(
     let session_info = default_executor().execute(env, BOUNDLESS_POVW_LOG_UPDATER_ELF)?;
     assert_eq!(session_info.exit_code, ExitCode::Halted(0));
 
-    let decoded_journal =
-        boundless_povw_guests::log_updater::Journal::abi_decode(&session_info.journal.bytes)?;
+    let decoded_journal = log_updater::Journal::abi_decode(&session_info.journal.bytes)?;
     Ok(decoded_journal)
 }
 
 // Execute the mint calculator guest with the given input
 pub fn execute_mint_calculator_guest(
-    input: &boundless_povw_guests::mint_calculator::Input,
-) -> anyhow::Result<boundless_povw_guests::mint_calculator::MintCalculatorJournal> {
-    use alloy_sol_types::SolValue;
-    use boundless_povw_guests::BOUNDLESS_POVW_MINT_CALCULATOR_ELF;
-    use risc0_zkvm::{default_executor, ExecutorEnv, ExitCode};
-
+    input: &mint_calculator::Input,
+) -> anyhow::Result<mint_calculator::MintCalculatorJournal> {
     let env = ExecutorEnv::builder().write(input)?.build()?;
     let session_info = default_executor().execute(env, BOUNDLESS_POVW_MINT_CALCULATOR_ELF)?;
     assert_eq!(session_info.exit_code, ExitCode::Halted(0));
 
     let decoded_journal =
-        boundless_povw_guests::mint_calculator::MintCalculatorJournal::abi_decode(
-            &session_info.journal.bytes,
-        )?;
+        mint_calculator::MintCalculatorJournal::abi_decode(&session_info.journal.bytes)?;
     Ok(decoded_journal)
 }
