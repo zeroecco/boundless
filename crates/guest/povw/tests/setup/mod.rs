@@ -54,6 +54,7 @@ sol!(
 pub struct TextCtx {
     pub anvil: AnvilInstance,
     pub provider: DynProvider,
+    pub token_contract: MockERC20Mint::MockERC20MintInstance<DynProvider>,
     pub povw_contract: PoVW::PoVWInstance<DynProvider>,
     pub mint_contract: IMintInstance<DynProvider>,
 }
@@ -76,8 +77,8 @@ pub async fn text_ctx() -> anyhow::Result<TextCtx> {
     println!("MockRiscZeroVerifier deployed at: {:?}", mock_verifier.address());
 
     // Deploy MockERC20 token
-    let mock_token = MockERC20Mint::deploy(provider.clone()).await?;
-    println!("MockERC20 deployed at: {:?}", mock_token.address());
+    let token_contract = MockERC20Mint::deploy(provider.clone()).await?;
+    println!("MockERC20 deployed at: {:?}", token_contract.address());
 
     // Deploy PoVW contract (needs verifier and log builder ID)
     let povw_contract = PoVW::deploy(
@@ -94,7 +95,7 @@ pub async fn text_ctx() -> anyhow::Result<TextCtx> {
         *mock_verifier.address(),
         *povw_contract.address(),
         bytemuck::cast::<_, [u8; 32]>(BOUNDLESS_POVW_MINT_CALCULATOR_ID).into(),
-        *mock_token.address(),
+        *token_contract.address(),
     )
     .await?;
     println!("Mint contract deployed at: {:?}", mint_contract.address());
@@ -103,7 +104,7 @@ pub async fn text_ctx() -> anyhow::Result<TextCtx> {
     // considered a fully independent type by Rust.
     let mint_interface = IMintInstance::new(*mint_contract.address(), provider.clone());
 
-    Ok(TextCtx { anvil, provider, povw_contract, mint_contract: mint_interface })
+    Ok(TextCtx { anvil, provider, token_contract, povw_contract, mint_contract: mint_interface })
 }
 
 // TODO(povw): This is copied from risc0_ethereum_contracts to work around version conflict
