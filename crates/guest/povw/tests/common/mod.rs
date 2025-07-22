@@ -64,6 +64,7 @@ sol!(
     "../../../out/Mint.sol/Mint.json"
 );
 
+#[derive(Clone)]
 pub struct TestCtx {
     pub anvil: Arc<Mutex<AnvilInstance>>,
     pub chain_id: u64,
@@ -78,7 +79,10 @@ pub async fn text_ctx() -> anyhow::Result<TestCtx> {
     test_ctx_with(Mutex::new(anvil).into(), 0).await
 }
 
-pub async fn test_ctx_with(anvil: Arc<Mutex<AnvilInstance>>, signer_index: usize) -> anyhow::Result<TestCtx> {
+pub async fn test_ctx_with(
+    anvil: Arc<Mutex<AnvilInstance>>,
+    signer_index: usize,
+) -> anyhow::Result<TestCtx> {
     let rpc_url = anvil.lock().await.endpoint_url();
 
     // Create wallet and provider
@@ -123,7 +127,14 @@ pub async fn test_ctx_with(anvil: Arc<Mutex<AnvilInstance>>, signer_index: usize
     let mint_interface = IMintInstance::new(*mint_contract.address(), provider.clone());
 
     let chain_id = anvil.lock().await.chain_id();
-    Ok(TestCtx { anvil, chain_id, provider, token_contract, povw_contract, mint_contract: mint_interface })
+    Ok(TestCtx {
+        anvil,
+        chain_id,
+        provider,
+        token_contract,
+        povw_contract,
+        mint_contract: mint_interface,
+    })
 }
 
 impl TestCtx {
@@ -215,7 +226,10 @@ impl TestCtx {
         self.build_mint_input_for_epochs(&[]).await
     }
 
-    pub async fn build_mint_input_for_epochs(&self, epochs: &[u32]) -> anyhow::Result<mint_calculator::Input> {
+    pub async fn build_mint_input_for_epochs(
+        &self,
+        epochs: &[u32],
+    ) -> anyhow::Result<mint_calculator::Input> {
         // Query for WorkLogUpdated and EpochFinalized events, recording the block numbers that include these events.
         let latest_block = self.provider.get_block_number().await?;
         let epoch_filter_str = if epochs.is_empty() {
@@ -241,7 +255,8 @@ impl TestCtx {
         let filtered_work_log_events: Vec<_> = if epochs.is_empty() {
             work_log_events
         } else {
-            work_log_events.into_iter()
+            work_log_events
+                .into_iter()
                 .filter(|(event, _)| epochs.contains(&event.epochNumber.to::<u32>()))
                 .collect()
         };
@@ -249,20 +264,27 @@ impl TestCtx {
         let filtered_epoch_finalized_events: Vec<_> = if epochs.is_empty() {
             epoch_finalized_events
         } else {
-            epoch_finalized_events.into_iter()
+            epoch_finalized_events
+                .into_iter()
                 .filter(|(event, _)| epochs.contains(&event.epoch.to::<u32>()))
                 .collect()
         };
 
-        println!("After filtering: {} WorkLogUpdated events, {} EpochFinalized events", 
-                 filtered_work_log_events.len(), filtered_epoch_finalized_events.len());
+        println!(
+            "After filtering: {} WorkLogUpdated events, {} EpochFinalized events",
+            filtered_work_log_events.len(),
+            filtered_epoch_finalized_events.len()
+        );
 
         // Collect and sort unique block numbers that contain filtered events.
         let mut block_numbers = BTreeSet::new();
         for (event, log) in &filtered_work_log_events {
             if let Some(block_number) = log.block_number {
                 block_numbers.insert(block_number);
-                println!("WorkLogUpdated event at block {} (epoch {})", block_number, event.epochNumber);
+                println!(
+                    "WorkLogUpdated event at block {} (epoch {})",
+                    block_number, event.epochNumber
+                );
             }
         }
         for (event, log) in &filtered_epoch_finalized_events {

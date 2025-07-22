@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use alloy::{
     network::EthereumWallet,
     node_bindings::Anvil,
-    primitives::{address, utils::Unit, Address, B256, Bytes, FixedBytes, U256},
+    primitives::{address, utils::Unit, Address, Bytes, FixedBytes, B256, U256},
     providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol,
@@ -19,7 +19,10 @@ use risc0_ethereum_contracts::{encode_seal, selector::Selector};
 
 use boundless_povw_guests::{
     log_updater::{Input as LogUpdaterInput, LogBuilderJournal, WorkLogUpdate},
-    mint_calculator::{Input as MintCalculatorInput, FixedPoint, MintCalculatorJournal, MintCalculatorMint, MintCalculatorUpdate},
+    mint_calculator::{
+        FixedPoint, Input as MintCalculatorInput, MintCalculatorJournal, MintCalculatorMint,
+        MintCalculatorUpdate,
+    },
     BOUNDLESS_POVW_LOG_UPDATER_ID, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
 use risc0_povw::WorkLog;
@@ -134,15 +137,20 @@ async fn proportional_rewards_same_epoch() -> anyhow::Result<()> {
     assert!(
         balance1.abs_diff(expected1) <= tolerance,
         "Signer1 should receive ~30 tokens, got {}, expected {}",
-        balance1, expected1
+        balance1,
+        expected1
     );
     assert!(
         balance2.abs_diff(expected2) <= tolerance,
         "Signer2 should receive ~70 tokens, got {}, expected {}",
-        balance2, expected2
+        balance2,
+        expected2
     );
 
-    println!("Proportional rewards verified: {} tokens to signer1, {} tokens to signer2", balance1, balance2);
+    println!(
+        "Proportional rewards verified: {} tokens to signer1, {} tokens to signer2",
+        balance1, balance2
+    );
     Ok(())
 }
 
@@ -178,7 +186,7 @@ async fn sequential_mints_per_epoch() -> anyhow::Result<()> {
 
     let balance_after_first_mint = ctx.token_contract.balanceOf(signer.address()).call().await?;
     let expected_first = Unit::ETHER.wei() * U256::from(100); // Full epoch reward
-    
+
     assert_eq!(
         balance_after_first_mint, expected_first,
         "After first mint should have exactly 100 tokens"
@@ -210,11 +218,8 @@ async fn sequential_mints_per_epoch() -> anyhow::Result<()> {
 
     let final_balance = ctx.token_contract.balanceOf(signer.address()).call().await?;
     let expected_total = Unit::ETHER.wei() * U256::from(200); // 100 + 100 tokens (both full epoch rewards)
-    
-    assert_eq!(
-        final_balance, expected_total,
-        "Final balance should be exactly 200 tokens"
-    );
+
+    assert_eq!(final_balance, expected_total, "Final balance should be exactly 200 tokens");
     println!("Final balance after both mints: {} tokens", final_balance);
 
     Ok(())
@@ -271,7 +276,7 @@ async fn cross_epoch_mint() -> anyhow::Result<()> {
 
     let final_balance = ctx.token_contract.balanceOf(signer.address()).call().await?;
     let expected_total = Unit::ETHER.wei() * U256::from(200); // 100 + 100 tokens (both full epoch rewards)
-    
+
     assert_eq!(
         final_balance, expected_total,
         "Final balance should be exactly 200 tokens from both epochs"
@@ -486,7 +491,10 @@ async fn reject_mint_with_skipped_epoch() -> anyhow::Result<()> {
     let err = result.unwrap_err();
     println!("Contract correctly rejected skipped epoch: {err}");
     // Check for guest panic about non-chaining updates
-    assert!(err.to_string().contains("multiple update events") && err.to_string().contains("do not form a chain"));
+    assert!(
+        err.to_string().contains("multiple update events")
+            && err.to_string().contains("do not form a chain")
+    );
 
     Ok(())
 }
@@ -508,7 +516,7 @@ async fn reject_mint_with_unfinalized_epoch() -> anyhow::Result<()> {
     };
 
     ctx.post_work_log_update(&signer, &update).await?;
-    
+
     // Advance time but DO NOT finalize the epoch
     ctx.advance_epochs(1).await?;
 

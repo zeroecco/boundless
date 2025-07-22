@@ -13,10 +13,10 @@
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{address, aliases::U96, Address, B256, U256};
 use alloy_sol_types::SolValue;
-use boundless_povw_guests::log_updater::{Input, LogBuilderJournal, WorkLogUpdate};
+use boundless_povw_guests::{log_updater::{Input, LogBuilderJournal, WorkLogUpdate}, BOUNDLESS_POVW_LOG_UPDATER_ID};
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-use risc0_zkvm::Digest;
+use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
 mod common;
 
@@ -229,7 +229,7 @@ async fn reject_invalid_initial_commit() -> anyhow::Result<()> {
     // This should fail when posted to contract due to wrong initial commit
     let result = ctx.post_work_log_update(&signer, &second_update).await;
     assert!(result.is_err(), "Should reject invalid initial commit");
-    
+
     let err = result.unwrap_err();
     println!("Contract correctly rejected invalid initial commit: {err}");
     // Check for verification failure selector 0x439cc0cd
@@ -257,7 +257,7 @@ async fn reject_duplicate_update() -> anyhow::Result<()> {
     // Try to post the exact same update again - should fail
     let result = ctx.post_work_log_update(&signer, &update).await;
     assert!(result.is_err(), "Should reject duplicate update");
-    
+
     let err = result.unwrap_err();
     println!("Contract correctly rejected duplicate update: {err}");
     // Check for verification failure selector 0x439cc0cd
@@ -280,8 +280,9 @@ async fn reject_invalid_work_log_id() -> anyhow::Result<()> {
         work_log_id: Address::ZERO.into(), // Invalid zero address
     };
 
-    let signature =
-        boundless_povw_guests::log_updater::WorkLogUpdate::from(update.clone()).sign(&signer, contract_address, chain_id).await?;
+    let signature = boundless_povw_guests::log_updater::WorkLogUpdate::from(update.clone())
+        .sign(&signer, contract_address, chain_id)
+        .await?;
 
     let input = boundless_povw_guests::log_updater::Input {
         update: update.clone(),
@@ -568,5 +569,91 @@ async fn two_updates_subsequent_epochs_same_log_id() -> anyhow::Result<()> {
     // Second epoch should only have work from second update
     assert_eq!(second_finalized_event.epoch, U256::from(second_epoch));
     assert_eq!(second_finalized_event.totalWork, U256::from(60));
+    Ok(())
+}
+
+// Run log update transactions and measure the gas used. Ensure that it does not grow beyond a
+// certain value without the developer realizing.
+#[tokio::test]
+async fn measure_log_update_gas() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let measure_update_gas = {
+        // Clone variables that we will need in the closure.
+        let ctx = ctx.clone();
+        let signer = signer.clone();
+
+        async move |update: LogBuilderJournal| -> anyhow::Result<u64> {
+        let signature = WorkLogUpdate::from(update.clone())
+            .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
+            .await?;
+
+        let input = Input {
+            update: update.clone(),
+            signature: signature.as_bytes().to_vec(),
+            contract_address: *ctx.povw_contract.address(),
+            chain_id: ctx.chain_id,
+        };
+        let journal = common::execute_log_updater_guest(&input)?;
+        let fake_receipt: Receipt =
+            FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
+                .try_into()?;
+
+        // Call the PoVW.updateWorkLog function and confirm that it does not revert.
+        let tx_result = ctx
+            .povw_contract
+            .updateWorkLog(
+                journal.update.workLogId,
+                journal.update.updatedCommit,
+                journal.update.updateWork,
+                common::encode_seal(&fake_receipt)?.into(),
+            )
+            .send()
+            .await?;
+
+        let receipt = tx_result.get_receipt().await?;
+        println!("Gas used for tx {}: {}", receipt.transaction_hash, receipt.gas_used);
+
+        Ok(receipt.gas_used)
+    }
+    };
+
+    let first_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 40,
+        work_log_id: signer.address().into(),
+    };
+
+    // Second update in second epoch (chained from first)
+    let second_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: first_update.updated_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 60,
+        work_log_id: signer.address().into(),
+    };
+
+    let third_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: second_update.updated_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 20,
+        work_log_id: signer.address().into(),
+    };
+
+    // First update: from the initial state.
+    assert!(measure_update_gas(first_update).await? < 65000);
+
+    // First update: from the state of a fresh epoch.
+    ctx.advance_epochs(1).await?;
+    ctx.finalize_epoch().await?;
+    assert!(measure_update_gas(second_update).await? < 45000);
+
+    // Second update within the same epoch.
+    assert!(measure_update_gas(third_update).await? < 45000);
+
     Ok(())
 }
