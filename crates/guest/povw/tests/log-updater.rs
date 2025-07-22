@@ -126,3 +126,181 @@ async fn contract_integration() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn two_updates_same_epoch_same_log_id() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+
+    let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    println!("Initial epoch: {}", initial_epoch);
+
+    let signer = PrivateKeySigner::random();
+
+    // First update
+    let first_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 10,
+        work_log_id: signer.address().into(),
+    };
+
+    let first_event = ctx.post_work_log_update(&signer, &first_update).await?;
+    println!("First WorkLogUpdated event: work={}", first_event.work);
+
+    // Second update (chained from first)
+    let second_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: first_update.updated_commit, // Chain from first update
+        updated_commit: Digest::new(rand::random()),
+        update_value: 15,
+        work_log_id: signer.address().into(), // Same log ID
+    };
+
+    let second_event = ctx.post_work_log_update(&signer, &second_update).await?;
+    println!("Second WorkLogUpdated event: work={}", second_event.work);
+
+    // Verify both events are in the same epoch
+    assert_eq!(first_event.epochNumber, U256::from(initial_epoch));
+    assert_eq!(second_event.epochNumber, U256::from(initial_epoch));
+    assert_eq!(first_event.workLogId, second_event.workLogId);
+
+    // Verify the commits chain correctly
+    assert_eq!(first_event.updatedCommit, second_event.initialCommit);
+
+    // Advance time and finalize epoch
+    ctx.advance_epochs(1).await?;
+    let finalized_event = ctx.finalize_epoch().await?;
+
+    // Total work should be sum of both updates
+    assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
+    assert_eq!(finalized_event.totalWork, U256::from(25)); // 10 + 15
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_updates_same_epoch_different_log_ids() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+
+    let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    println!("Initial epoch: {}", initial_epoch);
+
+    let signer1 = PrivateKeySigner::random();
+    let signer2 = PrivateKeySigner::random();
+
+    // First update with first log ID
+    let first_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 20,
+        work_log_id: signer1.address().into(),
+    };
+
+    let first_event = ctx.post_work_log_update(&signer1, &first_update).await?;
+    println!(
+        "First WorkLogUpdated event: logId={}, work={}",
+        first_event.workLogId, first_event.work
+    );
+
+    // Second update with different log ID
+    let second_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 30,
+        work_log_id: signer2.address().into(),
+    };
+
+    let second_event = ctx.post_work_log_update(&signer2, &second_update).await?;
+    println!(
+        "Second WorkLogUpdated event: logId={}, work={}",
+        second_event.workLogId, second_event.work
+    );
+
+    // Verify both events are in the same epoch but have different log IDs
+    assert_eq!(first_event.epochNumber, U256::from(initial_epoch));
+    assert_eq!(second_event.epochNumber, U256::from(initial_epoch));
+    assert_ne!(first_event.workLogId, second_event.workLogId);
+
+    // Both should start from empty commit since they're different logs
+    assert_eq!(first_event.initialCommit.as_slice(), WorkLog::EMPTY.commit().as_bytes());
+    assert_eq!(second_event.initialCommit.as_slice(), WorkLog::EMPTY.commit().as_bytes());
+
+    // Advance time and finalize epoch
+    ctx.advance_epochs(1).await?;
+    let finalized_event = ctx.finalize_epoch().await?;
+
+    // Total work should be sum of both different log updates
+    assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
+    assert_eq!(finalized_event.totalWork, U256::from(50)); // 20 + 30
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_updates_subsequent_epochs_same_log_id() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+
+    let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    println!("Initial epoch: {}", initial_epoch);
+
+    let signer = PrivateKeySigner::random();
+
+    // First update in first epoch
+    let first_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 40,
+        work_log_id: signer.address().into(),
+    };
+
+    let first_event = ctx.post_work_log_update(&signer, &first_update).await?;
+    println!(
+        "First WorkLogUpdated event in epoch {}: work={}",
+        first_event.epochNumber, first_event.work
+    );
+
+    // Advance to next epoch and finalize the first epoch
+    ctx.advance_epochs(1).await?;
+    let first_finalized_event = ctx.finalize_epoch().await?;
+
+    let second_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    println!("Advanced to epoch: {}", second_epoch);
+
+    // Verify first epoch was finalized correctly
+    assert_eq!(first_finalized_event.epoch, U256::from(initial_epoch));
+    assert_eq!(first_finalized_event.totalWork, U256::from(40));
+
+    // Second update in second epoch (chained from first)
+    let second_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: first_update.updated_commit, // Chain from first update
+        updated_commit: Digest::new(rand::random()),
+        update_value: 60,
+        work_log_id: signer.address().into(), // Same log ID
+    };
+
+    let second_event = ctx.post_work_log_update(&signer, &second_update).await?;
+    println!(
+        "Second WorkLogUpdated event in epoch {}: work={}",
+        second_event.epochNumber, second_event.work
+    );
+
+    // Verify events are in different epochs with same log ID
+    assert_eq!(first_event.epochNumber, U256::from(initial_epoch));
+    assert_eq!(second_event.epochNumber, U256::from(second_epoch));
+    assert_eq!(first_event.workLogId, second_event.workLogId);
+
+    // Verify the commits chain correctly across epochs
+    assert_eq!(first_event.updatedCommit, second_event.initialCommit);
+
+    // Advance time and finalize second epoch
+    ctx.advance_epochs(1).await?;
+    let second_finalized_event = ctx.finalize_epoch().await?;
+
+    // Second epoch should only have work from second update
+    assert_eq!(second_finalized_event.epoch, U256::from(second_epoch));
+    assert_eq!(second_finalized_event.totalWork, U256::from(60));
+    Ok(())
+}

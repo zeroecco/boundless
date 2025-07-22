@@ -9,7 +9,13 @@
 use std::collections::BTreeSet;
 
 use alloy::{
-    network::EthereumWallet, node_bindings::{Anvil, AnvilInstance}, primitives::FixedBytes, providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder}, rpc::types::TransactionReceipt, signers::local::PrivateKeySigner, sol
+    network::EthereumWallet,
+    node_bindings::{Anvil, AnvilInstance},
+    primitives::FixedBytes,
+    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder},
+    rpc::types::TransactionReceipt,
+    signers::local::PrivateKeySigner,
+    sol,
 };
 use alloy_signer::Signer;
 use alloy_sol_types::SolValue;

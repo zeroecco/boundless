@@ -74,7 +74,5 @@ async fn basic() -> anyhow::Result<()> {
         final_balance, expected_mint_amount,
         "Minted amount should match expected calculation"
     );
-    println!("✅ Successfully minted {} tokens to {:?}", final_balance, signer.address());
-
     Ok(())
 }
