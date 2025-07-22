@@ -383,3 +383,142 @@ async fn reject_wrong_povw_address() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn reject_mint_with_only_latter_epoch() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let _first_epoch = ctx.povw_contract.currentEpoch().call().await?;
+
+    // First update in first epoch
+    let update1 = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 30,
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update1).await?;
+    ctx.advance_epochs(1).await?;
+    ctx.finalize_epoch().await?;
+
+    let second_epoch = ctx.povw_contract.currentEpoch().call().await?;
+
+    // Second update in second epoch (chained from first)
+    let update2 = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: update1.updated_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 40,
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update2).await?;
+    ctx.advance_epochs(1).await?;
+    ctx.finalize_epoch().await?;
+
+    // Try to mint using only the second epoch - should fail
+    let result = ctx.run_mint_for_epochs(&[second_epoch]).await;
+    assert!(result.is_err(), "Should reject mint with incomplete chain");
+    let err = result.unwrap_err();
+    println!("Contract correctly rejected incomplete chain: {err}");
+    // Check for IncorrectInitialUpdateCommit error selector 0xf4a2b615
+    assert!(err.to_string().contains("0xf4a2b615"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_mint_with_skipped_epoch() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let first_epoch = ctx.povw_contract.currentEpoch().call().await?;
+
+    // First update in first epoch
+    let update1 = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 20,
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update1).await?;
+    ctx.advance_epochs(1).await?;
+    ctx.finalize_epoch().await?;
+
+    let _second_epoch = ctx.povw_contract.currentEpoch().call().await?;
+
+    // Second update in second epoch (chained from first)
+    let update2 = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: update1.updated_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 30,
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update2).await?;
+    ctx.advance_epochs(1).await?;
+    ctx.finalize_epoch().await?;
+
+    let third_epoch = ctx.povw_contract.currentEpoch().call().await?;
+
+    // Third update in third epoch (chained from second)
+    let update3 = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: update2.updated_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 50,
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update3).await?;
+    ctx.advance_epochs(1).await?;
+    ctx.finalize_epoch().await?;
+
+    // Try to mint using first and third epochs (skipping second) - should fail
+    let result = ctx.run_mint_for_epochs(&[first_epoch, third_epoch]).await;
+    assert!(result.is_err(), "Should reject mint with skipped epoch");
+    let err = result.unwrap_err();
+    println!("Contract correctly rejected skipped epoch: {err}");
+    // Check for guest panic about non-chaining updates
+    assert!(err.to_string().contains("multiple update events") && err.to_string().contains("do not form a chain"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_mint_with_unfinalized_epoch() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let current_epoch = ctx.povw_contract.currentEpoch().call().await?;
+
+    // Post work log update but don't finalize the epoch
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 25,
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update).await?;
+    
+    // Advance time but DO NOT finalize the epoch
+    ctx.advance_epochs(1).await?;
+
+    // Try to mint without finalizing the epoch - should fail
+    let result = ctx.run_mint_for_epochs(&[current_epoch]).await;
+    assert!(result.is_err(), "Should reject mint with unfinalized epoch");
+    let err = result.unwrap_err();
+    println!("Contract correctly rejected unfinalized epoch: {err}");
+    // The mint calculator guest should fail because there's no EpochFinalized event
+    assert!(err.to_string().contains("no epoch finalized event processed"));
+
+    Ok(())
+}
