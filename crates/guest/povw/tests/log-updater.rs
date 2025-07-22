@@ -15,40 +15,14 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{address, aliases::U96, B256, U256};
 use alloy_sol_types::SolValue;
 use boundless_povw_guests::{
-    log_updater::{Input, Journal, LogBuilderJournal, WorkLogUpdate},
-    BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
+    log_updater::{Input, LogBuilderJournal, WorkLogUpdate},
+    BOUNDLESS_POVW_LOG_UPDATER_ID,
 };
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-use risc0_zkvm::{
-    default_executor, Digest, ExecutorEnv, ExitCode, FakeReceipt, Receipt, ReceiptClaim,
-};
+use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
 mod setup;
-
-// TODO: Add rejection tests
-
-fn execute_guest(input: &Input) -> anyhow::Result<Journal> {
-    println!("log updater input: {input:#?}");
-    let log_builder_receipt = FakeReceipt::new(ReceiptClaim::ok(
-        RISC0_POVW_LOG_BUILDER_ID,
-        borsh::to_vec(&input.update)?,
-    ));
-    let env = ExecutorEnv::builder()
-        .write_frame(&borsh::to_vec(input)?)
-        .add_assumption(log_builder_receipt)
-        .build()?;
-    // NOTE: Use the executor to run tests without proving.
-    let session_info = default_executor().execute(env, BOUNDLESS_POVW_LOG_UPDATER_ELF)?;
-    assert_eq!(session_info.exit_code, ExitCode::Halted(0));
-
-    println!("foo");
-
-    let decoded_journal = Journal::abi_decode(&session_info.journal.bytes)?;
-    println!("log updater journal: {decoded_journal:#?}");
-
-    Ok(decoded_journal)
-}
 
 #[tokio::test]
 async fn basic() -> anyhow::Result<()> {
@@ -73,7 +47,7 @@ async fn basic() -> anyhow::Result<()> {
         contract_address,
         chain_id,
     };
-    let journal = execute_guest(&input)?;
+    let journal = setup::execute_log_updater_guest(&input)?;
 
     assert_eq!(journal.update.workLogId, signer.address());
     assert_eq!(journal.update.initialCommit, B256::from(<[u8; 32]>::from(update.initial_commit)));
@@ -110,8 +84,8 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
         contract_address,
         chain_id,
     };
-    let err = execute_guest(&input).unwrap_err();
-    println!("execute_guest failed with: {err}");
+    let err = setup::execute_log_updater_guest(&input).unwrap_err();
+    println!("execute_log_updater_guest failed with: {err}");
     assert!(err.to_string().contains("recovered signer does not match expected"));
 
     Ok(())
@@ -140,14 +114,14 @@ async fn contract_integration() -> anyhow::Result<()> {
     let signature =
         WorkLogUpdate::from(update.clone()).sign(&signer, contract_address, chain_id).await?;
 
-    // Use execute_guest to get a Journal.
+    // Use execute_log_updater_guest to get a Journal.
     let input = Input {
         update: update.clone(),
         signature: signature.as_bytes().to_vec(),
         contract_address,
         chain_id,
     };
-    let journal = execute_guest(&input)?;
+    let journal = setup::execute_log_updater_guest(&input)?;
     println!("Guest execution completed, journal: {:#?}", journal);
 
     let fake_receipt: Receipt =
