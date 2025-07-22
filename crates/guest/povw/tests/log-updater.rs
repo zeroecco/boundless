@@ -573,7 +573,8 @@ async fn two_updates_subsequent_epochs_same_log_id() -> anyhow::Result<()> {
 }
 
 // Run log update transactions and measure the gas used. Ensure that it does not grow beyond a
-// certain value without the developer realizing.
+// certain value without the developer realizing. Note that the reported gas values are using a
+// mock receipt. Using a Groth16 or SetInclusion receipt will have higher gas costs.
 #[tokio::test]
 async fn measure_log_update_gas() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
