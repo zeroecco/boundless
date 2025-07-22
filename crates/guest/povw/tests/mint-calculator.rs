@@ -27,12 +27,12 @@ use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 use risc0_steel::ethereum::ANVIL_CHAIN_SPEC;
 use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
-mod setup;
+mod common;
 
 #[tokio::test]
 async fn basic() -> anyhow::Result<()> {
     // 1. Setup the test context
-    let ctx = setup::text_ctx().await?;
+    let ctx = common::text_ctx().await?;
     println!("Test context setup complete:");
     println!("  PoVW contract: {:?}", ctx.povw_contract.address());
     println!("  Mint contract: {:?}", ctx.mint_contract.address());
@@ -65,7 +65,7 @@ async fn basic() -> anyhow::Result<()> {
         chain_id,
     };
 
-    let journal = setup::execute_log_updater_guest(&log_input)?;
+    let journal = common::execute_log_updater_guest(&log_input)?;
 
     // Create receipt and call updateWorkLog
     let fake_receipt: Receipt =
@@ -78,7 +78,7 @@ async fn basic() -> anyhow::Result<()> {
             journal.update.workLogId,
             journal.update.updatedCommit,
             journal.update.updateWork,
-            setup::encode_seal(&fake_receipt)?.into(),
+            common::encode_seal(&fake_receipt)?.into(),
         )
         .send()
         .await?;
@@ -106,7 +106,7 @@ async fn basic() -> anyhow::Result<()> {
 
     let epoch_finalized_events = finalize_logs
         .iter()
-        .filter_map(|log| log.log_decode::<setup::PoVW::EpochFinalized>().ok())
+        .filter_map(|log| log.log_decode::<common::PoVW::EpochFinalized>().ok())
         .collect::<Vec<_>>();
 
     assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
@@ -169,7 +169,7 @@ async fn basic() -> anyhow::Result<()> {
     println!("Mint calculator input built successfully with {} blocks", mint_input.env.0.len());
 
     // 7. Run the mint calculator guest.
-    let mint_journal = setup::execute_mint_calculator_guest(&mint_input)?;
+    let mint_journal = common::execute_mint_calculator_guest(&mint_input)?;
     println!("Mint calculator guest executed successfully");
     println!("  Number of mints: {}", mint_journal.mints.len());
     println!("  Number of updates: {}", mint_journal.updates.len());
@@ -184,7 +184,7 @@ async fn basic() -> anyhow::Result<()> {
 
     let mint_tx = ctx
         .mint_contract
-        .mint(mint_journal.abi_encode().into(), setup::encode_seal(&mint_receipt)?.into())
+        .mint(mint_journal.abi_encode().into(), common::encode_seal(&mint_receipt)?.into())
         .send()
         .await?;
 

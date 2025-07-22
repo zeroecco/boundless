@@ -22,7 +22,7 @@ use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
-mod setup;
+mod common;
 
 #[tokio::test]
 async fn basic() -> anyhow::Result<()> {
@@ -47,7 +47,7 @@ async fn basic() -> anyhow::Result<()> {
         contract_address,
         chain_id,
     };
-    let journal = setup::execute_log_updater_guest(&input)?;
+    let journal = common::execute_log_updater_guest(&input)?;
 
     assert_eq!(journal.update.workLogId, signer.address());
     assert_eq!(journal.update.initialCommit, B256::from(<[u8; 32]>::from(update.initial_commit)));
@@ -84,7 +84,7 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
         contract_address,
         chain_id,
     };
-    let err = setup::execute_log_updater_guest(&input).unwrap_err();
+    let err = common::execute_log_updater_guest(&input).unwrap_err();
     println!("execute_log_updater_guest failed with: {err}");
     assert!(err.to_string().contains("recovered signer does not match expected"));
 
@@ -93,7 +93,7 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn contract_integration() -> anyhow::Result<()> {
-    let ctx = setup::text_ctx().await?;
+    let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
     println!("Initial epoch: {}", initial_epoch);
@@ -121,7 +121,7 @@ async fn contract_integration() -> anyhow::Result<()> {
         contract_address,
         chain_id,
     };
-    let journal = setup::execute_log_updater_guest(&input)?;
+    let journal = common::execute_log_updater_guest(&input)?;
     println!("Guest execution completed, journal: {:#?}", journal);
 
     let fake_receipt: Receipt =
@@ -135,7 +135,7 @@ async fn contract_integration() -> anyhow::Result<()> {
             journal.update.workLogId,
             journal.update.updatedCommit,
             journal.update.updateWork,
-            setup::encode_seal(&fake_receipt)?.into(),
+            common::encode_seal(&fake_receipt)?.into(),
         )
         .send()
         .await?;
@@ -148,7 +148,7 @@ async fn contract_integration() -> anyhow::Result<()> {
     // Find the WorkLogUpdated event
     let work_log_updated_events = logs
         .iter()
-        .filter_map(|log| log.log_decode::<setup::PoVW::WorkLogUpdated>().ok())
+        .filter_map(|log| log.log_decode::<common::PoVW::WorkLogUpdated>().ok())
         .collect::<Vec<_>>();
 
     assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
@@ -183,7 +183,7 @@ async fn contract_integration() -> anyhow::Result<()> {
     // Find the EpochFinalized event
     let epoch_finalized_events = finalize_logs
         .iter()
-        .filter_map(|log| log.log_decode::<setup::PoVW::EpochFinalized>().ok())
+        .filter_map(|log| log.log_decode::<common::PoVW::EpochFinalized>().ok())
         .collect::<Vec<_>>();
 
     assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
