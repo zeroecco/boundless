@@ -102,7 +102,7 @@ pub struct Input {
 }
 
 impl FixedPoint {
-    const BASE: U256 = U256::ONE.checked_shl(64).unwrap();
+    const BASE: U256 = U256::ONE.checked_shl(128).unwrap();
 
     /// Construct a fixed-point representation of a fractional value.
     ///

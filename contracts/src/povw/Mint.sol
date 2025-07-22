@@ -16,7 +16,7 @@ struct FixedPoint {
 }
 
 library FixedPointLib {
-    uint8 private constant BITS = 64;
+    uint8 private constant BITS = 128;
 
     function mulUnwrap(FixedPoint memory self, uint256 rhs) internal pure returns (uint256) {
         return Math.mulShr(self.value, rhs, BITS, Math.Rounding.Trunc);
