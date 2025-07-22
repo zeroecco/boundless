@@ -20,6 +20,15 @@ use serde::{Deserialize, Serialize};
 // NOTE: Copied from PoVW.sol. Must be kept in sync.
 // TODO(povw): Avoid copying this data type here.
 sol! {
+    // Copied from contracts/src/povw/PoVW.sol
+    #[derive(Debug)]
+    interface IPoVW {
+        event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
+        event WorkLogUpdated(
+            address indexed workLogId, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
+        );
+    }
+
     #[derive(Debug)]
     struct WorkLogUpdate {
         address workLogId;

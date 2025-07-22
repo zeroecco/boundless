@@ -4,8 +4,9 @@ use risc0_zkvm::guest::env;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
+use boundless_povw_guests::log_updater::IPoVW;
 use boundless_povw_guests::mint_calculator::{
-    FixedPoint, IPoVW, Input, MintCalculatorJournal, MintCalculatorMint, MintCalculatorUpdate,
+    FixedPoint, Input, MintCalculatorJournal, MintCalculatorMint, MintCalculatorUpdate,
 };
 use risc0_steel::{ethereum::ANVIL_CHAIN_SPEC, Event};
 
@@ -53,7 +54,7 @@ fn main() {
             Event::new::<IPoVW::WorkLogUpdated>(env).address(input.povw_contract_address).query();
 
         for update_event in update_events {
-            match updates.entry(update_event.logId) {
+            match updates.entry(update_event.workLogId) {
                 btree_map::Entry::Vacant(entry) => {
                     entry.insert((update_event.initialCommit, update_event.updatedCommit));
                 }
@@ -61,8 +62,8 @@ fn main() {
                     assert_eq!(
                         entry.get().1,
                         update_event.initialCommit,
-                        "multiple update events for {} that do not form a chain",
-                        update_event.logId
+                        "multiple update events for {:x} that do not form a chain",
+                        update_event.workLogId
                     );
                     entry.get_mut().1 = update_event.updatedCommit;
                 }
@@ -73,7 +74,7 @@ fn main() {
             let epoch_total_work = *epochs.get(&epoch_number).unwrap_or_else(|| {
                 panic!("no epoch finalized event processed for epoch number {epoch_number}")
             });
-            *mints.entry(update_event.logId).or_default() +=
+            *mints.entry(update_event.workLogId).or_default() +=
                 FixedPoint::fraction(update_event.work, epoch_total_work);
         }
     }

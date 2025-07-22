@@ -2,29 +2,30 @@
 //
 // All rights reserved.
 
-#![allow(unused_imports)] // DO NOT MERGE
+// Some of this code is used by the log_updater test and some by mint_calculator test. Each does
+// its own dead code analysis and so will report code used only by the other as dead.
+#![allow(dead_code)]
 
 use alloy::{
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, FixedBytes, U256},
-    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider},
+    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol,
 };
 use alloy_primitives::B256;
+use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
 use anyhow::bail;
 use boundless_povw_guests::{
-    log_updater, mint_calculator, mint_calculator::host::IMint::IMintInstance,
-    BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
+    log_updater::{self, LogBuilderJournal, WorkLogUpdate, IPoVW}, mint_calculator::{self, host::IMint::IMintInstance}, BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
     BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
 use risc0_ethereum_contracts::selector::Selector;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 use risc0_zkvm::{
-    default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt,
-    ReceiptClaim,
+    default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt, Receipt, ReceiptClaim
 };
 
 // Import the Solidity contracts using alloy's sol! macro
@@ -111,6 +112,87 @@ pub async fn text_ctx() -> anyhow::Result<TextCtx> {
     let mint_interface = IMintInstance::new(*mint_contract.address(), provider.clone());
 
     Ok(TextCtx { anvil, provider, token_contract, povw_contract, mint_contract: mint_interface })
+}
+
+impl TextCtx {
+    pub async fn advance_epochs(&self, epochs: u32) -> anyhow::Result<u32> {
+        let initial_epoch = self.povw_contract.currentEpoch().call().await?;
+
+        // Advance time on the Anvil instance, forward to the next epoch.
+        let epoch_length = self.povw_contract.EPOCH_LENGTH().call().await?;
+        let advance_time = epochs * epoch_length.to::<u32>();
+
+        self.provider.anvil_increase_time(advance_time as u64).await?;
+        self.provider.anvil_mine(Some(1), None).await?;
+
+        let new_epoch = self.povw_contract.currentEpoch().call().await?;
+        assert_eq!(new_epoch, initial_epoch + epochs, "Epoch should have advanced by {epochs}");
+        println!("Time advanced: epoch {} -> {}", initial_epoch, new_epoch);
+        Ok(new_epoch)
+    }
+
+    pub async fn post_work_log_update(&self, signer: &impl Signer, update: &LogBuilderJournal) -> anyhow::Result<IPoVW::WorkLogUpdated> {
+        let signature =
+            WorkLogUpdate::from(update.clone()).sign(signer, *self.povw_contract.address(), self.anvil.chain_id()).await?;
+
+        // Use execute_log_updater_guest to get a Journal.
+        let input = log_updater::Input {
+            update: update.clone(),
+            signature: signature.as_bytes().to_vec(),
+            contract_address: *self.povw_contract.address(),
+            chain_id: self.anvil.chain_id(),
+        };
+        let journal = execute_log_updater_guest(&input)?;
+        println!("Guest execution completed, journal: {:#?}", journal);
+
+        let fake_receipt: Receipt =
+            FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
+                .try_into()?;
+
+        // Call the PoVW.updateWorkLog function and confirm that it does not revert.
+        let tx_result = self
+            .povw_contract
+            .updateWorkLog(
+                journal.update.workLogId,
+                journal.update.updatedCommit,
+                journal.update.updateWork,
+                encode_seal(&fake_receipt)?.into(),
+            )
+            .send()
+            .await?;
+        println!("updateWorkLog transaction sent: {:?}", tx_result.tx_hash());
+
+        // Query for the expected WorkLogUpdated event.
+        let receipt = tx_result.get_receipt().await?;
+        let logs = receipt.logs();
+
+        // Find the WorkLogUpdated event
+        let work_log_updated_events = logs
+            .iter()
+            .filter_map(|log| log.log_decode::<IPoVW::WorkLogUpdated>().ok())
+            .collect::<Vec<_>>();
+
+        assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
+        let update_event = &work_log_updated_events[0].inner.data;
+        Ok(update_event.clone())
+    }
+
+    pub async fn finalize_epoch(&self) -> anyhow::Result<IPoVW::EpochFinalized> {
+        let finalize_tx = self.povw_contract.finalizeEpoch().send().await?;
+        println!("finalizeEpoch transaction sent: {:?}", finalize_tx.tx_hash());
+
+        let finalize_receipt = finalize_tx.get_receipt().await?;
+        let finalize_logs = finalize_receipt.logs();
+
+        // Find the EpochFinalized event
+        let epoch_finalized_events = finalize_logs
+            .iter()
+            .filter_map(|log| log.log_decode::<IPoVW::EpochFinalized>().ok())
+            .collect::<Vec<_>>();
+
+        assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
+        Ok(epoch_finalized_events[0].inner.data.clone())
+    }
 }
 
 // TODO(povw): This is copied from risc0_ethereum_contracts to work around version conflict

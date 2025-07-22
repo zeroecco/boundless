@@ -17,14 +17,6 @@ use risc0_steel::{
 use serde::{Deserialize, Serialize};
 
 alloy_sol_types::sol! {
-    // Copied from contracts/src/povw/PoVW.sol
-    interface IPoVW {
-        event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
-        event WorkLogUpdated(
-            address indexed logId, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
-        );
-    }
-
     // Copied from contracts/src/povw/Mint.sol
     #[derive(Debug)]
     struct MintCalculatorUpdate {
@@ -155,6 +147,7 @@ pub mod host {
     };
 
     use super::*;
+    use crate::log_updater::IPoVW;
 
     alloy_sol_types::sol! {
         #[sol(rpc)]

@@ -10,9 +10,8 @@
 // cargo update -p risc0-povw-guests --manifest-path Cargo.toml && cargo update -p risc0-povw-guests --manifest-path crates/guest/povw/log-updater/Cargo.toml
 // ```
 
-use alloy::providers::ext::AnvilApi;
 use alloy::signers::local::PrivateKeySigner;
-use alloy_primitives::{address, aliases::U96, B256, U256};
+use alloy_primitives::{address, aliases::U96, Address, B256, U256};
 use alloy_sol_types::SolValue;
 use boundless_povw_guests::{
     log_updater::{Input, LogBuilderJournal, WorkLogUpdate},
@@ -100,9 +99,6 @@ async fn contract_integration() -> anyhow::Result<()> {
 
     // Construct and sign a WorkLogUpdate.
     let signer = PrivateKeySigner::random();
-    let chain_id = ctx.anvil.chain_id();
-    let contract_address = *ctx.povw_contract.address();
-
     let update = LogBuilderJournal {
         self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
         initial_commit: WorkLog::EMPTY.commit(),
@@ -111,87 +107,22 @@ async fn contract_integration() -> anyhow::Result<()> {
         work_log_id: signer.address().into(),
     };
 
-    let signature =
-        WorkLogUpdate::from(update.clone()).sign(&signer, contract_address, chain_id).await?;
-
-    // Use execute_log_updater_guest to get a Journal.
-    let input = Input {
-        update: update.clone(),
-        signature: signature.as_bytes().to_vec(),
-        contract_address,
-        chain_id,
-    };
-    let journal = common::execute_log_updater_guest(&input)?;
-    println!("Guest execution completed, journal: {:#?}", journal);
-
-    let fake_receipt: Receipt =
-        FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
-            .try_into()?;
-
-    // Call the PoVW.updateWorkLog function and confirm that it does not revert.
-    let tx_result = ctx
-        .povw_contract
-        .updateWorkLog(
-            journal.update.workLogId,
-            journal.update.updatedCommit,
-            journal.update.updateWork,
-            common::encode_seal(&fake_receipt)?.into(),
-        )
-        .send()
-        .await?;
-    println!("updateWorkLog transaction sent: {:?}", tx_result.tx_hash());
-
-    // Query for the expected WorkLogUpdated event.
-    let receipt = tx_result.get_receipt().await?;
-    let logs = receipt.logs();
-
-    // Find the WorkLogUpdated event
-    let work_log_updated_events = logs
-        .iter()
-        .filter_map(|log| log.log_decode::<common::PoVW::WorkLogUpdated>().ok())
-        .collect::<Vec<_>>();
-
-    assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
-    let update_event = &work_log_updated_events[0].inner.data;
+    let update_event = ctx.post_work_log_update(&signer, &update).await?;
 
     println!("WorkLogUpdated event: {:?}", update_event);
-    assert_eq!(update_event.workLogId, journal.update.workLogId);
+    assert_eq!(update_event.workLogId, Address::from(update.work_log_id));
     assert_eq!(update_event.epochNumber, U256::from(initial_epoch));
-    assert_eq!(update_event.initialCommit, journal.update.initialCommit);
-    assert_eq!(update_event.updatedCommit, journal.update.updatedCommit);
-    assert_eq!(update_event.work, U256::from(journal.update.updateWork));
+    assert_eq!(update_event.initialCommit.as_slice(), update.initial_commit.as_bytes());
+    assert_eq!(update_event.updatedCommit.as_slice(), update.updated_commit.as_bytes());
+    assert_eq!(update_event.work, U256::from(update.update_value));
 
-    // Advance time on the Anvil instance, forward to the next epoch.
-    let epoch_length = ctx.povw_contract.EPOCH_LENGTH().call().await?;
-    let advance_time = epoch_length.to::<u64>();
-
-    ctx.provider.anvil_increase_time(advance_time).await?;
-    ctx.provider.anvil_mine(Some(1), None).await?;
-
-    let new_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    assert_eq!(new_epoch, initial_epoch + 1, "Epoch should have advanced by 1");
-    println!("Time advanced: epoch {} -> {}", initial_epoch, new_epoch);
-
-    // Call finalizeEpoch().
-    let finalize_tx = ctx.povw_contract.finalizeEpoch().send().await?;
-    println!("finalizeEpoch transaction sent: {:?}", finalize_tx.tx_hash());
-
-    // Check for the epoch number to be advanced and the EpochFinalized event to be emitted.
-    let finalize_receipt = finalize_tx.get_receipt().await?;
-    let finalize_logs = finalize_receipt.logs();
-
-    // Find the EpochFinalized event
-    let epoch_finalized_events = finalize_logs
-        .iter()
-        .filter_map(|log| log.log_decode::<common::PoVW::EpochFinalized>().ok())
-        .collect::<Vec<_>>();
-
-    assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");
-    let finalized_event = &epoch_finalized_events[0].inner.data;
+    // Advance time to the next epoch and finalize the initial epoch.
+    let new_epoch = ctx.advance_epochs(1).await?;
+    let finalized_event = ctx.finalize_epoch().await?;
 
     println!("EpochFinalized event: {:?}", finalized_event);
     assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
-    assert_eq!(finalized_event.totalWork, U256::from(journal.update.updateWork));
+    assert_eq!(finalized_event.totalWork, U256::from(update.update_value));
 
     let pending_epoch = ctx.povw_contract.pendingEpoch().call().await?;
     assert_eq!(pending_epoch.number, new_epoch);
