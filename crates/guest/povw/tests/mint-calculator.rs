@@ -4,16 +4,28 @@
 
 #![allow(unused_imports)] // DO NOT MERGE
 
+use std::collections::BTreeSet;
+
 use alloy::{
     network::EthereumWallet,
     node_bindings::Anvil,
-    primitives::{Address, Bytes, FixedBytes, U256},
-    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider},
+    primitives::{utils::Unit, Address, Bytes, FixedBytes, U256},
+    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol,
 };
 use alloy_sol_types::SolValue;
 use risc0_ethereum_contracts::{encode_seal, selector::Selector};
+
+use boundless_povw_guests::{
+    log_updater::{Input as LogUpdaterInput, LogBuilderJournal, WorkLogUpdate},
+    mint_calculator::Input as MintCalculatorInput,
+    BOUNDLESS_POVW_LOG_UPDATER_ID, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
+};
+use risc0_povw::WorkLog;
+use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
+use risc0_steel::ethereum::ANVIL_CHAIN_SPEC;
+use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
 mod setup;
 
@@ -29,14 +41,6 @@ async fn basic() -> anyhow::Result<()> {
     println!("  Initial epoch: {}", initial_epoch);
 
     // 2. Post a single work log update to the PoVW contract.
-    use alloy::signers::local::PrivateKeySigner;
-    use boundless_povw_guests::log_updater::{
-        Input as LogUpdaterInput, LogBuilderJournal, WorkLogUpdate,
-    };
-    use boundless_povw_guests::{BOUNDLESS_POVW_LOG_UPDATER_ID, BOUNDLESS_POVW_MINT_CALCULATOR_ID};
-    use risc0_povw::WorkLog;
-    use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-    use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
     let signer = PrivateKeySigner::random();
     let chain_id = ctx.anvil.chain_id();
@@ -82,7 +86,6 @@ async fn basic() -> anyhow::Result<()> {
     println!("Work log update posted: {:?}", update_tx.tx_hash());
 
     // 3. Advance time by 1 epoch.
-    use alloy::providers::ext::AnvilApi;
     let epoch_length = ctx.povw_contract.EPOCH_LENGTH().call().await?;
     let advance_time = epoch_length.to::<u64>() + 1; // Advance by more than one epoch
 
@@ -117,8 +120,6 @@ async fn basic() -> anyhow::Result<()> {
     );
 
     // 5. Query for WorkLogUpdated and EpochFinalized events, recording the block numbers that include these events.
-    use alloy::providers::Provider;
-    use std::collections::BTreeSet;
 
     // Get the current block number to query up to
     let latest_block = ctx.provider.get_block_number().await?;
@@ -156,8 +157,6 @@ async fn basic() -> anyhow::Result<()> {
 
     // 6. Use the Input::build(...) method with the block numbers that have events to create the
     //    input we need for the mint calculator guest.
-    use boundless_povw_guests::mint_calculator::Input as MintCalculatorInput;
-    use risc0_steel::ethereum::ANVIL_CHAIN_SPEC;
 
     let mint_input = MintCalculatorInput::build(
         contract_address, // PoVW contract address
@@ -194,32 +193,27 @@ async fn basic() -> anyhow::Result<()> {
     // 9. Verify that the minted values are as expected.
     let mint_receipt = mint_tx.get_receipt().await?;
     println!("Mint transaction succeeded with {} gas used", mint_receipt.gas_used);
-    
+
     // Query the token balance of our signer who should have received the mint
-    use alloy::sol;
-    use alloy::primitives::utils::Unit;
-    sol! {
-        #[sol(rpc)]
-        interface IERC20 {
-            function balanceOf(address account) external view returns (uint256);
-        }
-    }
-    
+
     let final_balance = ctx.token_contract.balanceOf(signer.address()).call().await?;
     println!("Final token balance for {:?}: {}", signer.address(), final_balance);
-    
+
     // Verify the minted amount matches our expectations
     // Expected calculation: (work_value / epoch_total_work) * EPOCH_REWARD
     // work_value = 25, epoch_total_work = 25, EPOCH_REWARD = 100 * 10^18
     // So expected mint = (25/25) * 100 * 10^18 = 1.0 * 100 ether = 100 ether
     let expected_mint_amount = Unit::ETHER.wei() * U256::from(100);
-    assert_eq!(final_balance, expected_mint_amount, "Minted amount should match expected calculation");
-    
+    assert_eq!(
+        final_balance, expected_mint_amount,
+        "Minted amount should match expected calculation"
+    );
+
     println!("✅ All steps completed successfully!");
     println!("   - Posted work log update with 25 work units");
-    println!("   - Advanced time and finalized epoch");  
+    println!("   - Advanced time and finalized epoch");
     println!("   - Executed mint calculator guest successfully");
     println!("   - Minted {} tokens to {:?}", final_balance, signer.address());
-    
+
     Ok(())
 }
