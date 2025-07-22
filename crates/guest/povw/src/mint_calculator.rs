@@ -10,14 +10,13 @@ use std::{
 };
 
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::sol;
 use risc0_steel::{
     ethereum::{EthChainSpec, EthEvmEnv, EthEvmInput},
     Commitment, StateDb, SteelVerifier,
 };
 use serde::{Deserialize, Serialize};
 
-sol! {
+alloy_sol_types::sol! {
     // Copied from contracts/src/povw/PoVW.sol
     interface IPoVW {
         event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
@@ -27,22 +26,25 @@ sol! {
     }
 
     // Copied from contracts/src/povw/Mint.sol
+    #[derive(Debug)]
     struct MintCalculatorUpdate {
         address workLogId;
         bytes32 initialCommit;
         bytes32 finalCommit;
     }
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct FixedPoint {
         uint256 value;
     }
 
+    #[derive(Debug)]
     struct MintCalculatorMint {
         address recipient;
         FixedPoint value;
     }
 
+    #[derive(Debug)]
     struct MintCalculatorJournal {
         MintCalculatorMint[] mints;
         MintCalculatorUpdate[] updates;
@@ -154,6 +156,13 @@ pub mod host {
 
     use super::*;
 
+    alloy_sol_types::sol! {
+        #[sol(rpc)]
+        interface Mint {
+            function mint(bytes calldata journalBytes, bytes calldata seal) external;
+        }
+    }
+
     impl<P, C> MultiblockEthEvmEnv<ProofDb<ProviderDb<Ethereum, P>>, HostCommit<C>>
     where
         P: Provider + Clone + 'static,
@@ -251,7 +260,7 @@ pub mod host {
                         format!("conflicting blocks with number {block_number}")
                     })?;
                 };
-                multiblock_env.0.insert(block_number, env).unwrap();
+                multiblock_env.0.insert(block_number, env);
             }
             Ok(multiblock_env)
         }
