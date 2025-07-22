@@ -26,11 +26,10 @@ struct PendingEpoch {
     uint32 number;
 }
 
+bytes32 constant EMPTY_LOG_ROOT = hex"180fedca06656cb910077013ad2679695090269fad1589e290162fe90e97d4aa";
+
 contract PoVW is EIP712 {
     IRiscZeroVerifier public immutable VERIFIER;
-
-    /// Precomputed value of the empty work log root. This is expected to be the initial commit of any new log.
-    bytes32 public constant EMPTY_LOG_ROOT = hex"180fedca06656cb910077013ad2679695090269fad1589e290162fe90e97d4aa";
 
     // TODO: Update this with the work log updater. Should the updater commit the builder ID to make it more flexible?
     /// Image ID of the work log builder guest. The log builder ensures:

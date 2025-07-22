@@ -7,7 +7,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
 import {Math} from "openzeppelin/contracts/utils/math/Math.sol";
-import {PoVW} from "./PoVW.sol";
+import {PoVW, EMPTY_LOG_ROOT} from "./PoVW.sol";
 import {IERC20Mint} from "./IERC20Mint.sol";
 import {Steel} from "risc0/steel/Steel.sol";
 
@@ -47,6 +47,13 @@ struct MintCalculatorJournal {
 
 contract Mint {
     using FixedPointLib for FixedPoint;
+
+    /// @dev selector 0x36ce79a0
+    error InvalidSteelCommitment();
+    /// @dev selector 0x82db2de2
+    error IncorrectPovwAddress(address expected, address received);
+    /// @dev selector 0xf4a2b615
+    error IncorrectInitialUpdateCommit(bytes32 expected, bytes32 received);
 
     IRiscZeroVerifier internal immutable VERIFIER;
     IERC20Mint internal immutable TOKEN;
@@ -90,13 +97,26 @@ contract Mint {
     function mint(bytes calldata journalBytes, bytes calldata seal) external {
         VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(journalBytes));
         MintCalculatorJournal memory journal = abi.decode(journalBytes, (MintCalculatorJournal));
-        require(Steel.validateCommitment(journal.steelCommit));
-        require(journal.povwContractAddress == address(POVW));
+        if (!Steel.validateCommitment(journal.steelCommit)) {
+            revert InvalidSteelCommitment();
+        }
+        if (journal.povwContractAddress != address(POVW)) {
+            revert IncorrectPovwAddress({expected: address(POVW), received: journal.povwContractAddress});
+        }
 
         // Ensure the initial commit for each update is correct and update the final commit.
         for (uint256 i = 0; i < journal.updates.length; i++) {
             MintCalculatorUpdate memory update = journal.updates[i];
-            require(update.initialCommit == lastCommit[update.workLogId]);
+
+            // On the first mint for a journal, the initialCommit should be equal to the empty root.
+            bytes32 expectedCommit = lastCommit[update.workLogId];
+            if (expectedCommit == bytes32(0)) {
+                expectedCommit = EMPTY_LOG_ROOT;
+            }
+
+            if (update.initialCommit != expectedCommit) {
+                revert IncorrectInitialUpdateCommit({expected: expectedCommit, received: update.initialCommit});
+            }
             lastCommit[update.workLogId] = update.finalCommit;
         }
 
