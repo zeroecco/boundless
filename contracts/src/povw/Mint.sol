@@ -87,21 +87,22 @@ contract Mint {
         POVW = povw;
     }
 
-    function mint(MintCalculatorJournal calldata journal, bytes calldata seal) external {
-        VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(abi.encode(journal)));
+    function mint(bytes calldata journalBytes, bytes calldata seal) external {
+        VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(journalBytes));
+        MintCalculatorJournal memory journal = abi.decode(journalBytes, (MintCalculatorJournal));
         require(Steel.validateCommitment(journal.steelCommit));
         require(journal.povwContractAddress == address(POVW));
 
         // Ensure the initial commit for each update is correct and update the final commit.
         for (uint256 i = 0; i < journal.updates.length; i++) {
-            MintCalculatorUpdate calldata update = journal.updates[i];
+            MintCalculatorUpdate memory update = journal.updates[i];
             require(update.initialCommit == lastCommit[update.workLogId]);
             lastCommit[update.workLogId] = update.finalCommit;
         }
 
         // Issue all of the mint calls indicated in the journal.
         for (uint256 i = 0; i < journal.mints.length; i++) {
-            MintCalculatorMint calldata mintData = journal.mints[i];
+            MintCalculatorMint memory mintData = journal.mints[i];
             uint256 mintValue = mintData.value.mulUnwrap(EPOCH_REWARD);
             TOKEN.mint(mintData.recipient, mintValue);
         }
