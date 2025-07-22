@@ -6,7 +6,7 @@
 // its own dead code analysis and so will report code used only by the other as dead.
 #![allow(dead_code)]
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use alloy::{
     network::EthereumWallet,
@@ -32,6 +32,7 @@ use risc0_zkvm::{
     default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt, Receipt,
     ReceiptClaim,
 };
+use tokio::sync::Mutex;
 
 // Import the Solidity contracts using alloy's sol! macro
 // Use the compiled contracts output to allow for deploying the contracts.
@@ -63,20 +64,25 @@ sol!(
     "../../../out/Mint.sol/Mint.json"
 );
 
-pub struct TextCtx {
-    pub anvil: AnvilInstance,
+pub struct TestCtx {
+    pub anvil: Arc<Mutex<AnvilInstance>>,
+    pub chain_id: u64,
     pub provider: DynProvider,
     pub token_contract: MockERC20Mint::MockERC20MintInstance<DynProvider>,
     pub povw_contract: PoVW::PoVWInstance<DynProvider>,
     pub mint_contract: IMintInstance<DynProvider>,
 }
 
-pub async fn text_ctx() -> anyhow::Result<TextCtx> {
+pub async fn text_ctx() -> anyhow::Result<TestCtx> {
     let anvil = Anvil::new().spawn();
-    let rpc_url = anvil.endpoint_url();
+    test_ctx_with(Mutex::new(anvil).into(), 0).await
+}
+
+pub async fn test_ctx_with(anvil: Arc<Mutex<AnvilInstance>>, signer_index: usize) -> anyhow::Result<TestCtx> {
+    let rpc_url = anvil.lock().await.endpoint_url();
 
     // Create wallet and provider
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let signer: PrivateKeySigner = anvil.lock().await.keys()[signer_index].clone().into();
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url).erased();
 
@@ -116,10 +122,11 @@ pub async fn text_ctx() -> anyhow::Result<TextCtx> {
     // considered a fully independent type by Rust.
     let mint_interface = IMintInstance::new(*mint_contract.address(), provider.clone());
 
-    Ok(TextCtx { anvil, provider, token_contract, povw_contract, mint_contract: mint_interface })
+    let chain_id = anvil.lock().await.chain_id();
+    Ok(TestCtx { anvil, chain_id, provider, token_contract, povw_contract, mint_contract: mint_interface })
 }
 
-impl TextCtx {
+impl TestCtx {
     pub async fn advance_epochs(&self, epochs: u32) -> anyhow::Result<u32> {
         let initial_epoch = self.povw_contract.currentEpoch().call().await?;
 
@@ -142,7 +149,7 @@ impl TextCtx {
         update: &LogBuilderJournal,
     ) -> anyhow::Result<IPoVW::WorkLogUpdated> {
         let signature = WorkLogUpdate::from(update.clone())
-            .sign(signer, *self.povw_contract.address(), self.anvil.chain_id())
+            .sign(signer, *self.povw_contract.address(), self.chain_id)
             .await?;
 
         // Use execute_log_updater_guest to get a Journal.
@@ -150,7 +157,7 @@ impl TextCtx {
             update: update.clone(),
             signature: signature.as_bytes().to_vec(),
             contract_address: *self.povw_contract.address(),
-            chain_id: self.anvil.chain_id(),
+            chain_id: self.chain_id,
         };
         let journal = execute_log_updater_guest(&input)?;
         println!("Guest execution completed, journal: {:#?}", journal);
@@ -204,36 +211,64 @@ impl TextCtx {
         Ok(epoch_finalized_events[0].inner.data.clone())
     }
 
-    // TODO(povw): Provide a way to specify an initial_epoch block to query, possibly by epoch.
-    pub async fn run_mint(&self) -> anyhow::Result<TransactionReceipt> {
+    pub async fn build_mint_input(&self) -> anyhow::Result<mint_calculator::Input> {
+        self.build_mint_input_for_epochs(&[]).await
+    }
+
+    pub async fn build_mint_input_for_epochs(&self, epochs: &[u32]) -> anyhow::Result<mint_calculator::Input> {
         // Query for WorkLogUpdated and EpochFinalized events, recording the block numbers that include these events.
         let latest_block = self.provider.get_block_number().await?;
-        println!("Running mint operation for blocks: 0 to {latest_block}");
+        let epoch_filter_str = if epochs.is_empty() {
+            "all epochs".to_string()
+        } else {
+            format!("epochs {:?}", epochs)
+        };
+        println!("Running mint operation for blocks: 0 to {latest_block}, filtering for {epoch_filter_str}");
 
         // Query for WorkLogUpdated events
         let work_log_filter =
             self.povw_contract.WorkLogUpdated_filter().from_block(0).to_block(latest_block);
         let work_log_events = work_log_filter.query().await?;
-        println!("Found {} WorkLogUpdated events", work_log_events.len());
+        println!("Found {} total WorkLogUpdated events", work_log_events.len());
 
         // Query for EpochFinalized events
         let epoch_finalized_filter =
             self.povw_contract.EpochFinalized_filter().from_block(0).to_block(latest_block);
         let epoch_finalized_events = epoch_finalized_filter.query().await?;
-        println!("Found {} EpochFinalized events", epoch_finalized_events.len());
+        println!("Found {} total EpochFinalized events", epoch_finalized_events.len());
 
-        // Collect and sort unique block numbers that contain events.
+        // Filter events by epoch if specified
+        let filtered_work_log_events: Vec<_> = if epochs.is_empty() {
+            work_log_events
+        } else {
+            work_log_events.into_iter()
+                .filter(|(event, _)| epochs.contains(&event.epochNumber.to::<u32>()))
+                .collect()
+        };
+
+        let filtered_epoch_finalized_events: Vec<_> = if epochs.is_empty() {
+            epoch_finalized_events
+        } else {
+            epoch_finalized_events.into_iter()
+                .filter(|(event, _)| epochs.contains(&event.epoch.to::<u32>()))
+                .collect()
+        };
+
+        println!("After filtering: {} WorkLogUpdated events, {} EpochFinalized events", 
+                 filtered_work_log_events.len(), filtered_epoch_finalized_events.len());
+
+        // Collect and sort unique block numbers that contain filtered events.
         let mut block_numbers = BTreeSet::new();
-        for (_, log) in &work_log_events {
+        for (event, log) in &filtered_work_log_events {
             if let Some(block_number) = log.block_number {
                 block_numbers.insert(block_number);
-                println!("WorkLogUpdated event at block {}", block_number);
+                println!("WorkLogUpdated event at block {} (epoch {})", block_number, event.epochNumber);
             }
         }
-        for (_, log) in &epoch_finalized_events {
+        for (event, log) in &filtered_epoch_finalized_events {
             if let Some(block_number) = log.block_number {
                 block_numbers.insert(block_number);
-                println!("EpochFinalized event at block {}", block_number);
+                println!("EpochFinalized event at block {} (epoch {})", block_number, event.epoch);
             }
         }
 
@@ -250,6 +285,15 @@ impl TextCtx {
         .await?;
 
         println!("Mint calculator input built with {} blocks", mint_input.env.0.len());
+        Ok(mint_input)
+    }
+
+    pub async fn run_mint(&self) -> anyhow::Result<TransactionReceipt> {
+        self.run_mint_for_epochs(&[]).await
+    }
+
+    pub async fn run_mint_for_epochs(&self, epochs: &[u32]) -> anyhow::Result<TransactionReceipt> {
+        let mint_input = self.build_mint_input_for_epochs(epochs).await?;
 
         // Execute the mint calculator guest
         let mint_journal = execute_mint_calculator_guest(&mint_input)?;

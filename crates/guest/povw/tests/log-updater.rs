@@ -12,6 +12,7 @@
 
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{address, aliases::U96, Address, B256, U256};
+use alloy_sol_types::SolValue;
 use boundless_povw_guests::log_updater::{Input, LogBuilderJournal, WorkLogUpdate};
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
@@ -82,6 +83,271 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
     let err = common::execute_log_updater_guest(&input).unwrap_err();
     println!("execute_log_updater_guest failed with: {err}");
     assert!(err.to_string().contains("recovered signer does not match expected"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_wrong_chain_id() -> anyhow::Result<()> {
+    let signer = PrivateKeySigner::random();
+    let chain_id = 31337;
+    let wrong_chain_id = 1; // Different chain ID
+    let contract_address = address!("0x0000000000000000000000000000000000000f00");
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: Digest::new(rand::random()),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 5,
+        work_log_id: signer.address().into(),
+    };
+
+    let signature =
+        WorkLogUpdate::from(update.clone()).sign(&signer, contract_address, wrong_chain_id).await?;
+
+    let input = Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address,
+        chain_id, // Correct chain ID in input, but signature was for wrong one
+    };
+    let err = common::execute_log_updater_guest(&input).unwrap_err();
+    println!("execute_log_updater_guest failed with: {err}");
+    assert!(err.to_string().contains("recovered signer does not match expected"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_wrong_chain_id_contract() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+    let wrong_chain_id = 1; // Different from Anvil's chain ID (31337)
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 10,
+        work_log_id: signer.address().into(),
+    };
+
+    // Sign with wrong chain ID but execute with that same wrong chain ID
+    let signature = WorkLogUpdate::from(update.clone())
+        .sign(&signer, *ctx.povw_contract.address(), wrong_chain_id)
+        .await?;
+
+    let input = Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address: *ctx.povw_contract.address(),
+        chain_id: wrong_chain_id, // Consistent but wrong chain ID
+    };
+    let journal = common::execute_log_updater_guest(&input)?;
+
+    // Guest execution succeeds with wrong chain ID, but contract should reject
+    let fake_receipt = risc0_zkvm::FakeReceipt::new(risc0_zkvm::ReceiptClaim::ok(
+        boundless_povw_guests::BOUNDLESS_POVW_LOG_UPDATER_ID,
+        journal.abi_encode(),
+    ));
+    let receipt: risc0_zkvm::Receipt = fake_receipt.try_into()?;
+
+    let result = ctx
+        .povw_contract
+        .updateWorkLog(
+            journal.update.workLogId,
+            journal.update.updatedCommit,
+            journal.update.updateWork,
+            common::encode_seal(&receipt)?.into(),
+        )
+        .send()
+        .await;
+
+    assert!(result.is_err(), "Contract should reject wrong chain ID");
+    println!("Contract correctly rejected wrong chain ID: {:?}", result.unwrap_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_wrong_contract_address() -> anyhow::Result<()> {
+    let signer = PrivateKeySigner::random();
+    let chain_id = 31337;
+    let contract_address = address!("0x0000000000000000000000000000000000000f00");
+    let wrong_contract_address = address!("0x0000000000000000000000000000000000000bad");
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: Digest::new(rand::random()),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 5,
+        work_log_id: signer.address().into(),
+    };
+
+    let signature =
+        WorkLogUpdate::from(update.clone()).sign(&signer, wrong_contract_address, chain_id).await?;
+
+    let input = Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address, // Correct contract address in input, but signature was for wrong one
+        chain_id,
+    };
+    let err = common::execute_log_updater_guest(&input).unwrap_err();
+    println!("execute_log_updater_guest failed with: {err}");
+    assert!(err.to_string().contains("recovered signer does not match expected"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_invalid_initial_commit() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    // First, post a valid update to establish a work log state
+    let first_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 10,
+        work_log_id: signer.address().into(),
+    };
+
+    let _first_event = ctx.post_work_log_update(&signer, &first_update).await?;
+
+    // Now try to post a second update with wrong initial commit
+    let wrong_initial_commit = Digest::new(rand::random()); // Should be first_update.updated_commit
+    let second_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: wrong_initial_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 15,
+        work_log_id: signer.address().into(),
+    };
+
+    // This should fail when posted to contract due to wrong initial commit
+    let result = ctx.post_work_log_update(&signer, &second_update).await;
+    assert!(result.is_err(), "Should reject invalid initial commit");
+    
+    let err = result.unwrap_err();
+    println!("Contract correctly rejected invalid initial commit: {err}");
+    // Check for verification failure selector 0x439cc0cd
+    assert!(err.to_string().contains("0x439cc0cd"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_duplicate_update() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 10,
+        work_log_id: signer.address().into(),
+    };
+
+    // Post the update successfully first time
+    let _first_event = ctx.post_work_log_update(&signer, &update).await?;
+
+    // Try to post the exact same update again - should fail
+    let result = ctx.post_work_log_update(&signer, &update).await;
+    assert!(result.is_err(), "Should reject duplicate update");
+    
+    let err = result.unwrap_err();
+    println!("Contract correctly rejected duplicate update: {err}");
+    // Check for verification failure selector 0x439cc0cd
+    assert!(err.to_string().contains("0x439cc0cd"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_invalid_work_log_id() -> anyhow::Result<()> {
+    let signer = PrivateKeySigner::random();
+    let chain_id = 31337;
+    let contract_address = address!("0x0000000000000000000000000000000000000f00");
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: Digest::new(rand::random()),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 5,
+        work_log_id: Address::ZERO.into(), // Invalid zero address
+    };
+
+    let signature =
+        boundless_povw_guests::log_updater::WorkLogUpdate::from(update.clone()).sign(&signer, contract_address, chain_id).await?;
+
+    let input = boundless_povw_guests::log_updater::Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address,
+        chain_id,
+    };
+    let err = common::execute_log_updater_guest(&input).unwrap_err();
+    println!("execute_log_updater_guest failed with: {err}");
+    assert!(err.to_string().contains("recovered signer does not match expected"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_wrong_image_id() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 10,
+        work_log_id: signer.address().into(),
+    };
+
+    // Execute guest to get valid journal
+    let signature = boundless_povw_guests::log_updater::WorkLogUpdate::from(update.clone())
+        .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
+        .await?;
+
+    let input = boundless_povw_guests::log_updater::Input {
+        update: update.clone(),
+        signature: signature.as_bytes().to_vec(),
+        contract_address: *ctx.povw_contract.address(),
+        chain_id: ctx.chain_id,
+    };
+
+    let journal = common::execute_log_updater_guest(&input)?;
+
+    // Create receipt with wrong image ID
+    let wrong_image_id = risc0_zkvm::Digest::new([0xFFFFFFFFu32; 8]); // Wrong image ID
+    let fake_receipt = risc0_zkvm::FakeReceipt::new(risc0_zkvm::ReceiptClaim::ok(
+        wrong_image_id,
+        journal.abi_encode(),
+    ));
+    let receipt: risc0_zkvm::Receipt = fake_receipt.try_into()?;
+
+    // Try to submit to contract with wrong image ID - should fail
+    let result = ctx
+        .povw_contract
+        .updateWorkLog(
+            journal.update.workLogId,
+            journal.update.updatedCommit,
+            journal.update.updateWork,
+            common::encode_seal(&receipt)?.into(),
+        )
+        .send()
+        .await;
+
+    assert!(result.is_err(), "Contract should reject wrong image ID");
+    let err = result.unwrap_err();
+    println!("Contract correctly rejected wrong image ID: {err}");
+    // Check for verification failure selector 0x439cc0cd
+    assert!(err.to_string().contains("0x439cc0cd"));
 
     Ok(())
 }
