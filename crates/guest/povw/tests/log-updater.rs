@@ -161,9 +161,9 @@ async fn contract_integration() -> anyhow::Result<()> {
     assert_eq!(update_event.updatedCommit, journal.update.updatedCommit);
     assert_eq!(update_event.work, U256::from(journal.update.updateWork));
 
-    // Advance time on the Anvil instance.
+    // Advance time on the Anvil instance, forward to the next epoch.
     let epoch_length = ctx.povw_contract.EPOCH_LENGTH().call().await?;
-    let advance_time = epoch_length.to::<u64>() + 1; // Advance by more than one epoch
+    let advance_time = epoch_length.to::<u64>();
 
     ctx.provider.anvil_increase_time(advance_time).await?;
     ctx.provider.anvil_mine(Some(1), None).await?;
