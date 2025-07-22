@@ -9,23 +9,24 @@
 use alloy::{
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, FixedBytes, U256},
-    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WalletProvider},
+    primitives::FixedBytes,
+    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
     sol,
 };
-use alloy_primitives::B256;
 use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
 use anyhow::bail;
 use boundless_povw_guests::{
-    log_updater::{self, LogBuilderJournal, WorkLogUpdate, IPoVW}, mint_calculator::{self, host::IMint::IMintInstance}, BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
+    log_updater::{self, IPoVW, LogBuilderJournal, WorkLogUpdate},
+    mint_calculator::{self, host::IMint::IMintInstance},
+    BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
     BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
-use risc0_ethereum_contracts::selector::Selector;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 use risc0_zkvm::{
-    default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt, Receipt, ReceiptClaim
+    default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt, Receipt,
+    ReceiptClaim,
 };
 
 // Import the Solidity contracts using alloy's sol! macro
@@ -131,9 +132,14 @@ impl TextCtx {
         Ok(new_epoch)
     }
 
-    pub async fn post_work_log_update(&self, signer: &impl Signer, update: &LogBuilderJournal) -> anyhow::Result<IPoVW::WorkLogUpdated> {
-        let signature =
-            WorkLogUpdate::from(update.clone()).sign(signer, *self.povw_contract.address(), self.anvil.chain_id()).await?;
+    pub async fn post_work_log_update(
+        &self,
+        signer: &impl Signer,
+        update: &LogBuilderJournal,
+    ) -> anyhow::Result<IPoVW::WorkLogUpdated> {
+        let signature = WorkLogUpdate::from(update.clone())
+            .sign(signer, *self.povw_contract.address(), self.anvil.chain_id())
+            .await?;
 
         // Use execute_log_updater_guest to get a Journal.
         let input = log_updater::Input {

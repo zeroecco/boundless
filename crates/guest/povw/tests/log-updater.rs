@@ -12,14 +12,10 @@
 
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{address, aliases::U96, Address, B256, U256};
-use alloy_sol_types::SolValue;
-use boundless_povw_guests::{
-    log_updater::{Input, LogBuilderJournal, WorkLogUpdate},
-    BOUNDLESS_POVW_LOG_UPDATER_ID,
-};
+use boundless_povw_guests::log_updater::{Input, LogBuilderJournal, WorkLogUpdate};
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
+use risc0_zkvm::Digest;
 
 mod common;
 
