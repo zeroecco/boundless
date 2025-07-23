@@ -13,7 +13,10 @@
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{address, aliases::U96, Address, B256, U256};
 use alloy_sol_types::SolValue;
-use boundless_povw_guests::{log_updater::{Input, LogBuilderJournal, WorkLogUpdate}, BOUNDLESS_POVW_LOG_UPDATER_ID};
+use boundless_povw_guests::{
+    log_updater::{Input, LogBuilderJournal, WorkLogUpdate},
+    BOUNDLESS_POVW_LOG_UPDATER_ID,
+};
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
 use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
@@ -586,38 +589,40 @@ async fn measure_log_update_gas() -> anyhow::Result<()> {
         let signer = signer.clone();
 
         async move |update: LogBuilderJournal| -> anyhow::Result<u64> {
-        let signature = WorkLogUpdate::from(update.clone())
-            .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
-            .await?;
+            let signature = WorkLogUpdate::from(update.clone())
+                .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
+                .await?;
 
-        let input = Input {
-            update: update.clone(),
-            signature: signature.as_bytes().to_vec(),
-            contract_address: *ctx.povw_contract.address(),
-            chain_id: ctx.chain_id,
-        };
-        let journal = common::execute_log_updater_guest(&input)?;
-        let fake_receipt: Receipt =
-            FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
-                .try_into()?;
+            let input = Input {
+                update: update.clone(),
+                signature: signature.as_bytes().to_vec(),
+                contract_address: *ctx.povw_contract.address(),
+                chain_id: ctx.chain_id,
+            };
+            let journal = common::execute_log_updater_guest(&input)?;
+            let fake_receipt: Receipt = FakeReceipt::new(ReceiptClaim::ok(
+                BOUNDLESS_POVW_LOG_UPDATER_ID,
+                journal.abi_encode(),
+            ))
+            .try_into()?;
 
-        // Call the PoVW.updateWorkLog function and confirm that it does not revert.
-        let tx_result = ctx
-            .povw_contract
-            .updateWorkLog(
-                journal.update.workLogId,
-                journal.update.updatedCommit,
-                journal.update.updateWork,
-                common::encode_seal(&fake_receipt)?.into(),
-            )
-            .send()
-            .await?;
+            // Call the PoVW.updateWorkLog function and confirm that it does not revert.
+            let tx_result = ctx
+                .povw_contract
+                .updateWorkLog(
+                    journal.update.workLogId,
+                    journal.update.updatedCommit,
+                    journal.update.updateWork,
+                    common::encode_seal(&fake_receipt)?.into(),
+                )
+                .send()
+                .await?;
 
-        let receipt = tx_result.get_receipt().await?;
-        println!("Gas used for tx {}: {}", receipt.transaction_hash, receipt.gas_used);
+            let receipt = tx_result.get_receipt().await?;
+            println!("Gas used for tx {}: {}", receipt.transaction_hash, receipt.gas_used);
 
-        Ok(receipt.gas_used)
-    }
+            Ok(receipt.gas_used)
+        }
     };
 
     let first_update = LogBuilderJournal {
