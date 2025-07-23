@@ -2716,6 +2716,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "bytemuck",
+ "postcard",
  "rand 0.9.1",
  "risc0-build 2.1.2",
  "risc0-build-ethereum 2.2.1",

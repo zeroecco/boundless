@@ -21,8 +21,8 @@ use risc0_steel::{ethereum::ANVIL_CHAIN_SPEC, Event};
 //   * The mint recipient is set correctly.
 fn main() {
     // Read the input from the guest environment.
-    // TODO(povw): Use borsh.
-    let input: Input = env::read();
+    let input: Input =
+        postcard::from_bytes(&env::read_frame()).expect("failed to deserialize input");
 
     // Converts the input into a `EvmEnv` structs for execution.
     let envs = input.env.into_env(&ANVIL_CHAIN_SPEC);
@@ -31,7 +31,8 @@ fn main() {
     let mut epochs = BTreeMap::<u32, U256>::new();
     for env in envs.0.values() {
         // Query all `EpochFinalized` events of the PoVW contract.
-        // TODO(povw): This is possibly wasteful, in that only a subset will have this event.
+        // NOTE: If it is a bottleneck, this can be optimized by taking a hint from the host as to
+        // which blocks contain these events.
         let epoch_finalized_events =
             Event::new::<IPoVW::EpochFinalized>(env).address(input.povw_contract_address).query();
 
@@ -49,7 +50,8 @@ fn main() {
     let mut updates = BTreeMap::<Address, (B256, B256)>::new();
     for env in envs.0.values() {
         // Query all `WorkLogUpdated` events of the PoVW contract.
-        // TODO(povw): This is possibly wasteful, in that only a subset will have this event.
+        // NOTE: If it is a bottleneck, this can be optimized by taking a hint from the host as to
+        // which blocks contain these events.
         let update_events =
             Event::new::<IPoVW::WorkLogUpdated>(env).address(input.povw_contract_address).query();
 
