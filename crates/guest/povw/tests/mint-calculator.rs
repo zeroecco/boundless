@@ -364,7 +364,7 @@ async fn reject_wrong_povw_address() -> anyhow::Result<()> {
     // Execute the mint calculator guest
     let mint_journal = common::execute_mint_calculator_guest(&mint_input)?;
 
-    // Assemble a fake receipt and use it to call the mint function on the Mint contract.
+    // Assemble a fake receipt and use it to call the mint function on the PovwMint contract.
     let mint_receipt: Receipt = FakeReceipt::new(ReceiptClaim::ok(
         BOUNDLESS_POVW_MINT_CALCULATOR_ID,
         mint_journal.abi_encode(),

@@ -22,7 +22,7 @@ use alloy_sol_types::SolValue;
 use anyhow::bail;
 use boundless_povw_guests::{
     log_updater::{self, IPoVW, LogBuilderJournal, WorkLogUpdate},
-    mint_calculator::{self, host::IMint::IMintInstance},
+    mint_calculator::{self, host::IPovwMint::IPovwMintInstance},
     BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
     BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
@@ -60,8 +60,8 @@ sol!(
 
 sol!(
     #[sol(rpc)]
-    Mint,
-    "../../../out/Mint.sol/Mint.json"
+    PovwMint,
+    "../../../out/PovwMint.sol/PovwMint.json"
 );
 
 #[derive(Clone)]
@@ -71,7 +71,7 @@ pub struct TestCtx {
     pub provider: DynProvider,
     pub token_contract: MockERC20Mint::MockERC20MintInstance<DynProvider>,
     pub povw_contract: PoVW::PoVWInstance<DynProvider>,
-    pub mint_contract: IMintInstance<DynProvider>,
+    pub mint_contract: IPovwMintInstance<DynProvider>,
 }
 
 pub async fn text_ctx() -> anyhow::Result<TestCtx> {
@@ -90,7 +90,7 @@ pub async fn test_ctx_with(
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url).erased();
 
-    // Deploy PoVW and Mint contracts to the Anvil instance, using a MockRiscZeroVerifier and a
+    // Deploy PoVW and PovwMint contracts to the Anvil instance, using a MockRiscZeroVerifier and a
     // basic ERC-20.
 
     // Deploy MockRiscZeroVerifier
@@ -111,8 +111,8 @@ pub async fn test_ctx_with(
     .await?;
     println!("PoVW contract deployed at: {:?}", povw_contract.address());
 
-    // Deploy Mint contract (needs verifier, povw, mint calculator ID, and token)
-    let mint_contract = Mint::deploy(
+    // Deploy PovwMint contract (needs verifier, povw, mint calculator ID, and token)
+    let mint_contract = PovwMint::deploy(
         provider.clone(),
         *mock_verifier.address(),
         *povw_contract.address(),
@@ -120,11 +120,11 @@ pub async fn test_ctx_with(
         *token_contract.address(),
     )
     .await?;
-    println!("Mint contract deployed at: {:?}", mint_contract.address());
+    println!("PovwMint contract deployed at: {:?}", mint_contract.address());
 
-    // Cast the deployed MintInstance to an IMintInstance from the source crate, which is
+    // Cast the deployed PovwMintInstance to an IPovwMintInstance from the source crate, which is
     // considered a fully independent type by Rust.
-    let mint_interface = IMintInstance::new(*mint_contract.address(), provider.clone());
+    let mint_interface = IPovwMintInstance::new(*mint_contract.address(), provider.clone());
 
     let chain_id = anvil.lock().await.chain_id();
     Ok(TestCtx {
@@ -328,7 +328,7 @@ impl TestCtx {
             mint_journal.updates.len()
         );
 
-        // Assemble a fake receipt and use it to call the mint function on the Mint contract.
+        // Assemble a fake receipt and use it to call the mint function on the PovwMint contract.
         let mint_receipt: Receipt = FakeReceipt::new(ReceiptClaim::ok(
             BOUNDLESS_POVW_MINT_CALCULATOR_ID,
             mint_journal.abi_encode(),

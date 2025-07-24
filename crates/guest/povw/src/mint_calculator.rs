@@ -17,7 +17,7 @@ use risc0_steel::{
 use serde::{Deserialize, Serialize};
 
 alloy_sol_types::sol! {
-    // Copied from contracts/src/povw/Mint.sol
+    // Copied from contracts/src/povw/PovwMint.sol
     #[derive(Debug)]
     struct MintCalculatorUpdate {
         address workLogId;
@@ -94,7 +94,7 @@ pub struct Input {
     ///
     /// It is not possible to be assured that this is the correct contract when the guest is
     /// running, and so the behavior of the contract may deviate from expected. If the prover did
-    /// supply the wrong address, the proof will be rejected by the Mint contract when it checks
+    /// supply the wrong address, the proof will be rejected by the minting contract when it checks
     /// the address written to the journal.
     pub povw_contract_address: Address,
     /// Input for constructing a [MultiblockEthEvmEnv] to query a sequence of blocks.
@@ -156,7 +156,7 @@ pub mod host {
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
-        interface IMint {
+        interface IPovwMint {
             function mint(bytes calldata journalBytes, bytes calldata seal) external;
             function EPOCH_REWARD() external view returns (uint256);
         }

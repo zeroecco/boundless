@@ -55,7 +55,11 @@ struct MintCalculatorJournal {
     Steel.Commitment steelCommit;
 }
 
-contract Mint {
+/// PovwMint controls the minting of token rewards associated with Proof of Verifiable Work (PoVW).
+///
+/// This contract consumes updates produced by the mint calculator guest, mints token rewards, and
+/// maintains state to ensure that any given token reward is minted at most once.
+contract PovwMint {
     using FixedPointLib for FixedPoint;
 
     /// @dev selector 0x36ce79a0
@@ -87,6 +91,7 @@ contract Mint {
 
     /// @notice Mapping from work log ID to the most recent work log commit for which a mint has occurred.
     /// @notice Each time a mint occurs associated with a work log, this value ratchets forward.
+    /// It ensure that any given work log update can be used in at most one mint.
     mapping(address => bytes32) internal lastCommit;
 
     constructor(IRiscZeroVerifier verifier, PoVW povw, bytes32 mintCalculatorId, IERC20Mint token) {
