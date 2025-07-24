@@ -265,8 +265,8 @@ pub mod host {
         }
     }
 
-    // TODO(povw): Deduplicate these two blocks. They are duplicated right now due to type system
-    // challenges.
+    // TODO(povw): Deduplicate these two blocks of code. They are duplicated right now due to type
+    // system challenges.
     impl<P: Provider + Clone> MultiblockEthEvmEnvBuilder<P, Beacon> {
         pub async fn build(
             self,
