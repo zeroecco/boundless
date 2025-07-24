@@ -60,8 +60,8 @@ impl MultiblockEthEvmInput {
                 panic!("more than one env input provided for block {}", collision.header().number);
             };
         }
-        // Verify the the envs form a subsequence of a since chain. This is a required check, and so
-        // we do it here before returning the env for the user to make queries.
+        // Verify that the envs form a subsequence of a since chain. This is a required check, and
+        // so we do it here before returning the env for the user to make queries.
         multiblock_env.verify_continuity();
         multiblock_env
     }
@@ -71,8 +71,8 @@ impl MultiblockEthEvmInput {
 pub struct MultiblockEthEvmEnv<Db, Commit>(pub BTreeMap<u64, EthEvmEnv<Db, Commit>>);
 
 impl MultiblockEthEvmEnv<StateDb, Commitment> {
-    /// Ensure that the [EthEvmEnv] in this multiblock env form a subsequence of blocks from a since
-    /// chain, all blocks being an ancestor of the latest block.
+    /// Ensure that the [EthEvmEnv] in this multiblock env form a subsequence of blocks from a
+    /// single chain, all blocks being an ancestor of the latest block.
     fn verify_continuity(&mut self) {
         // NOTE: We don't check that the map is non-empty here.
         self.0.values().reduce(|env_prev, env| {

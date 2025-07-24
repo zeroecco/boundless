@@ -13,7 +13,7 @@ use risc0_steel::{ethereum::ANVIL_CHAIN_SPEC, Event};
 // The mint calculator ensures:
 // * An event was logged by the PoVW accounting contract for each log update and epoch finalization.
 //   * Each event is counted at most once.
-//   * Events from an unbroken chain from initialCommit to updatedCommit. This constitutes an
+//   * Events form an unbroken chain from initialCommit to updatedCommit. This constitutes an
 //     exhaustiveness check such that the prover cannot exclude updates, and thereby deny a reward.
 // * Mint value is calculated correctly from the PoVW accounting totals in each included epoch.
 //   * An event was logged by the PoVW accounting contract for epoch finalization.
