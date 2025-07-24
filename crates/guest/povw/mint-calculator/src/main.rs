@@ -25,6 +25,7 @@ fn main() {
         postcard::from_bytes(&env::read_frame()).expect("failed to deserialize input");
 
     // Converts the input into a `EvmEnv` structs for execution.
+    // TODO(povw): Provide a compile-time option for selecting the chain spec.
     let envs = input.env.into_env(&ANVIL_CHAIN_SPEC);
 
     // Construct a mapping with the total work value for each finalized epoch.
@@ -71,7 +72,7 @@ fn main() {
                 }
             }
 
-            // TODO: Consider minting to an address that is not nessesarily the log id.
+            // TODO: Consider minting to an address that is not necessarily the log id.
             let epoch_number = update_event.epochNumber.to::<u32>();
             let epoch_total_work = *epochs.get(&epoch_number).unwrap_or_else(|| {
                 panic!("no epoch finalized event processed for epoch number {epoch_number}")

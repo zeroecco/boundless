@@ -59,11 +59,11 @@ contract Mint {
     IERC20Mint internal immutable TOKEN;
     PoVW internal immutable POVW;
 
-    // TODO: Extract to a shared library along with EPOCH_LENGTH.
+    // TODO(povw): Extract to a shared library along with EPOCH_LENGTH.
     // NOTE: Example value of 100 tokens per epoch, assuming 18 decimals.
     uint256 internal constant EPOCH_REWARD = 100 * 10 ** 18;
 
-    // TODO: How should the mint recipient be decided? A simple answer would be mint to the work log
+    // TODO(povw): How should the mint recipient be decided? A simple answer would be mint to the work log
     // ID as an address. They are required to know the associated private key, to authorize the work
     // log updates. However, this could be a headache in that the work log key, which previously
     // has low privileges is now has custody of funds unless the owner sweeps the minted tokens into
