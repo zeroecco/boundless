@@ -4,19 +4,19 @@ use risc0_zkvm::guest::env;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
-use boundless_povw_guests::log_updater::IPoVW;
+use boundless_povw_guests::log_updater::IPovwAccounting;
 use boundless_povw_guests::mint_calculator::{
     FixedPoint, Input, MintCalculatorJournal, MintCalculatorMint, MintCalculatorUpdate,
 };
 use risc0_steel::{ethereum::ANVIL_CHAIN_SPEC, Event};
 
 // The mint calculator ensures:
-// * An event was logged by the PoVW contract for each log update and epoch finalization.
+// * An event was logged by the PoVW accounting contract for each log update and epoch finalization.
 //   * Each event is counted at most once.
 //   * Events from an unbroken chain from initialCommit to updatedCommit. This constitutes an
 //     exhaustiveness check such that the prover cannot exclude updates, and thereby deny a reward.
-// * Mint value is calculated correctly from the PoVW totals in each included epoch.
-//   * An event was logged by the PoVW contract for epoch finalization.
+// * Mint value is calculated correctly from the PoVW accounting totals in each included epoch.
+//   * An event was logged by the PoVW accounting contract for epoch finalization.
 //   * The total work from the epoch finalization event is used in the mint calculation.
 //   * The mint recipient is set correctly.
 fn main() {
@@ -31,11 +31,12 @@ fn main() {
     // Construct a mapping with the total work value for each finalized epoch.
     let mut epochs = BTreeMap::<u32, U256>::new();
     for env in envs.0.values() {
-        // Query all `EpochFinalized` events of the PoVW contract.
+        // Query all `EpochFinalized` events of the PoVW accounting contract.
         // NOTE: If it is a bottleneck, this can be optimized by taking a hint from the host as to
         // which blocks contain these events.
-        let epoch_finalized_events =
-            Event::new::<IPoVW::EpochFinalized>(env).address(input.povw_contract_address).query();
+        let epoch_finalized_events = Event::new::<IPovwAccounting::EpochFinalized>(env)
+            .address(input.povw_contract_address)
+            .query();
 
         for epoch_finalized_event in epoch_finalized_events {
             let epoch_number = epoch_finalized_event.epoch.to::<u32>();
@@ -50,11 +51,12 @@ fn main() {
     let mut mints = BTreeMap::<Address, FixedPoint>::new();
     let mut updates = BTreeMap::<Address, (B256, B256)>::new();
     for env in envs.0.values() {
-        // Query all `WorkLogUpdated` events of the PoVW contract.
+        // Query all `WorkLogUpdated` events of the PoVW accounting contract.
         // NOTE: If it is a bottleneck, this can be optimized by taking a hint from the host as to
         // which blocks contain these events.
-        let update_events =
-            Event::new::<IPoVW::WorkLogUpdated>(env).address(input.povw_contract_address).query();
+        let update_events = Event::new::<IPovwAccounting::WorkLogUpdated>(env)
+            .address(input.povw_contract_address)
+            .query();
 
         for update_event in update_events {
             match updates.entry(update_event.workLogId) {

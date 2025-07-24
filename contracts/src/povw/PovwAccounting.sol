@@ -41,7 +41,7 @@ struct PendingEpoch {
 
 bytes32 constant EMPTY_LOG_ROOT = hex"180fedca06656cb910077013ad2679695090269fad1589e290162fe90e97d4aa";
 
-contract PoVW is EIP712 {
+contract PovwAccounting is EIP712 {
     IRiscZeroVerifier public immutable VERIFIER;
 
     /// Image ID of the work log updater guest. The log updater ensures:
@@ -79,7 +79,7 @@ contract PoVW is EIP712 {
         address valueRecipient
     );
 
-    constructor(IRiscZeroVerifier verifier, bytes32 logUpdaterId) EIP712("PoVW", "1") {
+    constructor(IRiscZeroVerifier verifier, bytes32 logUpdaterId) EIP712("PovwAccounting", "1") {
         VERIFIER = verifier;
         LOG_UPDATER_ID = logUpdaterId;
 

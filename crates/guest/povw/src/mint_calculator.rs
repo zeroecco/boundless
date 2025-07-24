@@ -90,7 +90,7 @@ impl MultiblockEthEvmEnv<StateDb, Commitment> {
 
 #[derive(Serialize, Deserialize)]
 pub struct Input {
-    /// Address of the PoVW contract to query.
+    /// Address of the PoVW accounting contract to query.
     ///
     /// It is not possible to be assured that this is the correct contract when the guest is
     /// running, and so the behavior of the contract may deviate from expected. If the prover did
@@ -152,7 +152,7 @@ pub mod host {
     };
 
     use super::*;
-    use crate::log_updater::IPoVW;
+    use crate::log_updater::IPovwAccounting;
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
@@ -326,14 +326,14 @@ pub mod host {
                 .context("failed to preflight verify_continuity")?;
 
             for env in envs.0.values_mut() {
-                Event::preflight::<IPoVW::EpochFinalized>(env)
+                Event::preflight::<IPovwAccounting::EpochFinalized>(env)
                     .address(povw_contract_address)
                     .query()
                     .await
                     .context("failed to query EpochFinalized events")?;
             }
             for env in envs.0.values_mut() {
-                Event::preflight::<IPoVW::WorkLogUpdated>(env)
+                Event::preflight::<IPovwAccounting::WorkLogUpdated>(env)
                     .address(povw_contract_address)
                     .query()
                     .await

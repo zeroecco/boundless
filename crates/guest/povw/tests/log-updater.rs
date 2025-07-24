@@ -629,7 +629,7 @@ async fn measure_log_update_gas() -> anyhow::Result<()> {
             ))
             .try_into()?;
 
-            // Call the PoVW.updateWorkLog function and confirm that it does not revert.
+            // Call the PovwAccounting.updateWorkLog function and confirm that it does not revert.
             let tx_result = ctx
                 .povw_contract
                 .updateWorkLog(

@@ -371,7 +371,7 @@ async fn reject_wrong_povw_address() -> anyhow::Result<()> {
     ))
     .try_into()?;
 
-    // Submit the mint to deployment #2. This should fail as the contract address for the PoVW
+    // Submit the mint to deployment #2. This should fail as the contract address for the PovwAccounting
     // contract is wrong.
     let result = ctx2
         .mint_contract
@@ -379,9 +379,9 @@ async fn reject_wrong_povw_address() -> anyhow::Result<()> {
         .send()
         .await;
 
-    assert!(result.is_err(), "Should reject wrong PoVW contract address");
+    assert!(result.is_err(), "Should reject wrong PovwAccounting contract address");
     let err = result.unwrap_err();
-    println!("Contract correctly rejected wrong PoVW address: {err}");
+    println!("Contract correctly rejected wrong PovwAccounting address: {err}");
     // Check for IncorrectPovwAddress error selector 0x82db2de2
     assert!(err.to_string().contains("0x82db2de2"));
 

@@ -21,7 +21,7 @@ use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
 use anyhow::bail;
 use boundless_povw_guests::{
-    log_updater::{self, IPoVW, LogBuilderJournal, WorkLogUpdate},
+    log_updater::{self, IPovwAccounting, LogBuilderJournal, WorkLogUpdate},
     mint_calculator::{self, host::IPovwMint::IPovwMintInstance},
     BOUNDLESS_POVW_LOG_UPDATER_ELF, BOUNDLESS_POVW_LOG_UPDATER_ID,
     BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
@@ -54,8 +54,8 @@ sol!(
 sol!(
     #[sol(rpc)]
     #[derive(Debug)]
-    PoVW,
-    "../../../out/PoVW.sol/PoVW.json"
+    PovwAccounting,
+    "../../../out/PovwAccounting.sol/PovwAccounting.json"
 );
 
 sol!(
@@ -70,7 +70,7 @@ pub struct TestCtx {
     pub chain_id: u64,
     pub provider: DynProvider,
     pub token_contract: MockERC20Mint::MockERC20MintInstance<DynProvider>,
-    pub povw_contract: PoVW::PoVWInstance<DynProvider>,
+    pub povw_contract: PovwAccounting::PovwAccountingInstance<DynProvider>,
     pub mint_contract: IPovwMintInstance<DynProvider>,
 }
 
@@ -90,7 +90,7 @@ pub async fn test_ctx_with(
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url).erased();
 
-    // Deploy PoVW and PovwMint contracts to the Anvil instance, using a MockRiscZeroVerifier and a
+    // Deploy PovwAccounting and PovwMint contracts to the Anvil instance, using a MockRiscZeroVerifier and a
     // basic ERC-20.
 
     // Deploy MockRiscZeroVerifier
@@ -102,14 +102,14 @@ pub async fn test_ctx_with(
     let token_contract = MockERC20Mint::deploy(provider.clone()).await?;
     println!("MockERC20 deployed at: {:?}", token_contract.address());
 
-    // Deploy PoVW contract (needs verifier and log builder ID)
-    let povw_contract = PoVW::deploy(
+    // Deploy PovwAccounting contract (needs verifier and log builder ID)
+    let povw_contract = PovwAccounting::deploy(
         provider.clone(),
         *mock_verifier.address(),
         bytemuck::cast::<_, [u8; 32]>(BOUNDLESS_POVW_LOG_UPDATER_ID).into(),
     )
     .await?;
-    println!("PoVW contract deployed at: {:?}", povw_contract.address());
+    println!("PovwAccounting contract deployed at: {:?}", povw_contract.address());
 
     // Deploy PovwMint contract (needs verifier, povw, mint calculator ID, and token)
     let mint_contract = PovwMint::deploy(
@@ -159,7 +159,7 @@ impl TestCtx {
         signer: &impl Signer,
         update: &LogBuilderJournal,
         value_recipient: Address,
-    ) -> anyhow::Result<IPoVW::WorkLogUpdated> {
+    ) -> anyhow::Result<IPovwAccounting::WorkLogUpdated> {
         let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), value_recipient)
             .sign(signer, *self.povw_contract.address(), self.chain_id)
             .await?;
@@ -179,7 +179,7 @@ impl TestCtx {
             FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
                 .try_into()?;
 
-        // Call the PoVW.updateWorkLog function and confirm that it does not revert.
+        // Call the PovwAccounting.updateWorkLog function and confirm that it does not revert.
         let tx_result = self
             .povw_contract
             .updateWorkLog(
@@ -200,7 +200,7 @@ impl TestCtx {
         // Find the WorkLogUpdated event
         let work_log_updated_events = logs
             .iter()
-            .filter_map(|log| log.log_decode::<IPoVW::WorkLogUpdated>().ok())
+            .filter_map(|log| log.log_decode::<IPovwAccounting::WorkLogUpdated>().ok())
             .collect::<Vec<_>>();
 
         assert_eq!(work_log_updated_events.len(), 1, "Expected exactly one WorkLogUpdated event");
@@ -208,7 +208,7 @@ impl TestCtx {
         Ok(update_event.clone())
     }
 
-    pub async fn finalize_epoch(&self) -> anyhow::Result<IPoVW::EpochFinalized> {
+    pub async fn finalize_epoch(&self) -> anyhow::Result<IPovwAccounting::EpochFinalized> {
         let finalize_tx = self.povw_contract.finalizeEpoch().send().await?;
         println!("finalizeEpoch transaction sent: {:?}", finalize_tx.tx_hash());
 
@@ -218,7 +218,7 @@ impl TestCtx {
         // Find the EpochFinalized event
         let epoch_finalized_events = finalize_logs
             .iter()
-            .filter_map(|log| log.log_decode::<IPoVW::EpochFinalized>().ok())
+            .filter_map(|log| log.log_decode::<IPovwAccounting::EpochFinalized>().ok())
             .collect::<Vec<_>>();
 
         assert_eq!(epoch_finalized_events.len(), 1, "Expected exactly one EpochFinalized event");

@@ -7,7 +7,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroSetVerifier.sol";
 import {Math} from "openzeppelin/contracts/utils/math/Math.sol";
-import {PoVW, EMPTY_LOG_ROOT} from "./PoVW.sol";
+import {PovwAccounting, EMPTY_LOG_ROOT} from "./PovwAccounting.sol";
 import {IERC20Mint} from "./IERC20Mint.sol";
 import {Steel} from "risc0/steel/Steel.sol";
 
@@ -49,7 +49,7 @@ struct MintCalculatorJournal {
     MintCalculatorMint[] mints;
     /// Mints to issue.
     MintCalculatorUpdate[] updates;
-    /// Address of the queried PoVW contract. Must be checked to be equal to the expected address.
+    /// Address of the queried PovwAccounting contract. Must be checked to be equal to the expected address.
     address povwContractAddress;
     /// A Steel commitment. Must be a valid commitment in the current chain.
     Steel.Commitment steelCommit;
@@ -71,7 +71,7 @@ contract PovwMint {
 
     IRiscZeroVerifier internal immutable VERIFIER;
     IERC20Mint internal immutable TOKEN;
-    PoVW internal immutable POVW;
+    PovwAccounting internal immutable ACCOUNTING;
 
     // TODO(povw): Extract to a shared library along with EPOCH_LENGTH.
     // NOTE: Example value of 100 tokens per epoch, assuming 18 decimals.
@@ -79,12 +79,12 @@ contract PovwMint {
 
     /// @notice Image ID of the mint calculator guest.
     /// @dev The mint calculator ensures:
-    /// * An event was logged by the PoVW contract for each log update and epoch finalization.
+    /// * An event was logged by the PoVW accounting contract for each log update and epoch finalization.
     ///   * Each event is counted at most once.
     ///   * Events form an unbroken chain from initialCommit to updatedCommit. This constitutes an
     ///     exhaustiveness check such that the prover cannot exclude updates, and thereby deny a reward.
     /// * Mint value is calculated correctly from the PoVW totals in each included epoch.
-    ///   * An event was logged by the PoVW contract for epoch finalization.
+    ///   * An event was logged by the PoVW accounting contract for epoch finalization.
     ///   * The total work from the epoch finalization event is used in the mint calculation.
     ///   * The mint recipient is set correctly.
     bytes32 internal immutable MINT_CALCULATOR_ID;
@@ -94,11 +94,11 @@ contract PovwMint {
     /// It ensure that any given work log update can be used in at most one mint.
     mapping(address => bytes32) internal lastCommit;
 
-    constructor(IRiscZeroVerifier verifier, PoVW povw, bytes32 mintCalculatorId, IERC20Mint token) {
+    constructor(IRiscZeroVerifier verifier, PovwAccounting povw, bytes32 mintCalculatorId, IERC20Mint token) {
         VERIFIER = verifier;
         MINT_CALCULATOR_ID = mintCalculatorId;
         TOKEN = token;
-        POVW = povw;
+        ACCOUNTING = povw;
     }
 
     /// @notice Mint tokens as a reward for verifiable work.
@@ -109,8 +109,8 @@ contract PovwMint {
         if (!Steel.validateCommitment(journal.steelCommit)) {
             revert InvalidSteelCommitment();
         }
-        if (journal.povwContractAddress != address(POVW)) {
-            revert IncorrectPovwAddress({expected: address(POVW), received: journal.povwContractAddress});
+        if (journal.povwContractAddress != address(ACCOUNTING)) {
+            revert IncorrectPovwAddress({expected: address(ACCOUNTING), received: journal.povwContractAddress});
         }
 
         // Ensure the initial commit for each update is correct and update the final commit.

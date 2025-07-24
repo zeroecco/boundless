@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 
 // TODO(povw): Provide a way to fix RISC0_POVW_LOG_BUILDER_ID value to a reproducible build for deployment.
 
-// NOTE: Copied from PoVW.sol. Must be kept in sync.
+// NOTE: Copied from PovwAccounting.sol. Must be kept in sync.
 // TODO(povw): Avoid copying this data type here.
 sol! {
-    // Copied from contracts/src/povw/PoVW.sol
+    // Copied from contracts/src/povw/PovwAccounting.sol
     #[derive(Debug)]
-    interface IPoVW {
+    interface IPovwAccounting {
         event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
         event WorkLogUpdated(
             address indexed workLogId,
@@ -65,7 +65,7 @@ impl WorkLogUpdate {
 
     pub fn eip712_domain(contract_addr: Address, chain_id: u64) -> Eip712Domain {
         eip712_domain! {
-            name: "PoVW",
+            name: "PovwAccounting",
             version: "1",
             chain_id: chain_id,
             verifying_contract: contract_addr,
