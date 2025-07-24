@@ -37,8 +37,9 @@ async fn basic() -> anyhow::Result<()> {
         work_log_id: signer.address().into(),
     };
 
-    let signature =
-        WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address()).sign(&signer, contract_address, chain_id).await?;
+    let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
+        .sign(&signer, contract_address, chain_id)
+        .await?;
 
     let input = Input {
         update: update.clone(),
@@ -76,8 +77,9 @@ async fn reject_wrong_signer() -> anyhow::Result<()> {
     };
 
     let wrong_signer = PrivateKeySigner::random();
-    let signature =
-        WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address()).sign(&wrong_signer, contract_address, chain_id).await?;
+    let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
+        .sign(&wrong_signer, contract_address, chain_id)
+        .await?;
 
     let input = Input {
         update: update.clone(),
@@ -108,8 +110,9 @@ async fn reject_wrong_chain_id() -> anyhow::Result<()> {
         work_log_id: signer.address().into(),
     };
 
-    let signature =
-        WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address()).sign(&signer, contract_address, wrong_chain_id).await?;
+    let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
+        .sign(&signer, contract_address, wrong_chain_id)
+        .await?;
 
     let input = Input {
         update: update.clone(),
@@ -193,8 +196,9 @@ async fn reject_wrong_contract_address() -> anyhow::Result<()> {
         work_log_id: signer.address().into(),
     };
 
-    let signature =
-        WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address()).sign(&signer, wrong_contract_address, chain_id).await?;
+    let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
+        .sign(&signer, wrong_contract_address, chain_id)
+        .await?;
 
     let input = Input {
         update: update.clone(),
@@ -290,9 +294,12 @@ async fn reject_invalid_work_log_id() -> anyhow::Result<()> {
         work_log_id: Address::ZERO.into(), // Invalid zero address
     };
 
-    let signature = boundless_povw_guests::log_updater::WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
-        .sign(&signer, contract_address, chain_id)
-        .await?;
+    let signature = boundless_povw_guests::log_updater::WorkLogUpdate::from_log_builder_journal(
+        update.clone(),
+        signer.address(),
+    )
+    .sign(&signer, contract_address, chain_id)
+    .await?;
 
     let input = boundless_povw_guests::log_updater::Input {
         update: update.clone(),
@@ -322,9 +329,12 @@ async fn reject_wrong_image_id() -> anyhow::Result<()> {
     };
 
     // Execute guest to get valid journal
-    let signature = boundless_povw_guests::log_updater::WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
-        .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
-        .await?;
+    let signature = boundless_povw_guests::log_updater::WorkLogUpdate::from_log_builder_journal(
+        update.clone(),
+        signer.address(),
+    )
+    .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
+    .await?;
 
     let input = boundless_povw_guests::log_updater::Input {
         update: update.clone(),
@@ -492,7 +502,8 @@ async fn two_updates_same_epoch_different_log_ids() -> anyhow::Result<()> {
         work_log_id: signer2.address().into(),
     };
 
-    let second_event = ctx.post_work_log_update(&signer2, &second_update, signer2.address()).await?;
+    let second_event =
+        ctx.post_work_log_update(&signer2, &second_update, signer2.address()).await?;
     println!(
         "Second WorkLogUpdated event: logId={}, updateValue={}",
         second_event.workLogId, second_event.updateValue
@@ -599,9 +610,10 @@ async fn measure_log_update_gas() -> anyhow::Result<()> {
         let signer = signer.clone();
 
         async move |update: LogBuilderJournal| -> anyhow::Result<u64> {
-            let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
-                .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
-                .await?;
+            let signature =
+                WorkLogUpdate::from_log_builder_journal(update.clone(), signer.address())
+                    .sign(&signer, *ctx.povw_contract.address(), ctx.chain_id)
+                    .await?;
 
             let input = Input {
                 update: update.clone(),
@@ -694,9 +706,10 @@ async fn separate_value_recipient() -> anyhow::Result<()> {
         work_log_id: work_log_signer.address().into(),
     };
 
-    let update_event = ctx.post_work_log_update(&work_log_signer, &update, value_recipient.address()).await?;
+    let update_event =
+        ctx.post_work_log_update(&work_log_signer, &update, value_recipient.address()).await?;
     println!("WorkLogUpdated event: {:?}", update_event);
-    
+
     // Verify event fields
     assert_eq!(update_event.workLogId, Address::from(update.work_log_id));
     assert_eq!(update_event.valueRecipient, value_recipient.address());
@@ -724,7 +737,8 @@ async fn multiple_recipients_same_work_log() -> anyhow::Result<()> {
         work_log_id: work_log_signer.address().into(),
     };
 
-    let first_event = ctx.post_work_log_update(&work_log_signer, &first_update, recipient1.address()).await?;
+    let first_event =
+        ctx.post_work_log_update(&work_log_signer, &first_update, recipient1.address()).await?;
     println!("First update: recipient1 gets {} work units", first_event.updateValue);
 
     // Second update: same work log (chained), recipient2 gets rewards
@@ -736,7 +750,8 @@ async fn multiple_recipients_same_work_log() -> anyhow::Result<()> {
         work_log_id: work_log_signer.address().into(),
     };
 
-    let second_event = ctx.post_work_log_update(&work_log_signer, &second_update, recipient2.address()).await?;
+    let second_event =
+        ctx.post_work_log_update(&work_log_signer, &second_update, recipient2.address()).await?;
     println!("Second update: recipient2 gets {} work units", second_event.updateValue);
 
     // Verify both updates have same work log ID but different recipients

@@ -70,10 +70,7 @@ async fn basic() -> anyhow::Result<()> {
     let final_balance = ctx.token_contract.balanceOf(signer.address()).call().await?;
     let epoch_reward = ctx.mint_contract.EPOCH_REWARD().call().await?;
 
-    assert_eq!(
-        final_balance, epoch_reward,
-        "Minted amount should match expected calculation"
-    );
+    assert_eq!(final_balance, epoch_reward, "Minted amount should match expected calculation");
     Ok(())
 }
 
@@ -551,7 +548,8 @@ async fn mint_to_value_recipient() -> anyhow::Result<()> {
         work_log_id: work_log_signer.address().into(),
     };
 
-    let work_log_event = ctx.post_work_log_update(&work_log_signer, &update, value_recipient.address()).await?;
+    let work_log_event =
+        ctx.post_work_log_update(&work_log_signer, &update, value_recipient.address()).await?;
     println!("Work log update posted for epoch {}", work_log_event.epochNumber);
 
     // Verify event has correct value recipient
@@ -570,12 +568,15 @@ async fn mint_to_value_recipient() -> anyhow::Result<()> {
     println!("Mint transaction succeeded with {} gas used", mint_receipt.gas_used);
 
     // Check balances - value_recipient should get tokens, not work_log_signer
-    let work_log_signer_balance = ctx.token_contract.balanceOf(work_log_signer.address()).call().await?;
-    let value_recipient_balance = ctx.token_contract.balanceOf(value_recipient.address()).call().await?;
+    let work_log_signer_balance =
+        ctx.token_contract.balanceOf(work_log_signer.address()).call().await?;
+    let value_recipient_balance =
+        ctx.token_contract.balanceOf(value_recipient.address()).call().await?;
     let epoch_reward = ctx.mint_contract.EPOCH_REWARD().call().await?;
 
     assert_eq!(
-        work_log_signer_balance, U256::ZERO,
+        work_log_signer_balance,
+        U256::ZERO,
         "Work log signer should not receive any tokens"
     );
     assert_eq!(
@@ -610,7 +611,8 @@ async fn single_work_log_multiple_recipients() -> anyhow::Result<()> {
         work_log_id: work_log_signer.address().into(),
     };
 
-    let first_event = ctx.post_work_log_update(&work_log_signer, &first_update, recipient1.address()).await?;
+    let first_event =
+        ctx.post_work_log_update(&work_log_signer, &first_update, recipient1.address()).await?;
     println!("First update: {} work units to recipient1", first_event.updateValue);
 
     // Second update: same work log, chained update -> recipient2
@@ -622,7 +624,8 @@ async fn single_work_log_multiple_recipients() -> anyhow::Result<()> {
         work_log_id: work_log_signer.address().into(),
     };
 
-    let second_event = ctx.post_work_log_update(&work_log_signer, &second_update, recipient2.address()).await?;
+    let second_event =
+        ctx.post_work_log_update(&work_log_signer, &second_update, recipient2.address()).await?;
     println!("Second update: {} work units to recipient2", second_event.updateValue);
 
     // Advance time and finalize epoch
@@ -637,7 +640,8 @@ async fn single_work_log_multiple_recipients() -> anyhow::Result<()> {
     // Check final token balances - should be proportional to work done
     let recipient1_balance = ctx.token_contract.balanceOf(recipient1.address()).call().await?;
     let recipient2_balance = ctx.token_contract.balanceOf(recipient2.address()).call().await?;
-    let work_log_signer_balance = ctx.token_contract.balanceOf(work_log_signer.address()).call().await?;
+    let work_log_signer_balance =
+        ctx.token_contract.balanceOf(work_log_signer.address()).call().await?;
     let epoch_reward = ctx.mint_contract.EPOCH_REWARD().call().await?;
 
     // Expected: recipient1 gets 30/50 = 60%, recipient2 gets 20/50 = 40%
@@ -646,20 +650,25 @@ async fn single_work_log_multiple_recipients() -> anyhow::Result<()> {
 
     // Allow for small rounding errors in fixed-point arithmetic (within 10 wei)
     let tolerance = U256::from(10);
-    
+
     assert_eq!(work_log_signer_balance, U256::ZERO, "Work log signer should not receive tokens");
     assert!(
         recipient1_balance.abs_diff(expected_recipient1) <= tolerance,
         "Recipient1 should get ~60% of epoch reward, got {}, expected {}",
-        recipient1_balance, expected_recipient1
+        recipient1_balance,
+        expected_recipient1
     );
     assert!(
         recipient2_balance.abs_diff(expected_recipient2) <= tolerance,
         "Recipient2 should get ~40% of epoch reward, got {}, expected {}",
-        recipient2_balance, expected_recipient2
+        recipient2_balance,
+        expected_recipient2
     );
 
-    println!("Verified balances: recipient1={}, recipient2={}", recipient1_balance, recipient2_balance);
+    println!(
+        "Verified balances: recipient1={}, recipient2={}",
+        recipient1_balance, recipient2_balance
+    );
 
     Ok(())
 }
@@ -683,7 +692,9 @@ async fn multiple_work_logs_same_recipient() -> anyhow::Result<()> {
         work_log_id: work_log_signer1.address().into(),
     };
 
-    let first_event = ctx.post_work_log_update(&work_log_signer1, &first_update, shared_recipient.address()).await?;
+    let first_event = ctx
+        .post_work_log_update(&work_log_signer1, &first_update, shared_recipient.address())
+        .await?;
     println!("First work log: {} work units to shared recipient", first_event.updateValue);
 
     // Second work log update -> same shared_recipient
@@ -695,7 +706,9 @@ async fn multiple_work_logs_same_recipient() -> anyhow::Result<()> {
         work_log_id: work_log_signer2.address().into(),
     };
 
-    let second_event = ctx.post_work_log_update(&work_log_signer2, &second_update, shared_recipient.address()).await?;
+    let second_event = ctx
+        .post_work_log_update(&work_log_signer2, &second_update, shared_recipient.address())
+        .await?;
     println!("Second work log: {} work units to shared recipient", second_event.updateValue);
 
     // Advance time and finalize epoch
@@ -708,21 +721,25 @@ async fn multiple_work_logs_same_recipient() -> anyhow::Result<()> {
     println!("Mint transaction succeeded with {} gas used", mint_receipt.gas_used);
 
     // Check final token balances
-    let shared_recipient_balance = ctx.token_contract.balanceOf(shared_recipient.address()).call().await?;
-    let work_log_signer1_balance = ctx.token_contract.balanceOf(work_log_signer1.address()).call().await?;
-    let work_log_signer2_balance = ctx.token_contract.balanceOf(work_log_signer2.address()).call().await?;
+    let shared_recipient_balance =
+        ctx.token_contract.balanceOf(shared_recipient.address()).call().await?;
+    let work_log_signer1_balance =
+        ctx.token_contract.balanceOf(work_log_signer1.address()).call().await?;
+    let work_log_signer2_balance =
+        ctx.token_contract.balanceOf(work_log_signer2.address()).call().await?;
     let epoch_reward = ctx.mint_contract.EPOCH_REWARD().call().await?;
 
     // Shared recipient should get the full epoch reward (100% since they get all the work from both logs)
     // Allow for small rounding errors in fixed-point arithmetic (within 10 wei)
     let tolerance = U256::from(10);
-    
+
     assert_eq!(work_log_signer1_balance, U256::ZERO, "Work log signer1 should not receive tokens");
     assert_eq!(work_log_signer2_balance, U256::ZERO, "Work log signer2 should not receive tokens");
     assert!(
         shared_recipient_balance.abs_diff(epoch_reward) <= tolerance,
         "Shared recipient should get ~full epoch reward, got {}, expected {}",
-        shared_recipient_balance, epoch_reward
+        shared_recipient_balance,
+        epoch_reward
     );
 
     println!("Verified: shared_recipient balance = {}", shared_recipient_balance);
