@@ -23,25 +23,35 @@ library FixedPointLib {
     }
 }
 
+/// An update to the commitment for the processing of a work log.
 struct MintCalculatorUpdate {
+    /// Work log ID associated that is updated.
     address workLogId;
+    /// The initial value of the log commitment to which this update is based on.
     bytes32 initialCommit;
-    bytes32 finalCommit;
+    /// The value of the log commitment after this update is applied.
+    bytes32 updatedCommit;
 }
 
+/// A mint action authorized by the mint calculator.
 struct MintCalculatorMint {
+    /// Address of the recipient for the mint.
     address recipient;
-    // Value of the mint towards the recipient, as a fraction of the epoch reward.
+    /// Value of the mint towards the recipient, as a fraction of the epoch reward.
     // NOTE: This may be larger than 1 when aggregating rewards across multiple epochs.
-    // TODO: This only works if the epoch reward is constant per epoch.
+    // TODO(povw): This only works if the epoch reward is constant per epoch.
     FixedPoint value;
 }
 
+/// Journal committed by the mint calculator guest, which contains update and mint actions.
 struct MintCalculatorJournal {
+    /// Updates the work log commitments.
     MintCalculatorMint[] mints;
+    /// Mints to issue.
     MintCalculatorUpdate[] updates;
-    // Address of the queried PoVW contract. Must be checked to be equal to the expected address.
+    /// Address of the queried PoVW contract. Must be checked to be equal to the expected address.
     address povwContractAddress;
+    /// A Steel commitment. Must be a valid commitment in the current chain.
     Steel.Commitment steelCommit;
 }
 
@@ -63,19 +73,11 @@ contract Mint {
     // NOTE: Example value of 100 tokens per epoch, assuming 18 decimals.
     uint256 internal constant EPOCH_REWARD = 100 * 10 ** 18;
 
-    // TODO(povw): How should the mint recipient be decided? A simple answer would be mint to the work log
-    // ID as an address. They are required to know the associated private key, to authorize the work
-    // log updates. However, this could be a headache in that the work log key, which previously
-    // has low privileges is now has custody of funds unless the owner sweeps the minted tokens into
-    // a separate account on a regular basis. Other options include setting a mint recipient on this
-    // contract, or having the work log owner sign a mint authorization message with the intended
-    // recipient.
-
     /// @notice Image ID of the mint calculator guest.
     /// @dev The mint calculator ensures:
     /// * An event was logged by the PoVW contract for each log update and epoch finalization.
     ///   * Each event is counted at most once.
-    ///   * Events from an unbroken chain from initialCommit to finalCommit. This constitutes an
+    ///   * Events form an unbroken chain from initialCommit to updatedCommit. This constitutes an
     ///     exhaustiveness check such that the prover cannot exclude updates, and thereby deny a reward.
     /// * Mint value is calculated correctly from the PoVW totals in each included epoch.
     ///   * An event was logged by the PoVW contract for epoch finalization.
@@ -83,8 +85,8 @@ contract Mint {
     ///   * The mint recipient is set correctly.
     bytes32 internal immutable MINT_CALCULATOR_ID;
 
-    /// Mapping from work log ID to the most recent work log commit for which a mint has occurred.
-    /// Each time a mint occurs associated with a work log, this value ratchets forward.
+    /// @notice Mapping from work log ID to the most recent work log commit for which a mint has occurred.
+    /// @notice Each time a mint occurs associated with a work log, this value ratchets forward.
     mapping(address => bytes32) internal lastCommit;
 
     constructor(IRiscZeroVerifier verifier, PoVW povw, bytes32 mintCalculatorId, IERC20Mint token) {
@@ -94,7 +96,9 @@ contract Mint {
         POVW = povw;
     }
 
+    /// @notice Mint tokens as a reward for verifiable work.
     function mint(bytes calldata journalBytes, bytes calldata seal) external {
+        // Verify the mint is authorized by the mint calculator guest.
         VERIFIER.verify(seal, MINT_CALCULATOR_ID, sha256(journalBytes));
         MintCalculatorJournal memory journal = abi.decode(journalBytes, (MintCalculatorJournal));
         if (!Steel.validateCommitment(journal.steelCommit)) {
@@ -117,7 +121,7 @@ contract Mint {
             if (update.initialCommit != expectedCommit) {
                 revert IncorrectInitialUpdateCommit({expected: expectedCommit, received: update.initialCommit});
             }
-            lastCommit[update.workLogId] = update.finalCommit;
+            lastCommit[update.workLogId] = update.updatedCommit;
         }
 
         // Issue all of the mint calls indicated in the journal.

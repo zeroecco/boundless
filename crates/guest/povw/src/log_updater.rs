@@ -25,7 +25,12 @@ sol! {
     interface IPoVW {
         event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
         event WorkLogUpdated(
-            address indexed workLogId, uint256 epochNumber, bytes32 initialCommit, bytes32 updatedCommit, uint256 work
+            address indexed workLogId,
+            uint256 epochNumber,
+            bytes32 initialCommit,
+            bytes32 updatedCommit,
+            uint256 updateValue,
+            address valueRecipient
         );
     }
 
@@ -34,7 +39,8 @@ sol! {
         address workLogId;
         bytes32 initialCommit;
         bytes32 updatedCommit;
-        uint64 updateWork;
+        uint64 updateValue;
+        address valueRecipient;
     }
 
     #[derive(Debug)]
@@ -47,6 +53,16 @@ sol! {
 }
 
 impl WorkLogUpdate {
+    pub fn from_log_builder_journal(journal: LogBuilderJournal, value_recipient: Address) -> Self {
+        Self {
+            workLogId: journal.work_log_id.into(),
+            initialCommit: <[u8; 32]>::from(journal.initial_commit).into(),
+            updatedCommit: <[u8; 32]>::from(journal.updated_commit).into(),
+            updateValue: journal.update_value,
+            valueRecipient: value_recipient,
+        }
+    }
+
     pub fn eip712_domain(contract_addr: Address, chain_id: u64) -> Eip712Domain {
         eip712_domain! {
             name: "PoVW",
@@ -92,26 +108,34 @@ impl WorkLogUpdate {
     }
 }
 
-impl From<LogBuilderJournal> for WorkLogUpdate {
-    fn from(value: LogBuilderJournal) -> Self {
-        Self {
-            workLogId: value.work_log_id.into(),
-            initialCommit: <[u8; 32]>::from(value.initial_commit).into(),
-            updatedCommit: <[u8; 32]>::from(value.updated_commit).into(),
-            updateWork: value.update_value,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 pub struct Input {
+    /// Work log update built by the log builder guest.
+    ///
+    /// This update is verified and used to construct the [WorkLogUpdate] sent to the PoVW
+    /// accounting smart contract by the log updater guest.
     pub update: LogBuilderJournal,
+    /// Address that will receive any value associated with this update.
+    ///
+    /// The issuance of value to this address is authorized by holder of the key associated with
+    /// the work log ID.
+    #[borsh(
+        deserialize_with = "borsh_deserialize_address",
+        serialize_with = "borsh_serialize_address"
+    )]
+    pub value_recipient: Address,
+    /// EIP-712 ECDSA signature using the private key associated with the work log ID.
+    ///
+    /// This signature is verified by the log updater guest to authorize the update. Authorization
+    /// is required to avoid third-parties posting conflicting updates to any given work log.
     pub signature: Vec<u8>,
+    /// Address of the PoVW accounting contract, used to form the EIP-712 domain.
     #[borsh(
         deserialize_with = "borsh_deserialize_address",
         serialize_with = "borsh_serialize_address"
     )]
     pub contract_address: Address,
+    /// EIP-155 chain ID, used to form the EIP-712 domain.
     pub chain_id: u64,
 }
 

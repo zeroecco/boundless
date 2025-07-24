@@ -15,7 +15,7 @@ fn main() {
 
     // Convert the input to the Solidity struct and verify the EIP-712 signature, using the work
     // log ID as the authenticating party.
-    let update = WorkLogUpdate::from(input.update);
+    let update = WorkLogUpdate::from_log_builder_journal(input.update, input.value_recipient);
     update
         .verify_signature(
             update.workLogId,

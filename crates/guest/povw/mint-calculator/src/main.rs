@@ -13,7 +13,7 @@ use risc0_steel::{ethereum::ANVIL_CHAIN_SPEC, Event};
 // The mint calculator ensures:
 // * An event was logged by the PoVW contract for each log update and epoch finalization.
 //   * Each event is counted at most once.
-//   * Events from an unbroken chain from initialCommit to finalCommit. This constitutes an
+//   * Events from an unbroken chain from initialCommit to updatedCommit. This constitutes an
 //     exhaustiveness check such that the prover cannot exclude updates, and thereby deny a reward.
 // * Mint value is calculated correctly from the PoVW totals in each included epoch.
 //   * An event was logged by the PoVW contract for epoch finalization.
@@ -77,8 +77,8 @@ fn main() {
             let epoch_total_work = *epochs.get(&epoch_number).unwrap_or_else(|| {
                 panic!("no epoch finalized event processed for epoch number {epoch_number}")
             });
-            *mints.entry(update_event.workLogId).or_default() +=
-                FixedPoint::fraction(update_event.work, epoch_total_work);
+            *mints.entry(update_event.valueRecipient).or_default() +=
+                FixedPoint::fraction(update_event.updateValue, epoch_total_work);
         }
     }
 
@@ -92,7 +92,7 @@ fn main() {
             .map(|(log_id, commits)| MintCalculatorUpdate {
                 workLogId: log_id,
                 initialCommit: commits.0,
-                finalCommit: commits.1,
+                updatedCommit: commits.1,
             })
             .collect(),
         povwContractAddress: input.povw_contract_address,

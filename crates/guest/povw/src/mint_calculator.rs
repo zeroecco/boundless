@@ -22,7 +22,7 @@ alloy_sol_types::sol! {
     struct MintCalculatorUpdate {
         address workLogId;
         bytes32 initialCommit;
-        bytes32 finalCommit;
+        bytes32 updatedCommit;
     }
 
     #[derive(Debug, Default)]
