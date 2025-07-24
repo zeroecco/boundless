@@ -71,7 +71,7 @@ contract Mint {
 
     // TODO(povw): Extract to a shared library along with EPOCH_LENGTH.
     // NOTE: Example value of 100 tokens per epoch, assuming 18 decimals.
-    uint256 internal constant EPOCH_REWARD = 100 * 10 ** 18;
+    uint256 public constant EPOCH_REWARD = 100 * 10 ** 18;
 
     /// @notice Image ID of the mint calculator guest.
     /// @dev The mint calculator ensures:
