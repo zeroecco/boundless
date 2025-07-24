@@ -110,7 +110,13 @@ contract PoVW is EIP712 {
     /// log updater is used to ensure the integrity of the update.
     ///
     /// If an epoch is pending finalization, finalization occurs atomically with this call.
-    function updateWorkLog(address workLogId, bytes32 updatedCommit, uint64 updateValue, bytes calldata seal) public {
+    function updateWorkLog(
+        address workLogId,
+        bytes32 updatedCommit,
+        uint64 updateValue,
+        address valueRecipient,
+        bytes calldata seal
+    ) public {
         if (pendingEpoch.number < currentEpoch()) {
             finalizeEpoch();
         }
@@ -127,7 +133,8 @@ contract PoVW is EIP712 {
             workLogId: workLogId,
             initialCommit: initialCommit,
             updatedCommit: updatedCommit,
-            updateValue: updateValue
+            updateValue: updateValue,
+            valueRecipient: valueRecipient
         });
         Journal memory journal = Journal({update: update, eip712Domain: _domainSeparatorV4()});
         VERIFIER.verify(seal, LOG_UPDATER_ID, sha256(abi.encode(journal)));
@@ -138,6 +145,13 @@ contract PoVW is EIP712 {
         // Emit the update event, accessed with Steel to construct the mint authorization.
         // Note that there is no restriction on multiple updates in the same epoch. Posting more than
         // one update in an epoch.
-        emit WorkLogUpdated(workLogId, currentEpoch(), update.initialCommit, update.updatedCommit, uint256(updateValue));
+        emit WorkLogUpdated(
+            workLogId,
+            currentEpoch(),
+            update.initialCommit,
+            update.updatedCommit,
+            uint256(updateValue),
+            update.valueRecipient
+        );
     }
 }
