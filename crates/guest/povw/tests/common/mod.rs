@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use alloy::{
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
-    primitives::FixedBytes,
+    primitives::{Address, FixedBytes},
     providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder},
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
@@ -158,14 +158,16 @@ impl TestCtx {
         &self,
         signer: &impl Signer,
         update: &LogBuilderJournal,
+        value_recipient: Address,
     ) -> anyhow::Result<IPoVW::WorkLogUpdated> {
-        let signature = WorkLogUpdate::from(update.clone())
+        let signature = WorkLogUpdate::from_log_builder_journal(update.clone(), value_recipient)
             .sign(signer, *self.povw_contract.address(), self.chain_id)
             .await?;
 
         // Use execute_log_updater_guest to get a Journal.
         let input = log_updater::Input {
             update: update.clone(),
+            value_recipient,
             signature: signature.as_bytes().to_vec(),
             contract_address: *self.povw_contract.address(),
             chain_id: self.chain_id,
@@ -183,7 +185,8 @@ impl TestCtx {
             .updateWorkLog(
                 journal.update.workLogId,
                 journal.update.updatedCommit,
-                journal.update.updateWork,
+                journal.update.updateValue,
+                journal.update.valueRecipient,
                 encode_seal(&fake_receipt)?.into(),
             )
             .send()

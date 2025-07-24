@@ -102,7 +102,8 @@ pub struct Input {
 }
 
 impl FixedPoint {
-    const BASE: U256 = U256::ONE.checked_shl(128).unwrap();
+    pub const BITS: usize = 128;
+    pub const BASE: U256 = U256::ONE.checked_shl(Self::BITS).unwrap();
 
     /// Construct a fixed-point representation of a fractional value.
     ///
@@ -114,6 +115,10 @@ impl FixedPoint {
         let fraction = num.checked_mul(Self::BASE).unwrap() / dem;
         assert!(fraction <= Self::BASE, "expected fractional value is greater than one");
         Self { value: fraction }
+    }
+
+    pub fn mul_unwrap(&self, x: U256) -> U256 {
+        self.value.checked_mul(x).unwrap().wrapping_shr(Self::BITS)
     }
 }
 
@@ -153,6 +158,7 @@ pub mod host {
         #[sol(rpc)]
         interface IMint {
             function mint(bytes calldata journalBytes, bytes calldata seal) external;
+            function EPOCH_REWARD() external view returns (uint256);
         }
     }
 
