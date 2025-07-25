@@ -105,6 +105,7 @@ contract DeploymentTest is Test {
     function testRouterIsDeployed() external view {
         require(address(verifier) != address(0), "no verifier (router) address is set");
         require(keccak256(address(verifier).code) != keccak256(bytes("")), "verifier code is empty");
+        require(address(verifier) == address(BoundlessMarket(address(boundlessMarket)).VERIFIER()), "verifier address does not match boundless market");
     }
 
     function testSetVerifierIsDeployed() external view {
@@ -120,6 +121,10 @@ contract DeploymentTest is Test {
     function testStakeTokenIsDeployed() external view {
         require(address(stakeToken) != address(0), "no stake token address is set");
         require(keccak256(address(stakeToken).code) != keccak256(bytes("")), "stake token code is empty");
+        require(
+            address(stakeToken) == BoundlessMarket(address(boundlessMarket)).STAKE_TOKEN_CONTRACT(),
+            "stake token address does not match boundless market"
+        );
     }
 
     function testBoundlessMarketOwner() external view {
@@ -189,9 +194,9 @@ contract DeploymentTest is Test {
         Client testProver = createClientContract("PROVER");
         Client client = getClient(1);
         ProofRequest memory request = client.request(1);
-        // 0x9f39696c is the selector for ZKVM_V2.0, update when necessary
+        // 0xbb001d44 is the selector for ZKVM_V2.2, update when necessary
         // or refactor to read from the environment.
-        request.requirements.selector = bytes4(0x9f39696c);
+        request.requirements.selector = bytes4(0xbb001d44);
 
         ProofRequest[] memory requests = new ProofRequest[](1);
         requests[0] = request;
