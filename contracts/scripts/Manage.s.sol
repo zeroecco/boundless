@@ -120,7 +120,7 @@ contract UpgradeBoundlessMarket is BoundlessScript {
         address admin = deploymentConfig.admin.required("admin");
         address marketAddress = deploymentConfig.boundlessMarket.required("boundless-market");
         address stakeToken = deploymentConfig.stakeToken.required("stake-token");
-        address verifier = deploymentConfig.stakeToken.required("verifier");
+        address verifier = deploymentConfig.verifier.required("verifier");
 
         // Get the current assessor image ID and guest URL
         BoundlessMarket market = BoundlessMarket(marketAddress);
