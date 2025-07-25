@@ -143,60 +143,18 @@ contract DeploymentTest is Test {
         );
     }
 
-    function testPriceAndFulfill() external {
-        Client testProver = createClientContract("PROVER");
-        Client client = getClient(1);
-        ProofRequest memory request = client.request(1);
-
-        ProofRequest[] memory requests = new ProofRequest[](1);
-        requests[0] = request;
-        bytes[] memory clientSignatures = new bytes[](1);
-        clientSignatures[0] = client.sign(request);
-
-        (, string memory setBuilderUrl) = setVerifier.imageInfo();
-        (, string memory assessorUrl) = boundlessMarket.imageInfo();
-
-        string[] memory argv = new string[](15);
-        uint256 i = 0;
-        argv[i++] = "boundless-ffi";
-        argv[i++] = "--set-builder-url";
-        argv[i++] = setBuilderUrl;
-        argv[i++] = "--assessor-url";
-        argv[i++] = assessorUrl;
-        argv[i++] = "--boundless-market-address";
-        argv[i++] = vm.toString(address(boundlessMarket));
-        argv[i++] = "--chain-id";
-        argv[i++] = vm.toString(block.chainid);
-        argv[i++] = "--prover-address";
-        argv[i++] = vm.toString(address(testProver));
-        argv[i++] = "--request";
-        argv[i++] = vm.toString(abi.encode(request));
-        argv[i++] = "--signature";
-        argv[i++] = vm.toString(clientSignatures[0]);
-
-        OrderFulfilled memory result = abi.decode(vm.ffi(argv), (OrderFulfilled));
-
-        setVerifier.submitMerkleRoot(result.root, result.seal);
-
-        vm.expectEmit(true, true, true, true);
-        emit IBoundlessMarket.RequestFulfilled(request.id, address(testProver), result.fills[0]);
-        vm.expectEmit(true, true, true, false);
-        emit IBoundlessMarket.ProofDelivered(request.id, address(testProver), result.fills[0]);
-
-        boundlessMarket.priceAndFulfill(
-            requests, clientSignatures, result.fills, result.assessorReceipt
-        );
-        Fulfillment memory fill = result.fills[0];
-        assertTrue(boundlessMarket.requestIsFulfilled(fill.id), "Request should have fulfilled status");
+    function testPriceAndFulfillWithSelector() external {
+        // Test with a selector that matches the default requirements.
+        // 0xbb001d44 is the selector for ZKVM_V2.2, update when necessary
+        bytes memory selector = VM.envBytes("SELECTOR");
+        _testPriceAndFulfillWithSelector(bytes4(selector));
     }
 
-    function testPriceAndFulfillWithSelector() external {
+    function _testPriceAndFulfillWithSelector(bytes4 selector) internal {
         Client testProver = createClientContract("PROVER");
         Client client = getClient(1);
         ProofRequest memory request = client.request(1);
-        // 0xbb001d44 is the selector for ZKVM_V2.2, update when necessary
-        // or refactor to read from the environment.
-        request.requirements.selector = bytes4(0xbb001d44);
+        request.requirements.selector = selector;
 
         ProofRequest[] memory requests = new ProofRequest[](1);
         requests[0] = request;
