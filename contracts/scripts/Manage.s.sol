@@ -104,19 +104,20 @@ contract DeployBoundlessMarket is BoundlessScript {
 
         // Verify the deployment
         BoundlessMarket market = BoundlessMarket(marketAddress);
-        require(market.VERIFIER() == IRiscZeroVerifier(verifier), "market verifier does not match");
+        require(market.VERIFIER() == IRiscZeroVerifier(deploymentConfig.verifier), "verifier does not match");
         (bytes32 assessor_id, string memory guestUrl) = market.imageInfo();
-        require(assessor_id == assessorImageId, "market assessor image ID does not match");
+        require(assessor_id == deploymentConfig.assessorImageId, "assessor image ID does not match");
         require(
-            keccak256(bytes(guestUrl)) == keccak256(bytes(assessorGuestUrl)), "market assessor guest URL does not match"
+            keccak256(bytes(guestUrl)) == keccak256(bytes(deploymentConfig.assessorGuestUrl)),
+            "assessor guest URL does not match"
         );
-        require(market.STAKE_TOKEN_CONTRACT() == stakeToken, "market stake token does not match");
-        require(market.owner() == admin, "market owner does not match the admin");
+        require(market.STAKE_TOKEN_CONTRACT() == deploymentConfig.stakeToken, "stake token does not match");
+        require(market.owner() == deploymentConfig.admin, "market owner does not match the admin");
 
-        console2.log("BoundlessMarket admin is %s", admin);
-        console2.log("BoundlessMarket stake token contract at %s", stakeToken);
-        console2.log("BoundlessMarket verifier contract at %s", verifier);
-        console2.log("BoundlessMarket assessor image ID %s", Strings.toHexString(uint256(assessorImageId), 32));
+        console2.log("BoundlessMarket admin is %s", deploymentConfig.admin);
+        console2.log("BoundlessMarket stake token contract at %s", deploymentConfig.stakeToken);
+        console2.log("BoundlessMarket verifier contract at %s", deploymentConfig.verifier);
+        console2.log("BoundlessMarket assessor image ID %s", Strings.toHexString(uint256(assessor_id), 32));
         console2.log("BoundlessMarket assessor guest URL %s", guestUrl);
 
         console2.log("Deployed BoundlessMarket proxy contract at %s", marketAddress);
@@ -183,21 +184,27 @@ contract UpgradeBoundlessMarket is BoundlessScript {
 
         // Verify the upgrade
         BoundlessMarket upgradedMarket = BoundlessMarket(marketAddress);
-        require(upgradedMarket.VERIFIER() == IRiscZeroVerifier(verifier), "upgraded market verifier does not match");
-        (bytes32 assessor_id, string memory upgradedGuestUrl) = upgradedMarket.imageInfo();
-        require(assessor_id == assessorImageId, "upgraded market assessor image ID does not match");
         require(
-            keccak256(bytes(upgradedGuestUrl)) == keccak256(bytes(assessorGuestUrl)),
+            upgradedMarket.VERIFIER() == IRiscZeroVerifier(deploymentConfig.verifier),
+            "upgraded market verifier does not match"
+        );
+        (bytes32 assessor_id, string memory upgradedGuestUrl) = upgradedMarket.imageInfo();
+        require(assessor_id == deploymentConfig.assessorImageId, "upgraded market assessor image ID does not match");
+        require(
+            keccak256(bytes(upgradedGuestUrl)) == keccak256(bytes(deploymentConfig.assessorGuestUrl)),
             "upgraded market assessor guest URL does not match"
         );
-        require(upgradedMarket.STAKE_TOKEN_CONTRACT() == stakeToken, "upgraded market stake token does not match");
-        require(upgradedMarket.owner() == admin, "upgraded market admin does not match the admin");
+        require(
+            upgradedMarket.STAKE_TOKEN_CONTRACT() == deploymentConfig.stakeToken,
+            "upgraded market stake token does not match"
+        );
+        require(upgradedMarket.owner() == deploymentConfig.admin, "upgraded market admin does not match the admin");
 
-        console2.log("Upgraded BoundlessMarket admin is %s", admin);
+        console2.log("Upgraded BoundlessMarket admin is %s", deploymentConfig.admin);
         console2.log("Upgraded BoundlessMarket proxy contract at %s", marketAddress);
-        console2.log("Upgraded BoundlessMarket stake token contract at %s", stakeToken);
-        console2.log("Upgraded BoundlessMarket verifier contract at %s", verifier);
-        console2.log("Upgraded BoundlessMarket assessor image ID %s", Strings.toHexString(uint256(assessorImageId), 32));
+        console2.log("Upgraded BoundlessMarket stake token contract at %s", deploymentConfig.stakeToken);
+        console2.log("Upgraded BoundlessMarket verifier contract at %s", deploymentConfig.verifier);
+        console2.log("Upgraded BoundlessMarket assessor image ID %s", Strings.toHexString(uint256(assessor_id), 32));
         console2.log("Upgraded BoundlessMarket assessor guest URL %s", upgradedGuestUrl);
     }
 }
