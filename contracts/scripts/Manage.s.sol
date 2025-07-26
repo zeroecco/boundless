@@ -193,7 +193,7 @@ contract UpgradeBoundlessMarket is BoundlessScript {
         require(upgradedMarket.STAKE_TOKEN_CONTRACT() == stakeToken, "upgraded market stake token does not match");
         require(upgradedMarket.owner() == admin, "upgraded market admin does not match the admin");
 
-        console2.log("Upgraded BoundlessMarket owner is %s", admin);
+        console2.log("Upgraded BoundlessMarket admin is %s", admin);
         console2.log("Upgraded BoundlessMarket proxy contract at %s", marketAddress);
         console2.log("Upgraded BoundlessMarket stake token contract at %s", stakeToken);
         console2.log("Upgraded BoundlessMarket verifier contract at %s", verifier);
