@@ -100,8 +100,8 @@ async fn main() -> Result<()> {
     let mut stdout = take_stdout()?;
     let (set_builder_url, assessor_url) = if let Some(gateway) = args.ipfs_gateway {
         (
-            format!("{}/ipfs/{}", gateway, args.set_builder_url.split('/').last().unwrap()),
-            format!("{}/ipfs/{}", gateway, args.assessor_url.split('/').last().unwrap()),
+            format!("{}/ipfs/{}", gateway, args.set_builder_url.split('/').next_back().unwrap()),
+            format!("{}/ipfs/{}", gateway, args.assessor_url.split('/').next_back().unwrap()),
         )
     } else {
         (args.set_builder_url, args.assessor_url)
