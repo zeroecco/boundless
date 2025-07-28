@@ -51,24 +51,29 @@ You can omit the `PRIVATE_KEY` environment variable here and specify your `walle
 
 ### Settings in Broker.toml
 
+:::tip[See all broker.toml settings]
+To see all the possible settings in `broker.toml`, please refer to [broker-template.toml](https://github.com/boundless-xyz/boundless/blob/main/broker-template.toml) in the Boundless monorepo.
+:::
+
 :::warning[Warning]
 Quotation marks matter in TOML so please pay particular attention to the quotation marks for config values.
 :::
 
-`broker.toml` contains the following settings for the market:
+Below are some `broker.toml` settings:
 
 | setting                  | initial value | description                                                                                                    |
 | ------------------------ | ------------- | -------------------------------------------------------------------------------------------------------------- |
 | mcycle\_price            | `".001"`      | The price (in native token of target market) of proving 1M cycles.                                             |
 | assumption\_price        | `"0.1"`       | Currently unused.                                                                                              |
-| peak\_prove\_khz         | `500`         | This should correspond to the maximum number of cycles per second (in kHz) your proving backend can operate.   |
+| peak\_prove\_khz         | `500`         | This should correspond to the maximum number of cycles per second (in kHz) your proving backend can operate - see [Benchmarking Bento](#benchmarking-bento). |
 | min\_deadline            | `150`         | This is a minimum number of blocks before the requested job expiration that Broker will attempt to lock a job. |
 | lookback\_blocks         | `100`         | This is used on Broker initialization, and sets the number of blocks to look back for candidate proofs.        |
 | max\_stake               | `"0.5"`       | The maximum amount used to lock in a job for any single order.                                                 |
 | skip\_preflight\_ids     | `[]`          | A list of `imageID`s that the Broker should skip preflight checks in format `["0xID1","0xID2"]`.               |
 | max\_file\_size          | `50_000_000`  | The maximum guest image size in bytes that the Broker will accept.                                             |
-| allow\_client\_addresses | `[]`          | When defined, this acts as a firewall to limit proving only to specific client addresses.                           |
+| allow\_client\_addresses | `["0x1234..."]` | Optional whitelist of requestor addresses. When defined, only requests from these requestor addresses will be processed. Use format `["0xAddress1", "0xAddress2"]`. |
 | lockin\_priority\_gas    | `100`         | Additional gas to add to the base price when locking in stake on a contract to increase priority.              |
+
 
 ## Broker Operation
 
@@ -198,6 +203,55 @@ just broker
 ```
 
 ::::
+
+## Running Multiple Brokers
+
+You can run multiple broker instances simultaneously to serve different networks at the same time while sharing the same Bento cluster. The Docker compose setup supports this through the `broker2` service example.
+
+### Multi-Broker Configuration
+
+Each broker instance requires:
+
+1. **Separate configuration file**: Create different `broker.toml` files (e.g., `broker.toml`, `broker2.toml`, etc.)
+2. **Different RPC URL**: Use different chain endpoints via setting respective `RPC_URL` environment variables, or modifying the `compose.yml` manually.
+3. **Optional separate private key**: Use different `PRIVATE_KEY` variables if desired for different accounts on different networks.
+
+### Environment Variables for Multi-Broker Setup
+
+If using the default `compose.yml` file and uncommenting the second broker config:
+
+```bash [.env]
+# Export environment variables for the first broker
+export RPC_URL=<URL for network 1>
+export PRIVATE_KEY=0x...
+
+# Export environment variables for the second broker
+export RPC_URL_2=<URL for network 2>
+```
+
+Then, create the new broker config file that the second broker will use:
+
+```bash [Terminal]
+# Copy from an existing broker config file
+cp broker.toml broker2.toml
+
+# Or creating one from a fresh template
+cp broker-template.toml broker2.toml
+```
+
+Then, modify configuation values for each network, keeping the following in mind:
+
+- The `peak_prove_khz` setting is shared across all brokers
+  - For example, if you have [benchmarked](#benchmarking-bento) your broker to be able to prove at 500kHz, the values in each config should not sum up to be more than 500kHz.
+- `max_concurrent_preflights` is set to a value that the bento cluster can keep up with
+  - It is recommended that the max concurrent preflights across all networks is less than the number of exec agents you have specified in your `compose.yml`.
+- `max_concurrent_proofs` is a per-broker configuration, and is not shared across brokers
+
+Then, just start the cluster as you normally would with:
+
+```bash [Terminal]
+just broker
+```
 
 ## Broker Optimization
 

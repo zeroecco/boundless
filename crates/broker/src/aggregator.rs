@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use alloy::primitives::{utils, Address};
 use anyhow::{Context, Result};
@@ -486,7 +496,7 @@ impl AggregatorService {
 
             let assessor_proof_id =
                 self.prove_assessor(&assessor_order_ids).await.with_context(|| {
-                    format!("Failed to prove assessor with orders {:x?}", assessor_order_ids)
+                    format!("Failed to prove assessor with orders {assessor_order_ids:x?}")
                 })?;
 
             tracing::debug!(
@@ -580,7 +590,10 @@ impl AggregatorService {
         };
 
         if compress {
-            tracing::debug!("Starting groth16 compression proof for batch {batch_id}");
+            tracing::debug!(
+                "Starting groth16 compression proof for batch {batch_id} with orders {:x?}",
+                batch.orders
+            );
 
             let (retry_count, sleep_ms) = {
                 let config = self.config.lock_all().context("Failed to lock config")?;
@@ -604,7 +617,10 @@ impl AggregatorService {
                     return Err(AggregatorErr::CompressionErr(err));
                 }
             };
-            tracing::debug!("Completed groth16 compression for batch {batch_id}");
+            tracing::debug!(
+                "Completed groth16 compression for batch {batch_id} with orders {:x?}",
+                batch.orders
+            );
 
             self.db
                 .complete_batch(batch_id, &compress_proof_id)

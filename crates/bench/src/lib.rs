@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{collections::HashSet, fs::File, path::PathBuf, time::Duration};
 
@@ -446,10 +456,17 @@ mod tests {
     use boundless_market::storage::StorageProviderConfig;
     use boundless_market_test_utils::{create_test_ctx, LOOP_PATH};
     use broker::{config::Config, Args, Broker};
-    use risc0_zkvm::is_dev_mode;
     use tracing_test::traced_test;
 
     use super::*;
+
+    fn is_dev_mode() -> bool {
+        std::env::var("RISC0_DEV_MODE")
+            .ok()
+            .map(|x| x.to_lowercase())
+            .filter(|x| x == "1" || x == "true" || x == "yes")
+            .is_some()
+    }
 
     fn broker_args(
         config_file: PathBuf,
@@ -474,10 +491,14 @@ mod tests {
         Args {
             db_url: "sqlite::memory:".into(),
             config_file,
-            boundless_market_address,
-            set_verifier_address,
+            deployment: Some(
+                Deployment::builder()
+                    .boundless_market_address(boundless_market_address)
+                    .set_verifier_address(set_verifier_address)
+                    .build()
+                    .unwrap(),
+            ),
             rpc_url,
-            order_stream_url: None,
             private_key,
             bento_api_url: None,
             bonsai_api_key,

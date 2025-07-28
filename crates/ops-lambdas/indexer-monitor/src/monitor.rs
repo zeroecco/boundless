@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::str::FromStr;
 
@@ -107,7 +117,7 @@ impl Monitor {
         )
         .bind(from)
         .bind(to)
-        .bind(format!("{:x}", address))
+        .bind(format!("{address:x}"))
         .fetch_all(&self.db)
         .await?;
 
@@ -129,7 +139,7 @@ impl Monitor {
               AND pr.client_address = $1
             "#,
         )
-        .bind(format!("{:x}", address))
+        .bind(format!("{address:x}"))
         .fetch_one(&self.db)
         .await?;
 
@@ -192,7 +202,7 @@ impl Monitor {
         )
         .bind(from)
         .bind(to)
-        .bind(format!("{:x}", address))
+        .bind(format!("{address:x}"))
         .fetch_all(&self.db)
         .await?;
 
@@ -202,7 +212,7 @@ impl Monitor {
     /// Total number of submitted requests from a specific client address.
     pub async fn total_requests_from_client(&self, address: Address) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) FROM proof_requests WHERE client_address = $1")
-            .bind(format!("{:x}", address))
+            .bind(format!("{address:x}"))
             .fetch_one(&self.db)
             .await?;
 
@@ -257,14 +267,14 @@ impl Monitor {
             FROM request_fulfilled_events rfe
             JOIN proof_requests pr
               ON rfe.request_digest = pr.request_digest
-            WHERE pr.block_timestamp >= $1
-            AND pr.block_timestamp < $2
+            WHERE rfe.block_timestamp >= $1
+            AND rfe.block_timestamp < $2
             AND pr.client_address = $3
             "#,
         )
         .bind(from)
         .bind(to)
-        .bind(format!("{:x}", address))
+        .bind(format!("{address:x}"))
         .fetch_all(&self.db)
         .await?;
 
@@ -282,7 +292,7 @@ impl Monitor {
             WHERE pr.client_address = $1
             "#,
         )
-        .bind(format!("{:x}", address))
+        .bind(format!("{address:x}"))
         .fetch_one(&self.db)
         .await?;
 
@@ -313,7 +323,7 @@ impl Monitor {
         )
         .bind(from)
         .bind(to)
-        .bind(format!("{:x}", prover))
+        .bind(format!("{prover:x}"))
         .fetch_all(&self.db)
         .await?;
 
@@ -333,7 +343,7 @@ impl Monitor {
             WHERE f.prover_address = $1
             "#,
         )
-        .bind(format!("{:x}", prover))
+        .bind(format!("{prover:x}"))
         .fetch_one(&self.db)
         .await?;
 
@@ -364,7 +374,7 @@ impl Monitor {
         )
         .bind(from)
         .bind(to)
-        .bind(format!("{:x}", prover))
+        .bind(format!("{prover:x}"))
         .fetch_all(&self.db)
         .await?;
 
@@ -382,7 +392,7 @@ impl Monitor {
             WHERE prover_address = $1
             "#,
         )
-        .bind(format!("{:x}", prover))
+        .bind(format!("{prover:x}"))
         .fetch_one(&self.db)
         .await?;
 
@@ -440,7 +450,7 @@ impl Monitor {
         )
         .bind(from)
         .bind(to)
-        .bind(format!("{:x}", prover))
+        .bind(format!("{prover:x}"))
         .fetch_all(&self.db)
         .await?;
 
@@ -458,7 +468,7 @@ impl Monitor {
             WHERE prover_address = $1
             "#,
         )
-        .bind(format!("{:x}", prover))
+        .bind(format!("{prover:x}"))
         .fetch_one(&self.db)
         .await?;
 

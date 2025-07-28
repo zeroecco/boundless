@@ -1,6 +1,7 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Use of this source code is governed by the Business Source License
+// as found in the LICENSE-BSL file.
 // SPDX-License-Identifier: BUSL-1.1
 
 pragma solidity ^0.8.24;
@@ -82,7 +83,7 @@ contract BoundlessMarket is
     /// the order, or to the market treasury. This fraction controls that ratio.
     /// @dev The fee is configured as a constant to avoid accessing storage and thus paying for the
     /// gas of an SLOAD. Can only be changed via contract upgrade.
-    uint256 public constant SLASHING_BURN_BPS = 7500;
+    uint256 public constant SLASHING_BURN_BPS = 2000;
 
     /// @notice When an order is fulfilled, the market takes a fee based on the price of the order.
     /// This fraction is multiplied by the price to decide the fee.

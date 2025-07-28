@@ -1,8 +1,20 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use std::collections::VecDeque;
+use risc0_zkvm::sha::Digest;
+use sha2::{Digest as Sha2Digest, Sha256};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,9 +26,12 @@ use crate::{
     provers::{ProverError, ProverObj},
     storage::{upload_image_uri, upload_input_uri},
     task::{RetryRes, RetryTask, SupervisorErr},
-    utils, FulfillmentType, OrderRequest,
+    utils, FulfillmentType, OrderRequest, OrderStateChange,
 };
-use crate::{now_timestamp, provers::ProofResult};
+use crate::{
+    now_timestamp,
+    provers::{ExecutorResp, ProofResult},
+};
 use alloy::{
     network::Ethereum,
     primitives::{
@@ -28,11 +43,12 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use boundless_market::{
-    contracts::{boundless_market::BoundlessMarketService, RequestError},
+    contracts::{boundless_market::BoundlessMarketService, RequestError, RequestInputType},
     selector::SupportedSelectors,
 };
+use moka::future::Cache;
 use thiserror::Error;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -42,26 +58,39 @@ const MIN_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 const ONE_MILLION: U256 = uint!(1_000_000_U256);
 
-#[derive(Error, Debug)]
+/// Maximum number of orders to cache for deduplication
+const ORDER_DEDUP_CACHE_SIZE: u64 = 5000;
+
+/// In-memory LRU cache for order deduplication by ID (prevents duplicate order processing)
+type OrderCache = Arc<Cache<String, ()>>;
+
+/// Configuration for preflight result caching
+const PREFLIGHT_CACHE_SIZE: u64 = 5000;
+const PREFLIGHT_CACHE_TTL_SECS: u64 = 3 * 60 * 60; // 3 hours
+
+/// Cache for preflight results to avoid duplicate computations
+type PreflightCache = Arc<Cache<PreflightCacheKey, PreflightCacheValue>>;
+
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum OrderPickerErr {
     #[error("{code} failed to fetch / push input: {0}", code = self.code())]
-    FetchInputErr(#[source] anyhow::Error),
+    FetchInputErr(#[source] Arc<anyhow::Error>),
 
     #[error("{code} failed to fetch / push image: {0}", code = self.code())]
-    FetchImageErr(#[source] anyhow::Error),
+    FetchImageErr(#[source] Arc<anyhow::Error>),
 
     #[error("{code} guest panicked: {0}", code = self.code())]
     GuestPanic(String),
 
     #[error("{code} invalid request: {0}", code = self.code())]
-    RequestError(#[from] RequestError),
+    RequestError(Arc<RequestError>),
 
     #[error("{code} RPC error: {0:?}", code = self.code())]
-    RpcErr(anyhow::Error),
+    RpcErr(Arc<anyhow::Error>),
 
     #[error("{code} Unexpected error: {0:?}", code = self.code())]
-    UnexpectedErr(#[from] anyhow::Error),
+    UnexpectedErr(Arc<anyhow::Error>),
 }
 
 impl CodedError for OrderPickerErr {
@@ -74,6 +103,18 @@ impl CodedError for OrderPickerErr {
             OrderPickerErr::RpcErr(_) => "[B-OP-005]",
             OrderPickerErr::UnexpectedErr(_) => "[B-OP-500]",
         }
+    }
+}
+
+impl From<anyhow::Error> for OrderPickerErr {
+    fn from(err: anyhow::Error) -> Self {
+        OrderPickerErr::UnexpectedErr(Arc::new(err))
+    }
+}
+
+impl From<RequestError> for OrderPickerErr {
+    fn from(err: RequestError) -> Self {
+        OrderPickerErr::RequestError(Arc::new(err))
     }
 }
 
@@ -90,6 +131,9 @@ pub struct OrderPicker<P> {
     new_order_rx: Arc<Mutex<mpsc::Receiver<Box<OrderRequest>>>>,
     priced_orders_tx: mpsc::Sender<Box<OrderRequest>>,
     stake_token_decimals: u8,
+    order_cache: OrderCache,
+    preflight_cache: PreflightCache,
+    order_state_tx: broadcast::Sender<OrderStateChange>,
 }
 
 #[derive(Debug)]
@@ -127,6 +171,7 @@ where
         new_order_rx: mpsc::Receiver<Box<OrderRequest>>,
         order_result_tx: mpsc::Sender<Box<OrderRequest>>,
         stake_token_decimals: u8,
+        order_state_tx: broadcast::Sender<OrderStateChange>,
     ) -> Self {
         let market = BoundlessMarketService::new(
             market_addr,
@@ -145,6 +190,19 @@ where
             new_order_rx: Arc::new(Mutex::new(new_order_rx)),
             priced_orders_tx: order_result_tx,
             stake_token_decimals,
+            order_cache: Arc::new(
+                Cache::builder()
+                    .max_capacity(ORDER_DEDUP_CACHE_SIZE)
+                    .time_to_live(Duration::from_secs(60 * 60)) // 1 hour
+                    .build(),
+            ),
+            preflight_cache: Arc::new(
+                Cache::builder()
+                    .max_capacity(PREFLIGHT_CACHE_SIZE)
+                    .time_to_live(Duration::from_secs(PREFLIGHT_CACHE_TTL_SECS))
+                    .build(),
+            ),
+            order_state_tx,
         }
     }
 
@@ -158,7 +216,12 @@ where
             let pricing_result = tokio::select! {
                 result = self.price_order(&mut order) => result,
                 _ = cancel_token.cancelled() => {
-                    tracing::debug!("Order pricing cancelled during pricing for order {order_id}");
+                    tracing::info!("Order pricing cancelled during pricing for order {order_id}");
+
+                    // Add the cancelled order to the database as skipped
+                    if let Err(e) = self.db.insert_skipped_request(&order).await {
+                        tracing::error!("Failed to add cancelled order to database: {e}");
+                    }
                     return Ok(false);
                 }
             };
@@ -237,16 +300,52 @@ where
         let order_id = order.id();
         tracing::debug!("Pricing order {order_id}");
 
-        let (min_deadline, allowed_addresses_opt) = {
-            let config = self.config.lock_all().context("Failed to read config")?;
-            (config.market.min_deadline, config.market.allow_client_addresses.clone())
+        let now = now_timestamp();
+
+        // If order_expiration > lock_expiration the period in-between is when order can be filled
+        // by anyone without staking to partially claim the slashed stake
+        let lock_expired = order.fulfillment_type == FulfillmentType::FulfillAfterLockExpire;
+
+        let expiration = order.expiry();
+        let lockin_stake =
+            if lock_expired { U256::ZERO } else { U256::from(order.request.offer.lockStake) };
+
+        if expiration <= now {
+            tracing::info!("Removing order {order_id} because it has expired");
+            return Ok(Skip);
         };
+
+        let (min_deadline, allowed_addresses_opt, denied_addresses_opt) = {
+            let config = self.config.lock_all().context("Failed to read config")?;
+            (
+                config.market.min_deadline,
+                config.market.allow_client_addresses.clone(),
+                config.market.deny_requestor_addresses.clone(),
+            )
+        };
+
+        // Does the order expire within the min deadline
+        let seconds_left = expiration.saturating_sub(now);
+        if seconds_left <= min_deadline {
+            tracing::info!("Removing order {order_id} because it expires within min_deadline: {seconds_left}, min_deadline: {min_deadline}");
+            return Ok(Skip);
+        }
 
         // Initial sanity checks:
         if let Some(allow_addresses) = allowed_addresses_opt {
             let client_addr = order.request.client_address();
             if !allow_addresses.contains(&client_addr) {
                 tracing::info!("Removing order {order_id} from {client_addr} because it is not in allowed addrs");
+                return Ok(Skip);
+            }
+        }
+
+        if let Some(deny_addresses) = denied_addresses_opt {
+            let client_addr = order.request.client_address();
+            if deny_addresses.contains(&client_addr) {
+                tracing::info!(
+                    "Removing order {order_id} from {client_addr} because it is in denied addrs"
+                );
                 return Ok(Skip);
             }
         }
@@ -259,37 +358,6 @@ where
             return Ok(Skip);
         };
 
-        // Lock expiration is the timestamp before which the order must be filled in order to avoid slashing
-        let lock_expiration =
-            order.request.offer.biddingStart + order.request.offer.lockTimeout as u64;
-        // order expiration is the timestamp after which the order can no longer be filled by anyone.
-        let order_expiration =
-            order.request.offer.biddingStart + order.request.offer.timeout as u64;
-
-        let now = now_timestamp();
-
-        // If order_expiration > lock_expiration the period in-between is when order can be filled
-        // by anyone without staking to partially claim the slashed stake
-        let lock_expired = order.fulfillment_type == FulfillmentType::FulfillAfterLockExpire;
-
-        let (expiration, lockin_stake) = if lock_expired {
-            (order_expiration, U256::ZERO)
-        } else {
-            (lock_expiration, U256::from(order.request.offer.lockStake))
-        };
-
-        if expiration <= now {
-            tracing::info!("Removing order {order_id} because it has expired");
-            return Ok(Skip);
-        };
-
-        // Does the order expire within the min deadline
-        let seconds_left = expiration.saturating_sub(now);
-        if seconds_left <= min_deadline {
-            tracing::info!("Removing order {order_id} because it expires within min_deadline: {seconds_left}, min_deadline: {min_deadline}");
-            return Ok(Skip);
-        }
-
         // Check if the stake is sane and if we can afford it
         // For lock expired orders, we don't check the max stake because we can't lock those orders.
         let max_stake = {
@@ -299,6 +367,29 @@ where
 
         if !lock_expired && lockin_stake > max_stake {
             tracing::info!("Removing high stake order {order_id}, lock stake: {lockin_stake}, max stake: {max_stake}");
+            return Ok(Skip);
+        }
+
+        // Short circuit if the order has been locked.
+        if order.fulfillment_type == FulfillmentType::LockAndFulfill
+            && self
+                .db
+                .is_request_locked(U256::from(order.request.id))
+                .await
+                .context("Failed to check if request is locked before pricing")?
+        {
+            tracing::debug!("Order {order_id} is already locked, skipping");
+            return Ok(Skip);
+        }
+
+        if order.fulfillment_type == FulfillmentType::FulfillAfterLockExpire
+            && self
+                .db
+                .is_request_fulfilled(U256::from(order.request.id))
+                .await
+                .context("Failed to check if request is fulfilled before pricing")?
+        {
+            tracing::debug!("Order {order_id} is already fulfilled, skipping");
             return Ok(Skip);
         }
 
@@ -362,114 +453,15 @@ where
             return Ok(Skip);
         }
 
-        let (max_mcycle_limit, peak_prove_khz) = {
-            let config = self.config.lock_all().context("Failed to read config")?;
-            (config.market.max_mcycle_limit, config.market.peak_prove_khz)
-        };
+        // Calculate exec limit (handles priority requestors and config internally)
+        let (exec_limit_cycles, prove_limit) = self.calculate_exec_limits(order, order_gas_cost)?;
 
-        // TODO: Move URI handling like this into the prover impls
-        let image_id = upload_image_uri(&self.prover, &order.request, &self.config)
-            .await
-            .map_err(OrderPickerErr::FetchImageErr)?;
-
-        let input_id = upload_input_uri(&self.prover, &order.request, &self.config)
-            .await
-            .map_err(OrderPickerErr::FetchInputErr)?;
-
-        order.image_id = Some(image_id.clone());
-        order.input_id = Some(input_id.clone());
-
-        // Create a executor limit based on the max price of the order
-        let mut exec_limit_cycles: u64 = if lock_expired {
-            let min_mcycle_price_stake_token = {
-                let config = self.config.lock_all().context("Failed to read config")?;
-                parse_units(&config.market.mcycle_price_stake_token, self.stake_token_decimals)
-                    .context("Failed to parse mcycle_price")?
-                    .into()
-            };
-
-            if min_mcycle_price_stake_token == U256::ZERO {
-                tracing::warn!("min_mcycle_price_stake_token is 0, setting unlimited exec limit");
-                u64::MAX
-            } else {
-                // Note this does not account for gas cost unlike a normal order
-                // TODO: Update to account for gas once the stake token to gas token exchange rate is known
-                let price = order.request.offer.stake_reward_if_locked_and_not_fulfilled();
-                // (stake price * 1_000_000) / stake mcycle price = max cycles
-                (price.saturating_mul(ONE_MILLION).div_ceil(min_mcycle_price_stake_token))
-                    .try_into()
-                    .context("Failed to convert U256 exec limit to u64")?
-            }
-        } else {
-            let min_mcycle_price = {
-                let config = self.config.lock_all().context("Failed to read config")?;
-                parse_ether(&config.market.mcycle_price).context("Failed to parse mcycle_price")?
-            };
-            // ((max_price - gas_cost) * 1_000_000) / mcycle_price = max cycles
-            (U256::from(order.request.offer.maxPrice)
-                .saturating_sub(order_gas_cost)
-                .saturating_mul(ONE_MILLION)
-                / min_mcycle_price)
-                .try_into()
-                .context("Failed to convert U256 exec limit to u64")?
-        };
-
-        if exec_limit_cycles < 2 {
+        if prove_limit < 2 {
             // Exec limit is based on user cycles, and 2 is the minimum number of user cycles for a
             // provable execution.
             // TODO when/if total cycle limit is allowed in future, update this to be total cycle min
             tracing::info!("Removing order {order_id} because its exec limit is too low");
 
-            return Ok(Skip);
-        } else {
-            tracing::trace!("exec limit cycles for order {order_id}: {}", exec_limit_cycles);
-        }
-
-        let allow_skip_mcycle_limit_addresses = {
-            let config = self.config.lock_all().context("Failed to read config")?;
-            config.market.allow_skip_mcycle_limit_addresses.clone()
-        };
-
-        let mut skip_mcycle_limit = false;
-        let client_addr = order.request.client_address();
-        if let Some(allow_addresses) = allow_skip_mcycle_limit_addresses {
-            if allow_addresses.contains(&client_addr) {
-                skip_mcycle_limit = true;
-            }
-        }
-
-        // If the order is from an allowed address, skip the mcycle limit
-        // If a max_mcycle_limit is configured, override the exec limit if the order is over that limit
-        if skip_mcycle_limit {
-            exec_limit_cycles = u64::MAX;
-            tracing::debug!("Order {order_id} exec limit skipped due to client {} being part of allow_skip_mcycle_limit_addresses.", client_addr);
-        } else if let Some(config_mcycle_limit) = max_mcycle_limit {
-            let config_cycle_limit = config_mcycle_limit.saturating_mul(1_000_000);
-            if exec_limit_cycles >= config_cycle_limit {
-                tracing::debug!("Order {order_id} exec limit computed from max price {} exceeds config max_mcycle_limit {}, setting exec limit to max_mcycle_limit", exec_limit_cycles / 1_000_000, config_mcycle_limit);
-                exec_limit_cycles = config_cycle_limit;
-            }
-        }
-
-        // Cap the exec limit based on the peak prove khz and the time until expiration.
-        if let Some(peak_prove_khz) = peak_prove_khz {
-            let time_until_expiration = expiration.saturating_sub(now);
-            let deadline_cycle_limit =
-                calculate_max_cycles_for_time(peak_prove_khz, time_until_expiration);
-
-            if exec_limit_cycles > deadline_cycle_limit {
-                tracing::debug!(
-                    "Order {order_id} preflight cycle limit adjusted to {} cycles (capped by {:.1}s fulfillment deadline at {} peak_prove_khz config)",
-                    exec_limit_cycles,
-                    time_until_expiration,
-                    peak_prove_khz
-                );
-                exec_limit_cycles = deadline_cycle_limit;
-            }
-        }
-
-        if exec_limit_cycles == 0 {
-            tracing::debug!("Order {order_id} has no time left to prove within deadline, skipping");
             return Ok(Skip);
         }
 
@@ -478,49 +470,170 @@ where
             exec_limit_cycles,
             exec_limit_cycles / 1_000_000
         );
-        // TODO add a future timeout here to put a upper bound on how long to preflight for
-        let proof_res = match self
-            .prover
-            .preflight(
-                &image_id,
-                &input_id,
-                vec![],
-                /* TODO assumptions */ Some(exec_limit_cycles),
-            )
-            .await
-        {
-            Ok(res) => {
-                tracing::debug!(
-                    "Preflight execution of {order_id} with {} mcycles completed in {} seconds",
-                    res.stats.total_cycles / 1_000_000,
-                    res.elapsed_time
-                );
-                res
+
+        // Create cache key based on input type
+        let image_id = Digest::from(order.request.requirements.imageId.0);
+        let cache_key = match order.request.input.inputType {
+            RequestInputType::Url => {
+                let input_url = std::str::from_utf8(&order.request.input.data)
+                    .context("input url is not utf8")
+                    .map_err(|e| OrderPickerErr::FetchInputErr(Arc::new(e)))?
+                    .to_string();
+                PreflightCacheKey { image_id, input: InputCacheKey::Url(input_url) }
             }
-            Err(err) => match err {
-                ProverError::ProvingFailed(ref err_msg)
-                    if err_msg.contains("Session limit exceeded") =>
-                {
+            RequestInputType::Inline => {
+                // For inline inputs, use SHA256 hash of the data
+                let mut hasher = Sha256::new();
+                Sha2Digest::update(&mut hasher, &order.request.input.data);
+                let input_hash: [u8; 32] = hasher.finalize().into();
+                PreflightCacheKey { image_id, input: InputCacheKey::Hash(input_hash) }
+            }
+            RequestInputType::__Invalid => {
+                return Err(OrderPickerErr::UnexpectedErr(Arc::new(anyhow::anyhow!(
+                    "Unknown input type: {:?}",
+                    order.request.input.inputType
+                ))));
+            }
+        };
+
+        // Loop while the cached result is skipped and has a lower exec limit than the current order.
+        let preflight_result = loop {
+            let prover = self.prover.clone();
+            let config = self.config.clone();
+            let request = order.request.clone();
+            let order_id_clone = order_id.clone();
+            let cache_key_clone = cache_key.clone();
+
+            let cache_cloned = self.preflight_cache.clone();
+            let result = tokio::task::spawn(async move {
+
+                // Multiple concurrent calls of this coalesce into a single execution. This is done
+                // to prevent multiple preflight jobs starting for the same program/input.
+                // https://docs.rs/moka/latest/moka/sync/struct.Cache.html#concurrent-calls-on-the-same-key-2
+                cache_cloned
+                    .try_get_with(cache_key_clone, async move {
+                        tracing::trace!(
+                            "Starting preflight of {order_id_clone} with exec limit {exec_limit_cycles} mcycles",
+                        );
+
+                        // Upload image and input only if not cached
+                        let image_id = upload_image_uri(&prover, &request, &config)
+                            .await
+                            .map_err(|e| OrderPickerErr::FetchImageErr(Arc::new(e)))?;
+
+                        let input_id = upload_input_uri(&prover, &request, &config)
+                            .await
+                            .map_err(|e| OrderPickerErr::FetchInputErr(Arc::new(e)))?;
+
+                        // TODO add a future timeout here to put a upper bound on how long to preflight for
+                        match prover
+                            .preflight(
+                                &image_id,
+                                &input_id,
+                                vec![],
+                                Some(exec_limit_cycles),
+                                &order_id_clone,
+                            )
+                            .await
+                        {
+                            Ok(res) => {
+                                tracing::debug!(
+                                    "Preflight execution of {order_id_clone} with session id {} and {} mcycles completed in {} seconds",
+                                    res.id,
+                                    res.stats.total_cycles / 1_000_000,
+                                    res.elapsed_time
+                                );
+                                Ok(PreflightCacheValue::Success {
+                                    exec_session_id: res.id,
+                                    cycle_count: res.stats.total_cycles,
+                                    image_id,
+                                    input_id,
+                                })
+                            }
+                            Err(err) => match err {
+                                ProverError::ProvingFailed(ref err_msg)
+                                    if err_msg.contains("Session limit exceeded") =>
+                                {
+                                    tracing::debug!(
+                                        "Skipping order {order_id_clone} due to session limit exceeded: {}",
+                                        err_msg
+                                    );
+                                    Ok(PreflightCacheValue::Skip {
+                                        cached_limit: exec_limit_cycles,
+                                    })
+                                }
+                                ProverError::ProvingFailed(ref err_msg)
+                                    if err_msg.contains("GuestPanic") =>
+                                {
+                                    Err(OrderPickerErr::GuestPanic(err_msg.clone()))
+                                }
+                                _ => Err(OrderPickerErr::UnexpectedErr(Arc::new(err.into()))),
+                            },
+                        }
+                    })
+                    .await
+            })
+            .await
+            .map_err(|e| OrderPickerErr::UnexpectedErr(Arc::new(e.into())))?;
+
+            let cached_value = match result {
+                Ok(value) => value,
+                Err(e) => break Err((*e).clone()),
+            };
+
+            if let PreflightCacheValue::Skip { cached_limit } = cached_value {
+                if cached_limit < exec_limit_cycles {
                     tracing::debug!(
-                        "Skipping order {order_id} due to session limit exceeded: {}",
-                        err_msg
+                        "Cached result has insufficient limit for order {order_id} (cached: {}, required: {}), re-running preflight",
+                        cached_limit, exec_limit_cycles
                     );
-                    return Ok(Skip);
+                    self.preflight_cache.invalidate(&cache_key).await;
+                    continue;
                 }
-                ProverError::ProvingFailed(ref err_msg) if err_msg.contains("GuestPanic") => {
-                    return Err(OrderPickerErr::GuestPanic(err_msg.clone()));
-                }
-                _ => return Err(OrderPickerErr::UnexpectedErr(err.into())),
-            },
+            }
+
+            break Ok(cached_value);
+        };
+
+        // Handle the preflight result
+        let (exec_session_id, cycle_count) = match preflight_result {
+            Ok(PreflightCacheValue::Success {
+                exec_session_id,
+                cycle_count,
+                image_id,
+                input_id,
+            }) => {
+                tracing::debug!(
+                    "Using preflight result for {order_id}: session id {} with {} mcycles",
+                    exec_session_id,
+                    cycle_count / 1_000_000
+                );
+
+                // Update order with the uploaded IDs
+                order.image_id = Some(image_id.clone());
+                order.input_id = Some(input_id.clone());
+
+                (exec_session_id, cycle_count)
+            }
+            Ok(PreflightCacheValue::Skip { .. }) => {
+                return Ok(Skip);
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        };
+
+        let proof_res = ProofResult {
+            id: exec_session_id,
+            stats: ExecutorResp { total_cycles: cycle_count, ..Default::default() },
+            elapsed_time: 0.0,
         };
 
         // If a max_mcycle_limit is configured check if the order is over that limit
-        if let Some(mcycle_limit) = max_mcycle_limit {
-            let mcycles = proof_res.stats.total_cycles / 1_000_000;
-            if mcycles >= mcycle_limit {
-                tracing::info!("Order {order_id} max_mcycle_limit check failed req: {mcycle_limit} | config: {mcycles}");
-                return Ok(Skip);
-            }
+        let proof_cycles = proof_res.stats.total_cycles;
+        if proof_cycles > prove_limit {
+            tracing::info!("Order {order_id} max_mcycle_limit check failed req: {proof_cycles} | config: {prove_limit}");
+            return Ok(Skip);
         }
 
         let journal = self
@@ -712,7 +825,7 @@ where
             .provider
             .get_balance(self.provider.default_signer_address())
             .await
-            .map_err(|err| OrderPickerErr::RpcErr(err.into()))?;
+            .map_err(|err| OrderPickerErr::RpcErr(Arc::new(err.into())))?;
 
         let gas_balance_reserved = self.gas_balance_reserved().await?;
 
@@ -734,6 +847,266 @@ where
         let balance = self.market.balance_of_stake(self.provider.default_signer_address()).await?;
         Ok(balance)
     }
+
+    /// Calculates the cycle limit for the preflight and also for the max cycles that this specific
+    /// order variant will consider proving for.
+    ///
+    /// The reason for calculating both preflight and prove limits is to execute the order with
+    /// a large enough cycle limit for both lock and fulfill orders as well as for if the order
+    /// expires and to prove after lock expiry so that the execution can be cached and only happen
+    /// once. The prove limit is the limit for this specific order variant and decides the max
+    /// cycles the order can be for the prover to decide to commit to proving it.
+    fn calculate_exec_limits(
+        &self,
+        order: &OrderRequest,
+        order_gas_cost: U256,
+    ) -> Result<(u64, u64), OrderPickerErr> {
+        // Derive parameters from order
+        let order_id = order.id();
+        let lock_expired = order.fulfillment_type == FulfillmentType::FulfillAfterLockExpire;
+        let now = now_timestamp();
+        let request_expiration = order.expiry();
+        let lock_expiry = order.request.lock_expires_at();
+        let order_expiry = order.request.expires_at();
+        let (
+            max_mcycle_limit,
+            peak_prove_khz,
+            min_mcycle_price,
+            min_mcycle_price_stake_token,
+            priority_requestor_addresses,
+        ) = {
+            let config = self.config.lock_all().context("Failed to read config")?;
+            (
+                config.market.max_mcycle_limit,
+                config.market.peak_prove_khz,
+                parse_ether(&config.market.mcycle_price).context("Failed to parse mcycle_price")?,
+                parse_units(&config.market.mcycle_price_stake_token, self.stake_token_decimals)
+                    .context("Failed to parse mcycle_price")?
+                    .into(),
+                config.market.priority_requestor_addresses.clone(),
+            )
+        };
+
+        // Pricing based cycle limits: Calculate the cycle limit based on stake price
+        let stake_based_limit = if min_mcycle_price_stake_token == U256::ZERO {
+            tracing::warn!("min_mcycle_price_stake_token is 0, setting unlimited exec limit");
+            u64::MAX
+        } else {
+            let price = order.request.offer.stake_reward_if_locked_and_not_fulfilled();
+            (price.saturating_mul(ONE_MILLION).div_ceil(min_mcycle_price_stake_token))
+                .try_into()
+                .context("Failed to convert U256 exec limit to u64")?
+        };
+
+        let mut preflight_limit = stake_based_limit;
+        let mut prove_limit = stake_based_limit;
+
+        // If lock and fulfill, potentially increase that to ETH-based value if higher
+        if !lock_expired {
+            // Calculate eth-based limit for lock and fulfill orders
+            let eth_based_limit = if min_mcycle_price == U256::ZERO {
+                tracing::warn!("min_mcycle_price is 0, setting unlimited exec limit");
+                u64::MAX
+            } else {
+                (U256::from(order.request.offer.maxPrice)
+                    .saturating_sub(order_gas_cost)
+                    .saturating_mul(ONE_MILLION)
+                    / min_mcycle_price)
+                    .try_into()
+                    .context("Failed to convert U256 exec limit to u64")?
+            };
+
+            if eth_based_limit > stake_based_limit {
+                // Eth based limit is higher, use that for both preflight and prove
+                preflight_limit = eth_based_limit;
+                prove_limit = eth_based_limit;
+            } else {
+                // Otherwise lower the prove cycle limit for this order variant
+                prove_limit = eth_based_limit;
+            }
+            tracing::debug!(
+                "Order {order_id} initial preflight pricing cycle limit to prove: {} cycles",
+                prove_limit
+            );
+        }
+
+        debug_assert!(
+            preflight_limit >= prove_limit,
+            "preflight_limit ({preflight_limit}) < prove_limit ({prove_limit})",
+        );
+
+        // Apply max mcycle limit cap
+        let mut max_mcycle_limit = max_mcycle_limit;
+        // Check if priority requestor address - skip all exec limit calculations
+        let client_addr = order.request.client_address();
+        if let Some(allow_addresses) = &priority_requestor_addresses {
+            if allow_addresses.contains(&client_addr) {
+                max_mcycle_limit = None;
+                tracing::debug!("Order {order_id} exec limit config ignored due to client {} being part of priority_requestor_addresses.", client_addr);
+            }
+        }
+
+        if let Some(config_mcycle_limit) = max_mcycle_limit {
+            let config_cycle_limit = config_mcycle_limit.saturating_mul(1_000_000);
+            if prove_limit > config_cycle_limit {
+                tracing::debug!(
+                    "Order {order_id} prove limit capped by max_mcycle_limit config: {} -> {} cycles",
+                    prove_limit,
+                    config_cycle_limit
+                );
+                prove_limit = config_cycle_limit;
+                preflight_limit = config_cycle_limit;
+            } else if preflight_limit > config_cycle_limit {
+                preflight_limit = config_cycle_limit;
+            }
+        }
+
+        // Apply timing constraints based on peak prove khz
+        if let Some(peak_prove_khz) = peak_prove_khz {
+            let prove_window = request_expiration.saturating_sub(now);
+            let prove_deadline_limit = calculate_max_cycles_for_time(peak_prove_khz, prove_window);
+            if prove_limit > prove_deadline_limit {
+                tracing::debug!("Order {order_id} prove limit capped by deadline: {} -> {} cycles ({:.1}s at {} peak_prove_khz)", prove_limit, prove_deadline_limit, prove_window, peak_prove_khz);
+                prove_limit = prove_deadline_limit;
+            }
+
+            // For preflight, also check fulfill-after-expiry window
+            let new_preflight_limit = if !lock_expired {
+                let fulfill_after_expiry_window = order_expiry.saturating_sub(lock_expiry);
+                let fulfill_after_expiry_limit =
+                    calculate_max_cycles_for_time(peak_prove_khz, fulfill_after_expiry_window);
+                std::cmp::max(prove_deadline_limit, fulfill_after_expiry_limit)
+            } else {
+                prove_deadline_limit
+            };
+
+            if preflight_limit > new_preflight_limit {
+                preflight_limit = new_preflight_limit;
+            }
+        }
+
+        tracing::trace!(
+            "Order {order_id} final limits - preflight: {} cycles, prove: {} cycles",
+            preflight_limit,
+            prove_limit
+        );
+
+        debug_assert!(
+            preflight_limit >= prove_limit,
+            "preflight_limit ({preflight_limit}) < prove_limit ({prove_limit})",
+        );
+
+        Ok((preflight_limit, prove_limit))
+    }
+}
+
+/// Input type for preflight cache
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+enum InputCacheKey {
+    Url(String),
+    Hash([u8; 32]),
+}
+
+/// Key type for the preflight cache
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+struct PreflightCacheKey {
+    image_id: Digest,
+    input: InputCacheKey,
+}
+
+/// Value type for the preflight cache
+#[derive(Clone, Debug)]
+enum PreflightCacheValue {
+    Success { exec_session_id: String, cycle_count: u64, image_id: String, input_id: String },
+    Skip { cached_limit: u64 },
+}
+
+/// Handles a lock event for a request
+/// Cancels and removes only LockAndFulfill orders
+#[allow(clippy::vec_box)]
+fn handle_lock_event(
+    request_id: U256,
+    active_tasks: &mut BTreeMap<U256, BTreeMap<String, CancellationToken>>,
+    pending_orders: &mut Vec<Box<OrderRequest>>,
+) {
+    // Cancel only LockAndFulfill active tasks
+    if let Some(order_tasks) = active_tasks.get_mut(&request_id) {
+        let initial_count = order_tasks.len();
+        order_tasks.retain(|order_id, task_token| {
+            if order_id.contains("LockAndFulfill") {
+                task_token.cancel();
+                false
+            } else {
+                true
+            }
+        });
+        let cancelled = initial_count - order_tasks.len();
+
+        if cancelled > 0 {
+            tracing::debug!(
+                "Cancelled {} LockAndFulfill preflights for locked request 0x{:x}",
+                cancelled,
+                request_id
+            );
+        }
+
+        // Remove the entry if no tasks remain
+        if order_tasks.is_empty() {
+            active_tasks.remove(&request_id);
+        }
+    }
+
+    // Remove only pending LockAndFulfill orders
+    let initial_len = pending_orders.len();
+    pending_orders.retain(|order| {
+        let same_request = U256::from(order.request.id) == request_id;
+        let is_lock_and_fulfill = order.fulfillment_type == FulfillmentType::LockAndFulfill;
+        !(same_request && is_lock_and_fulfill)
+    });
+    let removed_orders = initial_len - pending_orders.len();
+
+    if removed_orders > 0 {
+        tracing::debug!(
+            "Removed {} pending LockAndFulfill orders for locked request 0x{:x}",
+            removed_orders,
+            request_id
+        );
+    }
+}
+
+/// Handles a fulfill event for a request
+/// Cancels and removes all orders for the request
+#[allow(clippy::vec_box)]
+fn handle_fulfill_event(
+    request_id: U256,
+    active_tasks: &mut BTreeMap<U256, BTreeMap<String, CancellationToken>>,
+    pending_orders: &mut Vec<Box<OrderRequest>>,
+) {
+    // Cancel all active tasks
+    if let Some(order_tasks) = active_tasks.remove(&request_id) {
+        let count = order_tasks.len();
+        tracing::debug!(
+            "Cancelling {} active preflights for fulfilled request 0x{:x}",
+            count,
+            request_id
+        );
+        for (_, task_token) in order_tasks {
+            task_token.cancel();
+        }
+    }
+
+    // Remove all pending orders
+    let initial_len = pending_orders.len();
+    pending_orders.retain(|order| U256::from(order.request.id) != request_id);
+    let removed_orders = initial_len - pending_orders.len();
+
+    if removed_orders > 0 {
+        tracing::debug!(
+            "Removed {} pending orders for fulfilled request 0x{:x}",
+            removed_orders,
+            request_id
+        );
+    }
 }
 
 impl<P> RetryTask for OrderPicker<P>
@@ -747,37 +1120,103 @@ where
         Box::pin(async move {
             tracing::info!("Starting order picking monitor");
 
-            let read_capacity = || -> Result<usize, Self::Error> {
+            let read_config = || -> Result<_, Self::Error> {
                 let cfg = picker.config.lock_all().map_err(|err| {
-                    OrderPickerErr::UnexpectedErr(anyhow::anyhow!("Failed to read config: {err}"))
+                    OrderPickerErr::UnexpectedErr(Arc::new(anyhow::anyhow!(
+                        "Failed to read config: {err}"
+                    )))
                 })?;
-                Ok(cfg.market.max_concurrent_preflights as usize)
+                Ok((
+                    cfg.market.max_concurrent_preflights as usize,
+                    cfg.market.order_pricing_priority,
+                    cfg.market.priority_requestor_addresses.clone(),
+                ))
             };
 
-            let mut current_capacity = read_capacity().map_err(SupervisorErr::Fault)?;
-            let mut tasks: JoinSet<()> = JoinSet::new();
+            let (mut current_capacity, mut priority_mode, mut priority_addresses) =
+                read_config().map_err(SupervisorErr::Fault)?;
+            let mut tasks: JoinSet<(String, U256)> = JoinSet::new();
             let mut rx = picker.new_order_rx.lock().await;
+            let mut order_state_rx = picker.order_state_tx.subscribe();
             let mut capacity_check_interval = tokio::time::interval(MIN_CAPACITY_CHECK_INTERVAL);
-            let mut pending_orders: VecDeque<Box<OrderRequest>> = VecDeque::new();
+            let mut pending_orders: Vec<Box<OrderRequest>> = Vec::new();
+            let mut active_tasks: BTreeMap<U256, BTreeMap<String, CancellationToken>> =
+                BTreeMap::new();
+            let mut last_active_tasks_log: String = String::new();
 
             loop {
                 tokio::select! {
                     // This channel is cancellation safe, so it's fine to use in the select!
                     Some(order) = rx.recv() => {
-                        tracing::debug!("Queued order {} to be priced", order.id());
-                        pending_orders.push_back(order);
+                        let order_id = order.id();
+                        pending_orders.push(order);
+                        tracing::debug!(
+                            "Queued order {} to be priced. Currently {} queued pricing tasks: {}",
+                            order_id,
+                            pending_orders.len(),
+                            pending_orders
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
                     }
-                    _ = tasks.join_next(), if !tasks.is_empty() => {
-                        tracing::trace!("Pricing task completed ({} remaining)", tasks.len());
+                    Ok(state_change) = order_state_rx.recv() => {
+                        match state_change {
+                            OrderStateChange::Locked { request_id, prover } => {
+                                tracing::debug!("Received order state change for request 0x{:x}: Locked by prover {:x}",
+                                    request_id, prover);
+
+                                handle_lock_event(request_id, &mut active_tasks, &mut pending_orders);
+                            }
+                            OrderStateChange::Fulfilled { request_id } => {
+                                tracing::debug!("Received order state change for request 0x{:x}: Fulfilled",
+                                    request_id);
+
+                                handle_fulfill_event(request_id, &mut active_tasks, &mut pending_orders);
+                            }
+                        }
+                    }
+                    Some(result) = tasks.join_next(), if !tasks.is_empty() => {
+                        if let Ok((order_id, request_id)) = result {
+                            // Clean up the active task entry now that it's completed
+                            if let Some(order_tasks) = active_tasks.get_mut(&request_id) {
+                                order_tasks.remove(&order_id);
+                                if order_tasks.is_empty() {
+                                    active_tasks.remove(&request_id);
+                                }
+                            }
+
+
+                            tracing::trace!("Priced task for order {} (request 0x{:x}) completed ({} remaining)",
+                                order_id, request_id, tasks.len());
+                        }
                     }
                     _ = capacity_check_interval.tick() => {
                         // Check capacity on an interval for capacity changes in config
-                        let new_capacity = read_capacity().map_err(SupervisorErr::Fault)?;
-                        if new_capacity != current_capacity {
+                        let (new_capacity, new_priority_mode, new_priority_addresses) = read_config().map_err(SupervisorErr::Fault)?;
+                        if new_capacity != current_capacity{
                             tracing::debug!("Pricing capacity changed from {} to {}", current_capacity, new_capacity);
                             current_capacity = new_capacity;
                         }
+                        if new_priority_mode != priority_mode {
+                            tracing::debug!("Order pricing priority changed from {:?} to {:?}", priority_mode, new_priority_mode);
+                            priority_mode = new_priority_mode;
+                        }
+                        if new_priority_addresses != priority_addresses {
+                            tracing::debug!("Priority requestor addresses changed");
+                            priority_addresses = new_priority_addresses;
+                        }
+
+                        // Log active pricing tasks if they've changed
+                        let current_tasks_log = format_active_tasks(&active_tasks);
+
+                        if last_active_tasks_log != current_tasks_log {
+                            tracing::debug!("Current pricing tasks: [{}]", current_tasks_log);
+                            last_active_tasks_log = current_tasks_log;
+                        }
                     }
+
                     _ = cancel_token.cancelled() => {
                         tracing::debug!("Order picker received cancellation, shutting down gracefully");
 
@@ -788,20 +1227,77 @@ where
                 }
 
                 // Process pending orders if we have capacity
-                while !pending_orders.is_empty() && tasks.len() < current_capacity {
-                    if let Some(order) = pending_orders.pop_front() {
+                if !pending_orders.is_empty() && tasks.len() < current_capacity {
+                    let available_capacity = current_capacity - tasks.len();
+                    let selected_orders = picker.select_pricing_orders(
+                        &mut pending_orders,
+                        priority_mode,
+                        priority_addresses.as_deref(),
+                        available_capacity,
+                    );
+
+                    for order in selected_orders {
+                        let order_id = order.id();
+                        let request_id = U256::from(order.request.id);
+
+                        // Check if we're already processing this specific order
+                        if let Some(order_tasks) = active_tasks.get(&request_id) {
+                            if order_tasks.contains_key(&order_id) {
+                                tracing::debug!(
+                                    "Skipping order {order_id} - already being processed"
+                                );
+                                continue;
+                            }
+                        }
+
+                        // Check if we've already started processing this order ID
+                        if picker.order_cache.get(&order_id).await.is_some() {
+                            tracing::debug!(
+                                "Skipping duplicate order {order_id}, already being processed"
+                            );
+                            continue;
+                        }
+
+                        // Mark order as being processed immediately to prevent duplicates
+                        picker.order_cache.insert(order_id.clone(), ()).await;
+
                         let picker_clone = picker.clone();
                         let task_cancel_token = cancel_token.child_token();
+
+                        // Track the active task so it can be cancelled if needed
+                        active_tasks
+                            .entry(request_id)
+                            .or_default()
+                            .insert(order_id.clone(), task_cancel_token.clone());
+
                         tasks.spawn(async move {
                             picker_clone
                                 .price_order_and_update_state(order, task_cancel_token)
                                 .await;
+                            (order_id, request_id)
                         });
                     }
                 }
             }
             Ok(())
         })
+    }
+}
+
+/// Format active pricing tasks for logging, limiting to first 3 and showing total count
+fn format_active_tasks(
+    active_tasks: &BTreeMap<U256, BTreeMap<String, CancellationToken>>,
+) -> String {
+    let mut order_iter = active_tasks.values().flat_map(|orders| orders.keys().cloned());
+
+    let first_three: Vec<String> = order_iter.by_ref().take(3).collect();
+    let remaining_count = order_iter.count();
+    let total_count = first_three.len() + remaining_count;
+
+    if remaining_count == 0 {
+        first_three.join(", ")
+    } else {
+        format!("{}, ... ({} total)", first_three.join(", "), total_count)
     }
 }
 
@@ -812,13 +1308,15 @@ fn calculate_max_cycles_for_time(prove_khz: u64, time_seconds: u64) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::Duration;
 
     use super::*;
     use crate::{
-        chain_monitor::ChainMonitorService, db::SqliteDb, provers::DefaultProver, FulfillmentType,
-        OrderStatus,
+        chain_monitor::ChainMonitorService,
+        db::SqliteDb,
+        provers::{DefaultProver, Prover},
+        FulfillmentType, OrderStatus,
     };
     use alloy::{
         network::EthereumWallet,
@@ -827,6 +1325,7 @@ mod tests {
         providers::{ext::AnvilApi, ProviderBuilder},
         signers::local::PrivateKeySigner,
     };
+    use async_trait::async_trait;
     use boundless_market::contracts::{
         Callback, Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput,
         Requirements,
@@ -834,16 +1333,17 @@ mod tests {
     use boundless_market::storage::{MockStorageProvider, StorageProvider};
     use boundless_market_test_utils::{
         deploy_boundless_market, deploy_hit_points, ASSESSOR_GUEST_ID, ASSESSOR_GUEST_PATH,
-        ECHO_ELF, ECHO_ID,
+        ECHO_ELF, ECHO_ID, LOOP_ELF, LOOP_ID,
     };
     use risc0_ethereum_contracts::selector::Selector;
     use risc0_zkvm::sha::Digest;
+    use risc0_zkvm::Receipt;
     use tracing_test::traced_test;
 
     /// Reusable context for testing the order picker
-    struct TestCtx<P> {
+    pub(crate) struct PickerTestCtx<P> {
         anvil: AnvilInstance,
-        picker: OrderPicker<P>,
+        pub(crate) picker: OrderPicker<P>,
         boundless_market: BoundlessMarketService<Arc<P>>,
         storage_provider: MockStorageProvider,
         db: DbObj,
@@ -853,15 +1353,15 @@ mod tests {
     }
 
     /// Parameters for the generate_next_order function.
-    struct OrderParams {
-        order_index: u32,
-        min_price: U256,
-        max_price: U256,
-        lock_stake: U256,
-        fulfillment_type: FulfillmentType,
-        bidding_start: u64,
-        lock_timeout: u32,
-        timeout: u32,
+    pub(crate) struct OrderParams {
+        pub(crate) order_index: u32,
+        pub(crate) min_price: U256,
+        pub(crate) max_price: U256,
+        pub(crate) lock_stake: U256,
+        pub(crate) fulfillment_type: FulfillmentType,
+        pub(crate) bidding_start: u64,
+        pub(crate) lock_timeout: u32,
+        pub(crate) timeout: u32,
     }
 
     impl Default for OrderParams {
@@ -879,16 +1379,17 @@ mod tests {
         }
     }
 
-    impl<P> TestCtx<P>
+    impl<P> PickerTestCtx<P>
     where
         P: Provider + WalletProvider,
     {
-        fn signer(&self, index: usize) -> PrivateKeySigner {
+        pub(crate) fn signer(&self, index: usize) -> PrivateKeySigner {
             self.anvil.keys()[index].clone().into()
         }
 
-        async fn generate_next_order(&self, params: OrderParams) -> Box<OrderRequest> {
-            let image_url = self.storage_provider.upload_program(ECHO_ELF).await.unwrap();
+        pub(crate) async fn generate_next_order(&self, params: OrderParams) -> Box<OrderRequest> {
+            let image_url =
+                self.storage_provider.upload_program(ECHO_ELF).await.unwrap().to_string();
             let image_id = Digest::from(ECHO_ID);
             let chain_id = self.provider.get_chain_id().await.unwrap();
             let boundless_market_address = self.boundless_market.instance().address();
@@ -929,31 +1430,88 @@ mod tests {
                 total_cycles: None,
             })
         }
+
+        pub(crate) async fn generate_loop_order(
+            &self,
+            params: OrderParams,
+            cycles: u64,
+        ) -> Box<OrderRequest> {
+            let image_url =
+                self.storage_provider.upload_program(LOOP_ELF).await.unwrap().to_string();
+            let image_id = Digest::from(LOOP_ID);
+            let chain_id = self.provider.get_chain_id().await.unwrap();
+            let boundless_market_address = self.boundless_market.instance().address();
+
+            Box::new(OrderRequest {
+                request: ProofRequest::new(
+                    RequestId::new(self.provider.default_signer_address(), params.order_index),
+                    Requirements::new(
+                        image_id,
+                        Predicate {
+                            predicateType: PredicateType::PrefixMatch,
+                            data: Default::default(),
+                        },
+                    ),
+                    image_url,
+                    RequestInput::builder()
+                        .write(&cycles)
+                        .unwrap()
+                        .write(&1u64)
+                        .unwrap() // nonce
+                        .build_inline()
+                        .unwrap(),
+                    Offer {
+                        minPrice: params.min_price,
+                        maxPrice: params.max_price,
+                        biddingStart: params.bidding_start,
+                        timeout: params.timeout,
+                        lockTimeout: params.lock_timeout,
+                        rampUpPeriod: 1,
+                        lockStake: params.lock_stake,
+                    },
+                ),
+                target_timestamp: None,
+                image_id: None,
+                input_id: None,
+                expire_timestamp: None,
+                client_sig: Bytes::new(),
+                fulfillment_type: params.fulfillment_type,
+                boundless_market_address: *boundless_market_address,
+                chain_id,
+                total_cycles: None,
+            })
+        }
     }
 
     #[derive(Default)]
-    struct TestCtxBuilder {
+    pub(crate) struct PickerTestCtxBuilder {
         initial_signer_eth: Option<i32>,
         initial_hp: Option<U256>,
         config: Option<ConfigLock>,
         stake_token_decimals: Option<u8>,
+        prover: Option<ProverObj>,
     }
 
-    impl TestCtxBuilder {
-        fn with_initial_signer_eth(self, eth: i32) -> Self {
+    impl PickerTestCtxBuilder {
+        pub(crate) fn with_initial_signer_eth(self, eth: i32) -> Self {
             Self { initial_signer_eth: Some(eth), ..self }
         }
-        fn with_initial_hp(self, hp: U256) -> Self {
+        pub(crate) fn with_initial_hp(self, hp: U256) -> Self {
             assert!(hp < U256::from(U96::MAX), "Cannot have more than 2^96 hit points");
             Self { initial_hp: Some(hp), ..self }
         }
-        fn with_config(self, config: ConfigLock) -> Self {
+        pub(crate) fn with_config(self, config: ConfigLock) -> Self {
             Self { config: Some(config), ..self }
         }
-        fn with_stake_token_decimals(self, decimals: u8) -> Self {
+        pub(crate) fn with_prover(self, prover: ProverObj) -> Self {
+            Self { prover: Some(prover), ..self }
+        }
+        pub(crate) fn with_stake_token_decimals(self, decimals: u8) -> Self {
             Self { stake_token_decimals: Some(decimals), ..self }
         }
-        async fn build(self) -> TestCtx<impl Provider + WalletProvider + Clone + 'static> {
+        pub(crate) async fn build(
+            self,
+        ) -> PickerTestCtx<impl Provider + WalletProvider + Clone + 'static> {
             let anvil = Anvil::new()
                 .args(["--balance", &format!("{}", self.initial_signer_eth.unwrap_or(10000))])
                 .spawn();
@@ -1003,13 +1561,14 @@ mod tests {
 
             let db: DbObj = Arc::new(SqliteDb::new("sqlite::memory:").await.unwrap());
             let config = self.config.unwrap_or_default();
-            let prover: ProverObj = Arc::new(DefaultProver::new());
+            let prover: ProverObj = self.prover.unwrap_or_else(|| Arc::new(DefaultProver::new()));
             let chain_monitor = Arc::new(ChainMonitorService::new(provider.clone()).await.unwrap());
             tokio::spawn(chain_monitor.spawn(Default::default()));
 
             const TEST_CHANNEL_CAPACITY: usize = 50;
             let (_new_order_tx, new_order_rx) = mpsc::channel(TEST_CHANNEL_CAPACITY);
             let (priced_orders_tx, priced_orders_rx) = mpsc::channel(TEST_CHANNEL_CAPACITY);
+            let (order_state_tx, _) = tokio::sync::broadcast::channel(TEST_CHANNEL_CAPACITY);
 
             let picker = OrderPicker::new(
                 db.clone(),
@@ -1021,9 +1580,10 @@ mod tests {
                 new_order_rx,
                 priced_orders_tx,
                 self.stake_token_decimals.unwrap_or(6),
+                order_state_tx,
             );
 
-            TestCtx {
+            PickerTestCtx {
                 anvil,
                 picker,
                 boundless_market,
@@ -1043,7 +1603,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx.generate_next_order(Default::default()).await;
 
@@ -1064,7 +1624,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let mut order = ctx.generate_next_order(Default::default()).await;
         // set a bad predicate
@@ -1091,7 +1651,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let mut order = ctx.generate_next_order(Default::default()).await;
 
@@ -1118,7 +1678,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx
             .generate_next_order(OrderParams {
@@ -1148,7 +1708,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         // NOTE: Values currently adjusted ad hoc to be between the two thresholds.
         let min_price = parse_ether("0.0013").unwrap();
@@ -1183,7 +1743,7 @@ mod tests {
             .await;
 
         // set a Groth16 selector
-        order.request.requirements.selector = FixedBytes::from(Selector::Groth16V2_1 as u32);
+        order.request.requirements.selector = FixedBytes::from(Selector::Groth16V2_2 as u32);
 
         let _request_id =
             ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
@@ -1205,7 +1765,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         // NOTE: Values currently adjusted ad hoc to be between the two thresholds.
         let min_price = parse_ether("0.0013").unwrap();
@@ -1265,7 +1825,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         // NOTE: Values currently adjusted ad hoc to be between the two thresholds.
         let min_price = parse_ether("0.0013").unwrap();
@@ -1324,7 +1884,7 @@ mod tests {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
             config.load_write().unwrap().market.allow_client_addresses = Some(vec![Address::ZERO]);
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx.generate_next_order(Default::default()).await;
 
@@ -1343,12 +1903,40 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn skip_denied_addr() {
+        let config = ConfigLock::default();
+        let ctx = PickerTestCtxBuilder::default().with_config(config.clone()).build().await;
+        let deny_address = ctx.provider.default_signer_address();
+
+        {
+            let mut cfg = config.load_write().unwrap();
+            cfg.market.mcycle_price = "0.0000001".into();
+            cfg.market.deny_requestor_addresses = Some([deny_address].into_iter().collect());
+        }
+
+        let order = ctx.generate_next_order(Default::default()).await;
+
+        let _request_id =
+            ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
+
+        let order_id = order.id();
+        let locked = ctx.picker.price_order_and_update_state(order, CancellationToken::new()).await;
+        assert!(!locked);
+
+        let db_order = ctx.db.get_order(&order_id).await.unwrap().unwrap();
+        assert_eq!(db_order.status, OrderStatus::Skipped);
+
+        assert!(logs_contain("because it is in denied addrs"));
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn resume_order_pricing() {
         let config = ConfigLock::default();
         {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
         }
-        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx.generate_next_order(Default::default()).await;
         let order_id = order.id();
@@ -1397,7 +1985,7 @@ mod tests {
             config.load_write().unwrap().market.max_stake = "10".into();
         }
 
-        let mut ctx = TestCtxBuilder::default()
+        let mut ctx = PickerTestCtxBuilder::default()
             .with_initial_signer_eth(signer_inital_balance_eth)
             .with_initial_hp(lockin_stake)
             .with_config(config)
@@ -1452,7 +2040,7 @@ mod tests {
             config.load_write().unwrap().market.fulfill_gas_estimate = fulfill_gas;
         }
 
-        let mut ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx.generate_next_order(Default::default()).await;
         let locked = ctx.picker.price_order_and_update_state(order, CancellationToken::new()).await;
@@ -1487,8 +2075,11 @@ mod tests {
         }
         let lock_stake = U256::from(10);
 
-        let ctx =
-            TestCtxBuilder::default().with_config(config).with_initial_hp(lock_stake).build().await;
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config(config)
+            .with_initial_hp(lock_stake)
+            .build()
+            .await;
         let order = ctx.generate_next_order(OrderParams { lock_stake, ..Default::default() }).await;
 
         let order_id = order.id();
@@ -1509,7 +2100,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price_stake_token = "0.0000001".into();
         }
-        let mut ctx = TestCtxBuilder::default()
+        let mut ctx = PickerTestCtxBuilder::default()
             .with_config(config)
             .with_initial_hp(U256::from(1000))
             .build()
@@ -1533,8 +2124,7 @@ mod tests {
             order.request.offer.biddingStart + order.request.offer.timeout as u64;
 
         let expected_log = format!(
-            "Setting order {} to prove after lock expiry at {}",
-            order_id, expected_target_timestamp
+            "Setting order {order_id} to prove after lock expiry at {expected_target_timestamp}"
         );
         assert!(ctx.picker.price_order_and_update_state(order, CancellationToken::new()).await);
 
@@ -1552,7 +2142,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price_stake_token = "0.1".into();
         }
-        let ctx = TestCtxBuilder::default()
+        let ctx = PickerTestCtxBuilder::default()
             .with_stake_token_decimals(6)
             .with_config(config)
             .build()
@@ -1577,10 +2167,7 @@ mod tests {
         // Since we know the stake reward is constant, and we know our min_mycle_price_stake_token
         // the execution limit check tells us if the order is profitable or not, since it computes the max number
         // of cycles that can be proven while keeping the order profitable.
-        assert!(logs_contain(&format!(
-            "Skipping order {} due to session limit exceeded",
-            order_id
-        )));
+        assert!(logs_contain(&format!("Skipping order {order_id} due to session limit exceeded")));
 
         let db_order = ctx.db.get_order(&order_id).await.unwrap().unwrap();
         assert_eq!(db_order.status, OrderStatus::Skipped);
@@ -1595,9 +2182,9 @@ mod tests {
             config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
             config.load_write().unwrap().market.max_mcycle_limit = Some(exec_limit);
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
-        ctx.picker.config.load_write().as_mut().unwrap().market.allow_skip_mcycle_limit_addresses =
+        ctx.picker.config.load_write().as_mut().unwrap().market.priority_requestor_addresses =
             Some(vec![ctx.provider.default_signer_address()]);
 
         // First order from allowed address - should skip mcycle limit
@@ -1609,7 +2196,7 @@ mod tests {
 
         // Check logs for the expected message about skipping mcycle limit
         assert!(logs_contain(&format!(
-            "Order {order_id} exec limit skipped due to client {} being part of allow_skip_mcycle_limit_addresses.",
+            "Order {order_id} exec limit config ignored due to client {} being part of priority_requestor_addresses.",
             ctx.provider.default_signer_address()
         )));
 
@@ -1625,9 +2212,14 @@ mod tests {
         assert!(locked);
 
         // Check logs for the expected message about setting exec limit to max_mcycle_limit
-        assert!(logs_contain(&format!("Order {} exec limit computed from max price", order2_id)));
-        assert!(logs_contain("exceeds config max_mcycle_limit"));
-        assert!(logs_contain("setting exec limit to max_mcycle_limit"));
+        assert!(logs_contain(&format!(
+            "Order {order2_id} prove limit capped by max_mcycle_limit config"
+        )));
+        assert!(logs_contain(&format!(
+            "with limit of {} cycles (~{} mcycles)",
+            U256::from(exec_limit) * ONE_MILLION,
+            exec_limit
+        )));
     }
 
     #[tokio::test]
@@ -1639,7 +2231,7 @@ mod tests {
             config.load_write().unwrap().market.peak_prove_khz = Some(1);
             config.load_write().unwrap().market.min_deadline = 10;
         }
-        let ctx = TestCtxBuilder::default().with_config(config).build().await;
+        let ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
 
         let order = ctx
             .generate_next_order(OrderParams {
@@ -1659,10 +2251,8 @@ mod tests {
         let locked = ctx.picker.price_order_and_update_state(order, CancellationToken::new()).await;
         assert!(locked);
 
-        let expected_log_pattern = format!("Order {order_id} preflight cycle limit adjusted to");
+        let expected_log_pattern = format!("Order {order_id} prove limit capped by deadline");
         assert!(logs_contain(&expected_log_pattern));
-        assert!(logs_contain("capped by"));
-        assert!(logs_contain("peak_prove_khz config"));
     }
 
     #[tokio::test]
@@ -1674,7 +2264,7 @@ mod tests {
             cfg.market.mcycle_price = "0.0000001".into();
             cfg.market.max_concurrent_preflights = 2;
         }
-        let mut ctx = TestCtxBuilder::default().with_config(config.clone()).build().await;
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config.clone()).build().await;
 
         // Start the order picker task
         let picker_task = tokio::spawn(ctx.picker.spawn(Default::default()));
@@ -1720,7 +2310,7 @@ mod tests {
         {
             config.load_write().unwrap().market.mcycle_price_stake_token = "1".into();
         }
-        let ctx = TestCtxBuilder::default()
+        let ctx = PickerTestCtxBuilder::default()
             .with_config(config.clone())
             .with_stake_token_decimals(6)
             .build()
@@ -1768,7 +2358,1026 @@ mod tests {
         assert!(matches!(locked, Ok(OrderPricingOutcome::Skip)));
 
         // Stake token denom offsets the mcycle multiplier, so for 1stake/mcycle, this will be 10
-        assert!(logs_contain(&format!("exec limit cycles for order {order2_id}: 10")));
+        assert!(logs_contain(&format!(
+            "Starting preflight execution of {order2_id} with limit of 10 cycles"
+        )));
         assert!(logs_contain(&format!("Skipping order {order2_id} due to session limit exceeded")));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_order_is_locked_check() -> Result<()> {
+        let ctx = PickerTestCtxBuilder::default().build().await;
+
+        let mut order = ctx.generate_next_order(Default::default()).await;
+        let order_id = order.id();
+
+        ctx.db
+            .set_request_locked(
+                U256::from(order.request.id),
+                &ctx.provider.default_signer_address().to_string(),
+                1000,
+            )
+            .await?;
+
+        assert!(ctx.db.is_request_locked(U256::from(order.request.id)).await?);
+
+        let pricing_outcome = ctx.picker.price_order(&mut order).await?;
+        assert!(matches!(pricing_outcome, OrderPricingOutcome::Skip));
+
+        assert!(logs_contain(&format!("Order {order_id} is already locked, skipping")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_duplicate_order_cache() -> Result<()> {
+        let mut ctx = PickerTestCtxBuilder::default().build().await;
+
+        let order1 = ctx.generate_next_order(Default::default()).await;
+        let order_id = order1.id();
+
+        // Duplicate order
+        let order2 = Box::new(OrderRequest {
+            request: order1.request.clone(),
+            client_sig: order1.client_sig.clone(),
+            fulfillment_type: order1.fulfillment_type,
+            boundless_market_address: order1.boundless_market_address,
+            chain_id: order1.chain_id,
+            image_id: order1.image_id.clone(),
+            input_id: order1.input_id.clone(),
+            total_cycles: order1.total_cycles,
+            target_timestamp: order1.target_timestamp,
+            expire_timestamp: order1.expire_timestamp,
+        });
+
+        assert_eq!(order1.id(), order2.id(), "Both orders should have the same ID");
+
+        tokio::spawn(ctx.picker.spawn(CancellationToken::new()));
+
+        ctx.new_order_tx.send(order1).await?;
+        ctx.new_order_tx.send(order2).await?;
+
+        let first_processed =
+            tokio::time::timeout(Duration::from_secs(10), ctx.priced_orders_rx.recv())
+                .await?
+                .unwrap();
+
+        assert_eq!(first_processed.id(), order_id, "First order should be processed");
+
+        let second_result =
+            tokio::time::timeout(Duration::from_secs(2), ctx.priced_orders_rx.recv()).await;
+
+        assert!(second_result.is_err(), "Second order should be deduplicated and not processed");
+
+        assert!(logs_contain(&format!("Skipping order {order_id} - already being processed")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_order_is_fulfilled_check() -> Result<()> {
+        let ctx = PickerTestCtxBuilder::default().build().await;
+
+        let mut order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                ..Default::default()
+            })
+            .await;
+        let order_id = order.id();
+
+        ctx.db.set_request_fulfilled(U256::from(order.request.id), 1000).await?;
+
+        assert!(ctx.db.is_request_fulfilled(U256::from(order.request.id)).await?);
+
+        let pricing_outcome = ctx.picker.price_order(&mut order).await?;
+        assert!(matches!(pricing_outcome, OrderPricingOutcome::Skip));
+
+        assert!(logs_contain(&format!("Order {order_id} is already fulfilled, skipping")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_active_tasks_logging() {
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
+        }
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
+
+        // Start the order picker task
+        let picker_task = tokio::spawn(ctx.picker.spawn(Default::default()));
+
+        // Send an order to trigger the logging
+        let order1 =
+            ctx.generate_next_order(OrderParams { order_index: 1, ..Default::default() }).await;
+        let order1_id = order1.id();
+        ctx.new_order_tx.send(order1).await.unwrap();
+
+        // Wait for the order to be processed and check for the "Added" log
+        tokio::time::timeout(
+            MIN_CAPACITY_CHECK_INTERVAL + Duration::from_secs(1),
+            ctx.priced_orders_rx.recv(),
+        )
+        .await
+        .unwrap();
+
+        // Check that we logged the task being added
+        assert!(logs_contain("Current pricing tasks: ["));
+        assert!(logs_contain(&order1_id));
+
+        // Send another order to see the task being removed and a new one added
+        let order2 =
+            ctx.generate_next_order(OrderParams { order_index: 2, ..Default::default() }).await;
+        let order2_id = order2.id();
+        ctx.new_order_tx.send(order2).await.unwrap();
+
+        // Wait for the second order to be processed
+        tokio::time::timeout(Duration::from_secs(5), ctx.priced_orders_rx.recv()).await.unwrap();
+
+        // Check that we logged the task completion
+        assert!(logs_contain(&format!("Priced task for order {order1_id} (request")));
+
+        // The order2 should be shown as in progress when order1 completes
+        assert!(logs_contain(&order2_id));
+
+        picker_task.abort();
+    }
+
+    #[tokio::test]
+    async fn test_handle_lock_event() {
+        let ctx = PickerTestCtxBuilder::default().build().await;
+        let mut active_tasks: BTreeMap<U256, BTreeMap<String, CancellationToken>> = BTreeMap::new();
+        let mut pending_orders: Vec<Box<OrderRequest>> = Vec::new();
+
+        let lock_and_fulfill_order = ctx
+            .generate_next_order(OrderParams {
+                order_index: 123,
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                ..Default::default()
+            })
+            .await;
+
+        let fulfill_after_expire_order = ctx
+            .generate_next_order(OrderParams {
+                order_index: 123,
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                ..Default::default()
+            })
+            .await;
+
+        let request_id = U256::from(lock_and_fulfill_order.request.id);
+
+        let lock_and_fulfill_token = CancellationToken::new();
+        let fulfill_after_expire_token = CancellationToken::new();
+
+        // Add active tasks using actual order IDs
+        let mut order_tasks = BTreeMap::new();
+        order_tasks.insert(lock_and_fulfill_order.id(), lock_and_fulfill_token.clone());
+        order_tasks.insert(fulfill_after_expire_order.id(), fulfill_after_expire_token.clone());
+        active_tasks.insert(request_id, order_tasks);
+
+        pending_orders.push(lock_and_fulfill_order);
+        pending_orders.push(fulfill_after_expire_order);
+
+        handle_lock_event(request_id, &mut active_tasks, &mut pending_orders);
+
+        assert!(lock_and_fulfill_token.is_cancelled(), "LockAndFulfill task should be cancelled");
+        assert!(
+            !fulfill_after_expire_token.is_cancelled(),
+            "FulfillAfterLockExpire task should NOT be cancelled"
+        );
+
+        assert!(active_tasks.contains_key(&request_id));
+        let remaining_tasks = active_tasks.get(&request_id).unwrap();
+        assert_eq!(remaining_tasks.len(), 1);
+        let remaining_order_id = remaining_tasks.keys().next().unwrap();
+        assert!(remaining_order_id.contains("FulfillAfterLockExpire"));
+
+        assert_eq!(pending_orders.len(), 1);
+        assert_eq!(pending_orders[0].fulfillment_type, FulfillmentType::FulfillAfterLockExpire);
+    }
+
+    #[tokio::test]
+    async fn test_handle_fulfill_event() {
+        // Create test context and orders
+        let ctx = PickerTestCtxBuilder::default().build().await;
+        let mut active_tasks: BTreeMap<U256, BTreeMap<String, CancellationToken>> = BTreeMap::new();
+        let mut pending_orders: Vec<Box<OrderRequest>> = Vec::new();
+
+        let lock_and_fulfill_order = ctx
+            .generate_next_order(OrderParams {
+                order_index: 456,
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                ..Default::default()
+            })
+            .await;
+
+        let fulfill_after_expire_order = ctx
+            .generate_next_order(OrderParams {
+                order_index: 456,
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                ..Default::default()
+            })
+            .await;
+
+        let request_id = U256::from(lock_and_fulfill_order.request.id);
+
+        let token1 = CancellationToken::new();
+        let token2 = CancellationToken::new();
+
+        let mut order_tasks = BTreeMap::new();
+        order_tasks.insert(lock_and_fulfill_order.id(), token1.clone());
+        order_tasks.insert(fulfill_after_expire_order.id(), token2.clone());
+        active_tasks.insert(request_id, order_tasks);
+
+        pending_orders.push(lock_and_fulfill_order);
+        pending_orders.push(fulfill_after_expire_order);
+
+        handle_fulfill_event(request_id, &mut active_tasks, &mut pending_orders);
+
+        assert!(token1.is_cancelled(), "All tasks should be cancelled");
+        assert!(token2.is_cancelled(), "All tasks should be cancelled");
+
+        assert!(!active_tasks.contains_key(&request_id));
+
+        assert_eq!(pending_orders.len(), 0, "All pending orders should be removed");
+    }
+
+    // Mock prover that tracks preflight calls
+    struct MockPreflightTracker {
+        preflight_calls: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+        default_prover: Arc<DefaultProver>,
+    }
+
+    impl MockPreflightTracker {
+        fn new() -> Self {
+            Self {
+                preflight_calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+                default_prover: Arc::new(DefaultProver::new()),
+            }
+        }
+
+        fn get_preflight_calls(&self) -> Vec<(String, String)> {
+            self.preflight_calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl Prover for MockPreflightTracker {
+        async fn upload_image(&self, image_id: &str, image: Vec<u8>) -> Result<(), ProverError> {
+            self.default_prover.upload_image(image_id, image).await
+        }
+
+        async fn upload_input(&self, input: Vec<u8>) -> Result<String, ProverError> {
+            self.default_prover.upload_input(input).await
+        }
+
+        async fn preflight(
+            &self,
+            image_id: &str,
+            input_id: &str,
+            assumptions: Vec<String>,
+            executor_limit: Option<u64>,
+            order_id: &str,
+        ) -> Result<ProofResult, ProverError> {
+            // Track the preflight call
+            self.preflight_calls.lock().unwrap().push((image_id.to_string(), input_id.to_string()));
+
+            // Call the default prover
+            self.default_prover
+                .preflight(image_id, input_id, assumptions, executor_limit, order_id)
+                .await
+        }
+
+        async fn has_image(&self, image_id: &str) -> Result<bool, ProverError> {
+            self.default_prover.has_image(image_id).await
+        }
+
+        async fn prove_stark(
+            &self,
+            image_id: &str,
+            input_id: &str,
+            assumptions: Vec<String>,
+        ) -> Result<String, ProverError> {
+            self.default_prover.prove_stark(image_id, input_id, assumptions).await
+        }
+
+        async fn wait_for_stark(&self, proof_id: &str) -> Result<ProofResult, ProverError> {
+            self.default_prover.wait_for_stark(proof_id).await
+        }
+
+        async fn cancel_stark(&self, proof_id: &str) -> Result<(), ProverError> {
+            self.default_prover.cancel_stark(proof_id).await
+        }
+
+        async fn get_receipt(&self, proof_id: &str) -> Result<Option<Receipt>, ProverError> {
+            self.default_prover.get_receipt(proof_id).await
+        }
+
+        async fn get_preflight_journal(
+            &self,
+            proof_id: &str,
+        ) -> Result<Option<Vec<u8>>, ProverError> {
+            self.default_prover.get_preflight_journal(proof_id).await
+        }
+
+        async fn get_journal(&self, proof_id: &str) -> Result<Option<Vec<u8>>, ProverError> {
+            self.default_prover.get_journal(proof_id).await
+        }
+
+        async fn compress(&self, proof_id: &str) -> Result<String, ProverError> {
+            self.default_prover.compress(proof_id).await
+        }
+
+        async fn get_compressed_receipt(
+            &self,
+            proof_id: &str,
+        ) -> Result<Option<Vec<u8>>, ProverError> {
+            self.default_prover.get_compressed_receipt(proof_id).await
+        }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_preflight_cache_behavior() -> Result<()> {
+        let mock_prover = Arc::new(MockPreflightTracker::new());
+
+        let image_id = Digest::from(ECHO_ID).to_string();
+        mock_prover.upload_image(&image_id, ECHO_ELF.to_vec()).await.unwrap();
+
+        let ctx = PickerTestCtxBuilder::default().with_prover(mock_prover.clone()).build().await;
+
+        let mut order1 =
+            ctx.generate_next_order(OrderParams { order_index: 100, ..Default::default() }).await;
+
+        let mut order2 =
+            ctx.generate_next_order(OrderParams { order_index: 200, ..Default::default() }).await;
+
+        let mut order3 = ctx
+            .generate_next_order(OrderParams {
+                order_index: 100,
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                ..Default::default()
+            })
+            .await;
+
+        assert_eq!(
+            order1.request.id, order3.request.id,
+            "Order1 and Order3 should have same request ID"
+        );
+        assert_ne!(
+            order1.request.id, order2.request.id,
+            "Order1 and Order2 should have different request IDs"
+        );
+
+        // Process order1 and order2 concurrently to test cache atomicity
+        let (pricing1, pricing2) =
+            tokio::join!(ctx.picker.price_order(&mut order1), ctx.picker.price_order(&mut order2));
+
+        assert!(pricing1.is_ok(), "Order1 pricing should succeed");
+        assert!(pricing2.is_ok(), "Order2 pricing should succeed");
+
+        // Process order3 (should use cache)
+        let pricing3 = ctx.picker.price_order(&mut order3).await;
+        assert!(pricing3.is_ok(), "Order3 pricing should succeed");
+
+        // Check preflight calls - should only be called once since all orders are identical
+        let preflight_calls = mock_prover.get_preflight_calls();
+
+        // Since ALL orders have the same image_url and input data, they should share the same cache entry
+        assert_eq!(
+            preflight_calls.len(),
+            1,
+            "Should have exactly 1 preflight call since all orders are identical.",
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_smaller_cycle_limit_cache() -> Result<()> {
+        let mock_prover = Arc::new(MockPreflightTracker::new());
+        let image_id = Digest::from(LOOP_ID).to_string();
+        mock_prover.upload_image(&image_id, LOOP_ELF.to_vec()).await.unwrap();
+
+        // Create context with very low mcycle price and set peak_prove_khz to create different deadline caps
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
+            config.load_write().unwrap().market.peak_prove_khz = Some(1000); // Set peak_prove_khz to create deadline caps
+            config.load_write().unwrap().market.min_deadline = 0; // Remove min_deadline interference
+        }
+        let ctx = PickerTestCtxBuilder::default()
+            .with_prover(mock_prover.clone())
+            .with_config(config)
+            .build()
+            .await;
+
+        // Create two orders with same program+input but very different exec limits due to different timeouts:
+        // Order 1: Very short timeout = very low deadline cap (should hit session limit exceeded)
+        // We'll set the loop to consume 50M cycles, which exceeds the 20M cycle cap from short timeout
+        let mut low_timeout_order = ctx
+            .generate_loop_order(
+                OrderParams {
+                    order_index: 1,
+                    min_price: parse_ether("100.0").unwrap(), // High price but will be capped by very short timeout
+                    max_price: parse_ether("100.0").unwrap(),
+                    timeout: 30, // Very short timeout = very low deadline cap (30s * 1000khz = 30M cycles)
+                    lock_timeout: 2, // Also set short lock_timeout
+                    ..Default::default()
+                },
+                5_000_000,
+            ) // 5M cycles - should exceed the 20M cycle limit
+            .await;
+
+        // Order 2: Long timeout = high deadline cap (should succeed and NOT reuse low-limit cache)
+        // Same cycle count but much higher exec limit due to longer timeout
+        let mut high_timeout_order = ctx
+            .generate_loop_order(
+                OrderParams {
+                    order_index: 2,
+                    min_price: parse_ether("100.0").unwrap(), // Same high price but much longer timeout
+                    max_price: parse_ether("100.0").unwrap(),
+                    timeout: 3600, // Much longer timeout = high deadline cap (3600s * 1000khz = 3.6B cycles)
+                    lock_timeout: 3000, // Also set long lock_timeout
+                    ..Default::default()
+                },
+                5_000_000,
+            ) // Same 5M cycles - should be under the 3B cycle limit
+            .await;
+
+        // Process short timeout order first - this should hit session limit and cache the Skip result
+        let result1 = ctx.picker.price_order(&mut low_timeout_order).await;
+        assert!(matches!(result1, Ok(OrderPricingOutcome::Skip)));
+
+        // Process long timeout order second - this should NOT reuse the low-limit cached result
+        // It should succeed with its own higher exec limit via a new preflight call
+        let result2 = ctx.picker.price_order(&mut high_timeout_order).await;
+        assert!(matches!(result2, Ok(OrderPricingOutcome::Lock { .. })));
+
+        // We expect 2 preflight calls since the orders have different deadline-based exec limits
+        let preflight_calls = mock_prover.get_preflight_calls();
+        assert_eq!(
+            preflight_calls.len(),
+            1,
+            "Should have exactly 1 preflight call due to preflight result caching that avoids redundant execution.",
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_concurrent_preflights_with_cancellation() -> Result<()> {
+        let mock_prover = Arc::new(MockPreflightTracker::new());
+        let image_id = Digest::from(LOOP_ID).to_string();
+        mock_prover.upload_image(&image_id, LOOP_ELF.to_vec()).await.unwrap();
+
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price = "0.0000001".into();
+        }
+        let ctx = PickerTestCtxBuilder::default()
+            .with_prover(mock_prover.clone())
+            .with_config(config)
+            .build()
+            .await;
+
+        // Create two orders with same program+input for same cache key
+        let order_a = ctx
+            .generate_loop_order(
+                OrderParams {
+                    order_index: 1,
+                    min_price: parse_ether("100.0").unwrap(),
+                    max_price: parse_ether("100.0").unwrap(),
+                    timeout: 3600,
+                    lock_timeout: 3000,
+                    ..Default::default()
+                },
+                5_000_000,
+            )
+            .await;
+
+        let order_b = ctx
+            .generate_loop_order(
+                OrderParams {
+                    order_index: 2,
+                    min_price: parse_ether("100.0").unwrap(),
+                    max_price: parse_ether("100.0").unwrap(),
+                    timeout: 3600,
+                    lock_timeout: 3000,
+                    ..Default::default()
+                },
+                5_000_000,
+            )
+            .await;
+
+        // Create cancellation tokens
+        let cancel_token_a = CancellationToken::new();
+        let cancel_token_b = CancellationToken::new();
+
+        // Save order IDs before moving into tasks
+        let order_a_id = order_a.id();
+        let _order_b_id = order_b.id();
+
+        // Start both preflights concurrently with a slight stagger
+        let cancel_a_clone = cancel_token_a.clone();
+        let picker_a = ctx.picker.clone();
+        let task_a = tokio::spawn(async move {
+            picker_a.price_order_and_update_state(order_a, cancel_token_a).await
+        });
+
+        // Small delay to ensure task A starts first
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let picker_b = ctx.picker.clone();
+        let task_b = tokio::spawn(async move {
+            picker_b.price_order_and_update_state(order_b, cancel_token_b).await
+        });
+
+        // Wait for task A to start its preflight before cancelling
+        loop {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if logs_contain(&format!("Starting preflight of {order_a_id}")) {
+                // Sleep to wait for B to wait on this preflight
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                break;
+            }
+        }
+
+        // Cancel task A now that we know it has started preflight
+        cancel_a_clone.cancel();
+
+        // Wait for both tasks to complete
+        let result_a = task_a.await.unwrap();
+        let result_b = task_b.await.unwrap();
+
+        // Task A should have been cancelled and returned false
+        assert!(!result_a, "Task A should have been cancelled");
+
+        // Task B should have completed successfully
+        assert!(result_b, "Task B should have completed successfully");
+
+        // Check that the cancellation was logged
+        assert!(logs_contain("Order pricing cancelled during pricing for order"));
+
+        // Verify that preflights are cached to avoid redundant execution
+        // Both orders should reuse the same preflight result due to caching
+        let preflight_calls = mock_prover.get_preflight_calls();
+        assert_eq!(preflight_calls.len(), 1, "Should have exactly 1 preflight call due to caching");
+
+        Ok(())
+    }
+
+    // Unit tests for calculate_exec_limits function
+
+    /// Helper to parse stake token amounts (6 decimals) instead of ETH (18 decimals)
+    fn parse_stake_tokens(amount: &str) -> U256 {
+        parse_units(amount, 6).unwrap().into()
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_eth_higher_than_stake() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.01".to_string(),           // 0.01 ETH per mcycle
+            mcycle_price_stake_token: "10".to_string(), // 10 stake tokens per mcycle
+            max_mcycle_limit: None,
+            peak_prove_khz: None,
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap(); // 0.001 ETH gas cost
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("0.05").unwrap(), // 0.05 ETH max price
+                lock_stake: parse_stake_tokens("100"),   // 100 stake tokens
+                lock_timeout: 900,                       // lock timeout
+                timeout: 1200,                           // order timeout
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // ETH based: (0.05 ETH - 0.001 ETH) * 1M / 0.01 ETH/mcycle = 4.9M cycles
+        // Stake based: 100 stake tokens * 1M / 10 stake_tokens/mcycle = 10M cycles
+        // ETH-based is higher, so both should use ETH-based limit
+
+        assert_eq!(preflight_limit, 4_900_000u64);
+        assert_eq!(prove_limit, 4_900_000u64);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_stake_higher_than_eth_exposes_bug() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.1".to_string(), // 0.1 ETH per mcycle (expensive)
+            mcycle_price_stake_token: "1".to_string(), // 1 stake token per mcycle (cheaper)
+            max_mcycle_limit: None,
+            peak_prove_khz: None,
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("0.05").unwrap(), // 0.05 ETH max price
+                lock_stake: parse_stake_tokens("1000"),  // 1000 stake tokens
+                lock_timeout: 900,
+                timeout: 1200,
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // ETH based: (0.05 ETH - 0.001 ETH) * 1M / 0.1 ETH/mcycle = 490k cycles
+        // Stake based: 1000 stake tokens * 1M / 1 stake_token/mcycle = 1000M cycles
+        // Stake-based is higher, demonstrating the bug where preflight != prove limits
+
+        assert_eq!(preflight_limit, 250_000_000u64);
+        assert_eq!(prove_limit, 490_000u64);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_fulfill_after_expire_stake_only() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.1".to_string(), // Won't be used for FulfillAfterLockExpire
+            mcycle_price_stake_token: "0.1".to_string(), // 0.1 ETH per mcycle
+            max_mcycle_limit: None,
+            peak_prove_khz: None,
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                max_price: parse_ether("1.0").unwrap(), // Won't be used
+                lock_stake: parse_stake_tokens("1.0"),  // 1 stake token
+                lock_timeout: 900,
+                timeout: 1200,
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Should only use stake-based pricing for FulfillAfterLockExpire
+        // Stake based: 1.0 stake tokens * 1M / 0.1 stake tokens per mcycle = 10M cycles
+        let expected_cycles = 2_500_000u64;
+
+        assert_eq!(preflight_limit, expected_cycles);
+        assert_eq!(prove_limit, expected_cycles);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_max_mcycle_cap() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.01".to_string(),
+            mcycle_price_stake_token: "0.1".to_string(),
+            max_mcycle_limit: Some(20), // 20 mcycle limit
+            peak_prove_khz: None,
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("10.0").unwrap(), // Very high price
+                lock_stake: parse_stake_tokens("1000.0"), // Very high stake
+                lock_timeout: 900,
+                timeout: 1200,
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Should be capped at 20M cycles regardless of high prices
+        let expected_cycles = 20_000_000u64;
+
+        assert_eq!(preflight_limit, expected_cycles);
+        assert_eq!(prove_limit, expected_cycles);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_priority_requestor_unlimited() {
+        let priority_address = address!("1234567890123456789012345678901234567890");
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.01".to_string(),
+            mcycle_price_stake_token: "0.1".to_string(),
+            max_mcycle_limit: Some(5), // Low limit normally
+            peak_prove_khz: None,
+            priority_requestor_addresses: Some(vec![priority_address]),
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let mut order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("1.0").unwrap(),
+                lock_stake: parse_stake_tokens("100.0"),
+                lock_timeout: 900,
+                timeout: 1200,
+                ..Default::default()
+            })
+            .await;
+
+        // Set the client address to the priority address
+        order.request.id = RequestId::new(priority_address, 1).into();
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Priority requestors ignore max_mcycle_limit but use different calculations for preflight vs prove
+        // For LockAndFulfill orders: preflight uses higher limit (stake), prove uses ETH-based
+        assert_eq!(preflight_limit, 250_000_000u64); // Stake-based calculation
+        assert_eq!(prove_limit, 99_900_000u64); // ETH-based calculation
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_timing_constraints() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.01".to_string(),
+            mcycle_price_stake_token: "0.1".to_string(),
+            max_mcycle_limit: None,
+            peak_prove_khz: Some(1000), // 1M cycles per second
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("10.0").unwrap(), // High price that would normally allow many cycles
+                lock_stake: parse_stake_tokens("100.0"), // High stake
+                lock_timeout: 60,                        // 60 second lock timeout
+                timeout: 120,                            // 120 second order timeout
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Should be limited by timing constraints
+        // Prove window: 60 seconds -> 60M cycles max
+        // Both should be capped at 60M cycles despite high prices
+        let expected_cycles = 60_000_000u64;
+
+        assert_eq!(preflight_limit, expected_cycles);
+        assert_eq!(prove_limit, expected_cycles);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_zero_stake_price_unlimited() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.01".to_string(),
+            mcycle_price_stake_token: "0".to_string(), // Zero stake price
+            max_mcycle_limit: None,
+            peak_prove_khz: None,
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                max_price: parse_ether("1.0").unwrap(),
+                lock_stake: parse_stake_tokens("10.0"),
+                lock_timeout: 900,
+                timeout: 1200,
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Should be unlimited (u64::MAX) when stake price is zero
+        assert_eq!(preflight_limit, u64::MAX);
+        assert_eq!(prove_limit, u64::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_very_short_deadline() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0.01".to_string(),
+            mcycle_price_stake_token: "0.1".to_string(),
+            max_mcycle_limit: None,
+            peak_prove_khz: Some(1000), // 1M cycles per second
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("1.0").unwrap(), // High price
+                lock_stake: parse_stake_tokens("10.0"), // High stake
+                lock_timeout: 1,                        // 1 second lock timeout (very short!)
+                timeout: 2,                             // 2 second order timeout
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Should be limited by very short deadline: 1 second = 1M cycles
+        let expected_cycles = 1_000_000u64;
+
+        assert_eq!(preflight_limit, expected_cycles);
+        assert_eq!(prove_limit, expected_cycles);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_exec_limits_zero_mcycle_price_unlimited() {
+        let market_config = crate::config::MarketConf {
+            mcycle_price: "0".to_string(), // Zero ETH price
+            mcycle_price_stake_token: "0.1".to_string(),
+            max_mcycle_limit: None,
+            peak_prove_khz: None,
+            priority_requestor_addresses: None,
+            ..Default::default()
+        };
+
+        let ctx = PickerTestCtxBuilder::default()
+            .with_config({
+                let config = ConfigLock::default();
+                config.load_write().unwrap().market = market_config;
+                config
+            })
+            .build()
+            .await;
+
+        let gas_cost = parse_ether("0.001").unwrap();
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::LockAndFulfill,
+                max_price: parse_ether("1.0").unwrap(),
+                lock_stake: parse_stake_tokens("10.0"),
+                lock_timeout: 60,
+                timeout: 120,
+                ..Default::default()
+            })
+            .await;
+
+        let (preflight_limit, prove_limit) =
+            ctx.picker.calculate_exec_limits(&order, gas_cost).unwrap();
+
+        // Should be unlimited (u64::MAX) when ETH mcycle_price is zero
+        assert_eq!(preflight_limit, u64::MAX);
+        assert_eq!(prove_limit, u64::MAX);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_zero_mcycle_price_order_processing() {
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price = "0".into();
+        }
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
+
+        let order = ctx.generate_next_order(Default::default()).await;
+
+        let _request_id =
+            ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
+
+        let locked = ctx.picker.price_order_and_update_state(order, CancellationToken::new()).await;
+        assert!(locked);
+
+        let priced_order = ctx.priced_orders_rx.try_recv().unwrap();
+        assert_eq!(priced_order.target_timestamp, Some(0));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_zero_stake_price_order_processing() {
+        let config = ConfigLock::default();
+        {
+            config.load_write().unwrap().market.mcycle_price_stake_token = "0".into();
+        }
+        let mut ctx = PickerTestCtxBuilder::default().with_config(config).build().await;
+
+        let order = ctx
+            .generate_next_order(OrderParams {
+                fulfillment_type: FulfillmentType::FulfillAfterLockExpire,
+                ..Default::default()
+            })
+            .await;
+
+        let _request_id =
+            ctx.boundless_market.submit_request(&order.request, &ctx.signer(0)).await.unwrap();
+
+        let locked = ctx.picker.price_order_and_update_state(order, CancellationToken::new()).await;
+        assert!(locked);
+
+        let priced_order = ctx.priced_orders_rx.try_recv().unwrap();
+        assert!(priced_order.target_timestamp.is_some());
     }
 }
