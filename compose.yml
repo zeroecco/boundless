@@ -205,9 +205,10 @@ services:
 
     expose:
       - '8081'
-    # Uncomment if you want to expose this port to the host to be accessible outside of the container
-    # ports:
-    #   - '8081:8081'
+    # Comment this out if you do not want this endpoint available outside of this network.
+    # This is exposed by default to be able to manually send requests through boundless or bento cli.
+    ports:
+      - '8081:8081'
 
     entrypoint: /app/rest_api --bind-addr 0.0.0.0:8081 --snark-timeout ${SNARK_TIMEOUT:-180}
 
