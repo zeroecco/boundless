@@ -4,6 +4,7 @@ import { useState } from "react";
 type Network = "base-mainnet" | "base-sepolia";
 
 type PricingInputs = {
+  ethPrice: number,
   programCycles: number;
   desiredTimeMinutes: number;
 };
@@ -30,17 +31,20 @@ const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
   },
 };
 
-function calculateSuggestion(cycles: number, minutes: number, networkConfig: NetworkConfig) {
+function calculateSuggestion(cycles: number, ethPrice: number, minutes: number, networkConfig: NetworkConfig) {
   const basePrice = (cycles / 1_000_000) * 0.0001 * networkConfig.basePriceMultiplier;
   const biddingStartDelay = Math.ceil(cycles / (30 * 1_000_000)); // cycles / 30MHz in blocks
+  const maxPrice = basePrice * 2
+  const maxPriceInUSDC = maxPrice * ethPrice
 
-  const lockInStakeUSDC = basePrice * 4 * 3000;
+  const lockInStakeUSDC = maxPriceInUSDC * 10 > 5 ? maxPriceInUSDC * 10 : 5
+  // const lockInStakeUSDC = basePrice * 4 * 3000;
 
   return {
     minPrice: basePrice,
-    maxPrice: basePrice * 2,
+    maxPrice: maxPrice,
     biddingStartDelay,
-    rampUpBlocks: Math.min(100, Math.ceil(minutes * 0.5 * networkConfig.blocksPerMinute)), 
+    rampUpBlocks: Math.min(100, Math.ceil(minutes * 0.5 * networkConfig.blocksPerMinute)),
     timeoutBlocks: Math.ceil(minutes * networkConfig.blocksPerMinute),
     lockInStake: lockInStakeUSDC,
   };
@@ -49,13 +53,13 @@ function calculateSuggestion(cycles: number, minutes: number, networkConfig: Net
 export default function PricingCalculator() {
   const [network, setNetwork] = useState<Network>("base-sepolia");
   const [inputs, setInputs] = useState<PricingInputs>({
+    ethPrice: 3_800,
     programCycles: 1_000_000,
     desiredTimeMinutes: 10,
   });
 
   const networkConfig = NETWORK_CONFIGS[network];
-  const suggestion = calculateSuggestion(inputs.programCycles, inputs.desiredTimeMinutes, networkConfig);
-cd 
+  const suggestion = calculateSuggestion(inputs.programCycles, inputs.ethPrice, inputs.desiredTimeMinutes, networkConfig);
   const handleNumericInput = (e, field: keyof PricingInputs) => {
     const value = e.target.value.replace(/[^0-9]/g, "");
     setInputs((prev) => ({
@@ -69,18 +73,30 @@ cd
       <div className="space-y-4">
         {/* Network Dropdown */}
         <div>
-          <label htmlFor="network-select" className="mb-2 block text-sm font-medium">
+          <label htmlFor="network-select" className="mb-2 block font-medium text-sm">
             Network
           </label>
           <select
             id="network-select"
             value={network}
             onChange={(e) => setNetwork(e.target.value as Network)}
-            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2 bg-white"
+            className="w-full rounded border border-[var(--vocs-color_border);] bg-white px-3 py-2"
           >
             <option value="base-sepolia">Base Sepolia</option>
             <option value="base-mainnet">Base Mainnet</option>
           </select>
+        </div>
+
+        <div>
+          <label htmlFor="ethPrice" className="mb-1 block text-sm">
+            Current Ethereum Price
+          </label>
+          <input
+            id="ethPrice"
+            value={inputs.ethPrice}
+            onChange={(e) => handleNumericInput(e, "ethPrice")}
+            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
+          />
         </div>
 
         <div>
