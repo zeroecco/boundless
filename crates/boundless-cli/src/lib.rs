@@ -17,7 +17,7 @@
 #![deny(missing_docs)]
 
 use alloy::{
-    primitives::Address,
+    primitives::{Address, Bytes},
     sol_types::{SolStruct, SolValue},
 };
 use anyhow::{bail, Context, Result};
@@ -29,7 +29,7 @@ use risc0_aggregation::{
 };
 use risc0_ethereum_contracts::encode_seal;
 use risc0_zkvm::{
-    compute_image_id, default_prover, is_dev_mode,
+    compute_image_id, default_prover,
     sha::{Digest, Digestible},
     ExecutorEnv, ProverOpts, Receipt, ReceiptClaim,
 };
@@ -40,9 +40,9 @@ use boundless_market::{
         Fulfillment as BoundlessFulfillment, RequestInputType,
     },
     input::GuestEnv,
-    order_stream_client::Order,
     selector::{is_groth16_selector, SupportedSelectors},
     storage::fetch_url,
+    ProofRequest,
 };
 
 alloy::sol!(
@@ -215,17 +215,16 @@ impl DefaultProver {
     /// * The [SetInclusionReceipt] of the assessor.
     pub async fn fulfill(
         &self,
-        orders: &[Order],
+        orders: &[(ProofRequest, Bytes)],
     ) -> Result<(Vec<BoundlessFulfillment>, Receipt, AssessorReceipt)> {
-        let orders_jobs = orders.iter().map(|order| async {
-            let request = order.request.clone();
-            let order_program = fetch_url(&request.imageUrl).await?;
-            let order_input: Vec<u8> = match request.input.inputType {
-                RequestInputType::Inline => GuestEnv::decode(&request.input.data)?.stdin,
+        let orders_jobs = orders.iter().cloned().map(|(req, sig)| async move {
+            let order_program = fetch_url(&req.imageUrl).await?;
+            let order_input: Vec<u8> = match req.input.inputType {
+                RequestInputType::Inline => GuestEnv::decode(&req.input.data)?.stdin,
                 RequestInputType::Url => {
                     GuestEnv::decode(
                         &fetch_url(
-                            std::str::from_utf8(&request.input.data)
+                            std::str::from_utf8(&req.input.data)
                                 .context("input url is not utf8")?,
                         )
                         .await?,
@@ -235,9 +234,9 @@ impl DefaultProver {
                 _ => bail!("Unsupported input type"),
             };
 
-            let selector = request.requirements.selector;
+            let selector = req.requirements.selector;
             if !self.supported_selectors.is_supported(selector) {
-                bail!("Unsupported selector {}", request.requirements.selector);
+                bail!("Unsupported selector {}", req.requirements.selector);
             };
 
             let order_receipt = self
@@ -250,8 +249,8 @@ impl DefaultProver {
             let order_claim_digest = order_claim.digest();
 
             let fill = Fulfillment {
-                request: order.request.clone(),
-                signature: order.signature.into(),
+                request: req.clone(),
+                signature: sig.into(),
                 journal: order_journal.clone(),
             };
 
@@ -266,7 +265,7 @@ impl DefaultProver {
 
         for (i, result) in results.into_iter().enumerate() {
             if let Err(e) = result {
-                tracing::warn!("Failed to prove request 0x{:x}: {}", orders[i].request.id, e);
+                tracing::warn!("Failed to prove request 0x{:x}: {}", orders[i].0.id, e);
                 continue;
             }
             let (receipt, claim, claim_digest, fill) = result?;
@@ -300,8 +299,8 @@ impl DefaultProver {
                 merkle_path(&claim_digests, i),
                 verifier_parameters.digest(),
             );
-            let order = &orders[i];
-            let order_seal = if is_groth16_selector(order.request.requirements.selector) {
+            let (req, _sig) = &orders[i];
+            let order_seal = if is_groth16_selector(req.requirements.selector) {
                 let receipt = self.compress(&receipts[i]).await?;
                 encode_seal(&receipt)?
             } else {
@@ -309,9 +308,9 @@ impl DefaultProver {
             };
 
             let fulfillment = BoundlessFulfillment {
-                id: order.request.id,
-                requestDigest: order.request.eip712_signing_hash(&self.domain.alloy_struct()),
-                imageId: order.request.requirements.imageId,
+                id: req.id,
+                requestDigest: req.eip712_signing_hash(&self.domain.alloy_struct()),
+                imageId: req.requirements.imageId,
                 journal: fills[i].journal.clone().into(),
                 seal: order_seal.into(),
             };
@@ -363,6 +362,15 @@ async fn compress_with_bonsai(succinct_receipt: &Receipt) -> Result<Receipt> {
     }
 }
 
+// Returns `true` if the dev mode environment variable is enabled.
+fn is_dev_mode() -> bool {
+    std::env::var("RISC0_DEV_MODE")
+        .ok()
+        .map(|x| x.to_lowercase())
+        .filter(|x| x == "1" || x == "true" || x == "yes")
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,10 +410,9 @@ mod tests {
     async fn test_fulfill_with_selector() {
         let signer = PrivateKeySigner::random();
         let (request, signature) =
-            setup_proving_request_and_signature(&signer, Some(Selector::Groth16V2_1)).await;
+            setup_proving_request_and_signature(&signer, Some(Selector::Groth16V2_2)).await;
 
         let domain = eip712_domain(Address::ZERO, 1);
-        let request_digest = request.eip712_signing_hash(&domain.alloy_struct());
         let prover = DefaultProver::new(
             SET_BUILDER_ELF.to_vec(),
             ASSESSOR_GUEST_ELF.to_vec(),
@@ -414,8 +421,7 @@ mod tests {
         )
         .expect("failed to create prover");
 
-        let order = Order { request, request_digest, signature };
-        prover.fulfill(&[order.clone()]).await.unwrap();
+        prover.fulfill(&[(request, signature.as_bytes().into())]).await.unwrap();
     }
 
     #[tokio::test]
@@ -425,7 +431,6 @@ mod tests {
         let (request, signature) = setup_proving_request_and_signature(&signer, None).await;
 
         let domain = eip712_domain(Address::ZERO, 1);
-        let request_digest = request.eip712_signing_hash(&domain.alloy_struct());
         let prover = DefaultProver::new(
             SET_BUILDER_ELF.to_vec(),
             ASSESSOR_GUEST_ELF.to_vec(),
@@ -434,7 +439,6 @@ mod tests {
         )
         .expect("failed to create prover");
 
-        let order = Order { request, request_digest, signature };
-        prover.fulfill(&[order.clone()]).await.unwrap();
+        prover.fulfill(&[(request, signature.as_bytes().into())]).await.unwrap();
     }
 }

@@ -55,7 +55,7 @@ use alloy::{
     network::Ethereum,
     primitives::{
         utils::{format_ether, format_units, parse_ether, parse_units},
-        Address, Bytes, FixedBytes, TxKind, B256, U256,
+        Address, FixedBytes, TxKind, B256, U256,
     },
     providers::{Provider, ProviderBuilder},
     rpc::types::{TransactionInput, TransactionRequest},
@@ -544,6 +544,22 @@ async fn handle_ops_command(cmd: &OpsCommands, client: StandardClient) -> Result
     }
 }
 
+/// Helper function to parse stake amounts with validation
+async fn parse_stake_amount(
+    client: &StandardClient,
+    amount: &str,
+) -> Result<(U256, String, String)> {
+    let symbol = client.boundless_market.stake_token_symbol().await?;
+    let decimals = client.boundless_market.stake_token_decimals().await?;
+    let parsed_amount =
+        parse_units(amount, decimals).map_err(|e| anyhow!("Failed to parse amount: {}", e))?.into();
+    if parsed_amount == U256::from(0) {
+        bail!("Amount is below the denomination minimum: {}", amount);
+    }
+    let formatted_amount = format_units(parsed_amount, decimals)?;
+    Ok((parsed_amount, formatted_amount, symbol))
+}
+
 /// Handle account-related commands
 async fn handle_account_command(cmd: &AccountCommands, client: StandardClient) -> Result<()> {
     match cmd {
@@ -570,19 +586,17 @@ async fn handle_account_command(cmd: &AccountCommands, client: StandardClient) -
             Ok(())
         }
         AccountCommands::DepositStake { amount } => {
-            let symbol = client.boundless_market.stake_token_symbol().await?;
-            let decimals = client.boundless_market.stake_token_decimals().await?;
-            let parsed_amount = parse_units(amount, decimals)
-                .map_err(|e| anyhow!("Failed to parse amount: {}", e))?
-                .into();
-            tracing::info!("Depositing {amount} {symbol} as stake");
+            let (parsed_amount, formatted_amount, symbol) =
+                parse_stake_amount(&client, amount).await?;
+
+            tracing::info!("Depositing {formatted_amount} {symbol} as stake");
             match client
                 .boundless_market
                 .deposit_stake_with_permit(parsed_amount, &client.signer.unwrap())
                 .await
             {
                 Ok(_) => {
-                    tracing::info!("Successfully deposited {amount} {symbol} as stake");
+                    tracing::info!("Successfully deposited {formatted_amount} {symbol} as stake");
                     Ok(())
                 }
                 Err(e) => {
@@ -598,14 +612,11 @@ async fn handle_account_command(cmd: &AccountCommands, client: StandardClient) -
             }
         }
         AccountCommands::WithdrawStake { amount } => {
-            let symbol = client.boundless_market.stake_token_symbol().await?;
-            let decimals = client.boundless_market.stake_token_decimals().await?;
-            let parsed_amount = parse_units(amount, decimals)
-                .map_err(|e| anyhow!("Failed to parse amount: {}", e))?
-                .into();
-            tracing::info!("Withdrawing {amount} {symbol} from stake");
+            let (parsed_amount, formatted_amount, symbol) =
+                parse_stake_amount(&client, amount).await?;
+            tracing::info!("Withdrawing {formatted_amount} {symbol} from stake");
             client.boundless_market.withdraw_stake(parsed_amount).await?;
-            tracing::info!("Successfully withdrew {amount} {symbol} from stake");
+            tracing::info!("Successfully withdrew {formatted_amount} {symbol} from stake");
             Ok(())
         }
         AccountCommands::StakeBalance { address } => {
@@ -692,8 +703,12 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
                 serde_yaml::from_reader(reader).context("failed to parse request from YAML")?
             } else if let Some(request_id) = request_id {
                 tracing::debug!("Loading request from blockchain: 0x{:x}", request_id);
-                let order = client.fetch_order(*request_id, *tx_hash, *request_digest).await?;
-                order.request
+                let (req, _signature) =
+                    client.fetch_proof_request(*request_id, *tx_hash, *request_digest).await?;
+                // TODO: We should check the signature here. If the signature is invalid, this
+                // might lead to wasted time. Note though that if the signature is invalid it can
+                // never be used to effect onchain state (e.g. locking or fulfilling).
+                req
             } else {
                 bail!("execute requires either a request file path or request ID")
             };
@@ -721,7 +736,7 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             }
 
             let request_ids_string =
-                request_ids.iter().map(|id| format!("0x{:x}", id)).collect::<Vec<_>>().join(", ");
+                request_ids.iter().map(|id| format!("0x{id:x}")).collect::<Vec<_>>().join(", ");
             tracing::info!("Fulfilling proof requests {}", request_ids_string);
 
             let (_, market_url) = client.boundless_market.image_info().await?;
@@ -744,23 +759,30 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
                 let client = client.clone();
                 let boundless_market = client.boundless_market.clone();
                 async move {
-                    let order = client
-                        .fetch_order(
+                    let (req, sig) = client
+                        .fetch_proof_request(
                             *request_id,
                             tx_hashes.as_ref().map(|tx_hashes| tx_hashes[i]),
                             request_digests.as_ref().map(|request_digests| request_digests[i]),
                         )
                         .await?;
-                    tracing::debug!("Fetched order details: {:?}", order.request);
+                    tracing::debug!("Fetched order details: {req:?}");
 
-                    let sig: Bytes = order.signature.as_bytes().into();
-                    order.request.verify_signature(
-                        &sig,
-                        client.deployment.boundless_market_address,
-                        boundless_market.get_chain_id().await?,
-                    )?;
+                    if !req.is_smart_contract_signed() {
+                        req.verify_signature(
+                            &sig,
+                            client.deployment.boundless_market_address,
+                            boundless_market.get_chain_id().await?,
+                        )?;
+                    } else {
+                        // TODO: Provide a way to check the EIP1271 auth.
+                        tracing::debug!(
+                            "Skipping authorization check on smart contract signed request 0x{:x}",
+                            U256::from(req.id)
+                        );
+                    }
                     let is_locked = boundless_market.is_locked(*request_id).await?;
-                    Ok::<_, anyhow::Error>((order, sig, is_locked))
+                    Ok::<_, anyhow::Error>((req, sig, is_locked))
                 }
             });
 
@@ -769,14 +791,14 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             let mut unlocked_requests = Vec::new();
 
             for result in results {
-                let (order, sig, is_locked) = result?;
+                let (req, sig, is_locked) = result?;
                 // If the request is not locked in, we need to "price" which checks the requirements
                 // and assigns a price. Otherwise, we don't. This vec will be a singleton if not locked
                 // and empty if the request is locked.
                 if !is_locked {
-                    unlocked_requests.push(UnlockedRequest::new(order.request.clone(), sig));
+                    unlocked_requests.push(UnlockedRequest::new(req.clone(), sig.clone()));
                 }
-                orders.push(order);
+                orders.push((req, sig));
             }
 
             let (fills, root_receipt, assessor_receipt) = prover.fulfill(&orders).await?;
@@ -806,17 +828,21 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
         ProvingCommands::Lock { request_id, request_digest, tx_hash } => {
             tracing::info!("Locking proof request 0x{:x}", request_id);
 
-            let order = client.fetch_order(*request_id, *tx_hash, *request_digest).await?;
-            tracing::debug!("Fetched order details: {:?}", order.request);
+            let (request, signature) =
+                client.fetch_proof_request(*request_id, *tx_hash, *request_digest).await?;
+            tracing::debug!("Fetched order details: {request:?}");
 
-            let sig: Bytes = order.signature.as_bytes().into();
-            order.request.verify_signature(
-                &sig,
-                client.deployment.boundless_market_address,
-                client.boundless_market.get_chain_id().await?,
-            )?;
+            // If the request is smart contract signed, the preflight of the lock request
+            // transaction will revert, since it includes the ERC1271 signature check.
+            if !request.is_smart_contract_signed() {
+                request.verify_signature(
+                    &signature,
+                    client.deployment.boundless_market_address,
+                    client.boundless_market.get_chain_id().await?,
+                )?;
+            }
 
-            client.boundless_market.lock_request(&order.request, sig, None).await?;
+            client.boundless_market.lock_request(&request, signature, None).await?;
             tracing::info!("Successfully locked request 0x{:x}", request_id);
             Ok(())
         }
@@ -877,8 +903,10 @@ async fn benchmark(
             request_id
         );
 
-        let order = client.fetch_order(*request_id, None, None).await?;
-        let request = order.request;
+        let (request, _signature) = client.fetch_proof_request(*request_id, None, None).await?;
+        // TODO: We should check the signature here. If the signature is invalid, this might lead
+        // to wasted time on an invalid request. This is acceptable for now because the purpose of
+        // this command is benchmarking.
 
         tracing::debug!("Fetched request 0x{:x}", request_id);
         tracing::debug!("Image URL: {}", request.imageUrl);
@@ -1019,7 +1047,7 @@ async fn create_pg_pool() -> Result<sqlx::PgPool, sqlx::Error> {
 
     let port = std::env::var("POSTGRES_PORT").unwrap_or_else(|_| "5432".to_string());
 
-    let connection_string = format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, db);
+    let connection_string = format!("postgres://{user}:{password}@{host}:{port}/{db}");
 
     sqlx::PgPool::connect(&connection_string).await
 }
@@ -1047,7 +1075,7 @@ async fn submit_offer(client: StandardClient, args: &SubmitOfferArgs) -> Result<
     let stdin: Vec<u8> = match (&args.input.input, &args.input.input_file) {
         (Some(input), None) => input.as_bytes().to_vec(),
         (None, Some(input_file)) => std::fs::read(input_file)
-            .context(format!("Failed to read input file at {:?}", input_file))?,
+            .context(format!("Failed to read input file at {input_file:?}"))?,
         _ => bail!("Exactly one of input or input-file args must be provided"),
     };
 
@@ -1072,7 +1100,7 @@ async fn submit_offer(client: StandardClient, args: &SubmitOfferArgs) -> Result<
         // risc0-ethereum. Add a Selector::inclusion_latest() function to risc0-ethereum and use it
         // here.
         ProofType::Inclusion => requirements.selector(Selector::SetVerifierV0_7 as u32),
-        ProofType::Groth16 => requirements.selector(Selector::Groth16V2_1 as u32),
+        ProofType::Groth16 => requirements.selector(Selector::Groth16V2_2 as u32),
         ProofType::Any => &mut requirements,
         ty => bail!("unsupported proof type provided in proof-type flag: {:?}", ty),
     };
@@ -1289,11 +1317,11 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
 
     let chain_id = match provider.get_chain_id().await {
         Ok(chain_id) => {
-            println!("✅ Connected to chain ID: {}", chain_id);
+            println!("✅ Connected to chain ID: {chain_id}");
             chain_id
         }
         Err(e) => {
-            println!("❌ Failed to connect: {}", e);
+            println!("❌ Failed to connect: {e}");
             // Do not run remaining checks, which require an RPC connection.
             return Ok(());
         }
@@ -1320,7 +1348,7 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
             true
         }
         Err(e) => {
-            println!("❌ Contract error: {}", e);
+            println!("❌ Contract error: {e}");
             false
         }
     };
@@ -1336,7 +1364,7 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
             image_info
         }
         Err(e) => {
-            println!("❌ Contract error: {}", e);
+            println!("❌ Contract error: {e}");
             (B256::default(), String::default())
         }
     };
@@ -1367,7 +1395,7 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
                 true
             }
             Err(e) => {
-                println!("❌ Contract error: {}", e);
+                println!("❌ Contract error: {e}");
                 false
             }
         };
@@ -1487,7 +1515,7 @@ mod tests {
             .await
             .unwrap();
         let order_stream_address = listener.local_addr().unwrap();
-        let order_stream_url = Url::parse(&format!("http://{}", order_stream_address)).unwrap();
+        let order_stream_url = Url::parse(&format!("http://{order_stream_address}")).unwrap();
         let domain = order_stream_address.to_string();
 
         let config = ConfigBuilder::default()
@@ -1644,6 +1672,31 @@ mod tests {
         let balance =
             ctx.prover_market.balance_of_stake(ctx.prover_signer.address()).await.unwrap();
         assert_eq!(balance, U256::from(0));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_deposit_stake_amount_below_denom_min() -> Result<()> {
+        let (ctx, _anvil, config) = setup_test_env(AccountOwner::Customer).await;
+
+        // Use amount below denom min
+        let amount = "0.00000000000000000000000001".to_string();
+        let args = MainArgs {
+            config,
+            command: Command::Account(Box::new(AccountCommands::DepositStake {
+                amount: amount.clone(),
+            })),
+        };
+
+        // Sanity check to make sure that the amount is below the denom min
+        let decimals = ctx.customer_market.stake_token_decimals().await?;
+        let parsed_amount: U256 = parse_units(&amount, decimals).unwrap().into();
+        assert_eq!(parsed_amount, U256::from(0));
+
+        let err = run(&args).await.unwrap_err();
+        assert!(err.to_string().contains("Amount is below the denomination minimum"));
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -2022,7 +2075,7 @@ mod tests {
         .unwrap();
 
         let request_ids_str =
-            request_ids.iter().map(|id| format!("0x{:x}", id)).collect::<Vec<_>>().join(", ");
+            request_ids.iter().map(|id| format!("0x{id:x}")).collect::<Vec<_>>().join(", ");
         assert!(logs_contain(&format!("Successfully fulfilled requests {request_ids_str}")));
 
         for request_id in request_ids {
@@ -2036,7 +2089,7 @@ mod tests {
             })
             .await
             .unwrap();
-            assert!(logs_contain(&format!("Request 0x{:x} status: Fulfilled", request_id)));
+            assert!(logs_contain(&format!("Request 0x{request_id:x} status: Fulfilled")));
         }
     }
 
@@ -2117,7 +2170,7 @@ mod tests {
         );
 
         // Explicitly set the selector to a compatible value for the test
-        // In dev mode, instead of Groth16V2_1, use FakeReceipt
+        // In dev mode, instead of Groth16V2_2, use FakeReceipt
         request.requirements.selector = FixedBytes::from(Selector::FakeReceipt as u32);
 
         // Dump the request to a tmp file; tmp is deleted on drop.

@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::future::Future;
 
@@ -192,7 +202,7 @@ impl StatusPoller {
                         return Err(ProverError::MissingStatus);
                     };
                     tracing::trace!(
-                        "Proof {proof_id:?} succeeded with user cycles: {} and total cycles: {}",
+                        "Session {proof_id:?} succeeded with user cycles: {} and total cycles: {}",
                         stats.cycles,
                         stats.total_cycles
                     );
@@ -289,9 +299,12 @@ impl Prover for Bonsai {
         input_id: &str,
         assumptions: Vec<String>,
         executor_limit: Option<u64>,
+        order_id: &str,
     ) -> Result<ProofResult, ProverError> {
         self.retry_only(
             || async {
+                // Convert cycles to Mi-cycles (1024*1024) for Bonsai API
+                let bonsai_limit = executor_limit.map(|cycles| cycles.div_ceil(1024 * 1024));
                 let preflight_id: SessionId = self
                     .retry(
                         || async {
@@ -302,7 +315,7 @@ impl Prover for Bonsai {
                                     input_id.into(),
                                     assumptions.clone(),
                                     true,
-                                    executor_limit,
+                                    bonsai_limit,
                                 )
                                 .await?)
                         },
@@ -310,6 +323,9 @@ impl Prover for Bonsai {
                     )
                     .await?;
 
+                tracing::debug!(
+                    "Created session for preflight: {preflight_id:?} for order id {order_id:?} with image id {image_id} and input id {input_id}"
+                );
                 let poller = StatusPoller {
                     poll_sleep_ms: self.status_poll_ms,
                     retry_counts: self.status_poll_retry_count,
@@ -384,8 +400,7 @@ impl Prover for Bonsai {
                             Err(e) => {
                                 tracing::error!("Failed to begin transaction: {}", e);
                                 return Err(ProverError::ProvingFailed(format!(
-                                    "Failed to begin transaction: {}",
-                                    e
+                                    "Failed to begin transaction: {e}"
                                 )));
                             }
                         };
@@ -397,8 +412,7 @@ impl Prover for Bonsai {
                         {
                             tracing::error!("Failed to update job state: {}", e);
                             return Err(ProverError::ProvingFailed(format!(
-                                "Failed to update job: {}",
-                                e
+                                "Failed to update job: {e}"
                             )));
                         }
 
@@ -409,8 +423,7 @@ impl Prover for Bonsai {
                         {
                             tracing::error!("Failed to delete task dependencies: {}", e);
                             return Err(ProverError::ProvingFailed(format!(
-                                "Failed to delete task deps: {}",
-                                e
+                                "Failed to delete task deps: {e}"
                             )));
                         }
 
@@ -421,16 +434,14 @@ impl Prover for Bonsai {
                         {
                             tracing::error!("Failed to delete tasks: {}", e);
                             return Err(ProverError::ProvingFailed(format!(
-                                "Failed to delete tasks: {}",
-                                e
+                                "Failed to delete tasks: {e}"
                             )));
                         }
 
                         if let Err(e) = tx.commit().await {
                             tracing::error!("Failed to commit transaction: {}", e);
                             return Err(ProverError::ProvingFailed(format!(
-                                "Failed to commit transaction: {}",
-                                e
+                                "Failed to commit transaction: {e}"
                             )));
                         }
 
@@ -440,8 +451,7 @@ impl Prover for Bonsai {
                     Err(e) => {
                         tracing::error!("Failed to connect to PostgreSQL: {}", e);
                         Err(ProverError::ProvingFailed(format!(
-                            "Failed to connect to postgres: {}",
-                            e
+                            "Failed to connect to postgres: {e}"
                         )))
                     }
                 }
@@ -522,7 +532,7 @@ async fn create_pg_pool() -> Result<sqlx::PgPool, sqlx::Error> {
 
     let port = std::env::var("POSTGRES_PORT").unwrap_or_else(|_| "5432".to_string());
 
-    let connection_string = format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, db);
+    let connection_string = format!("postgres://{user}:{password}@{host}:{port}/{db}");
 
     sqlx::PgPool::connect(&connection_string).await
 }

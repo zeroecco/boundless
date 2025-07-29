@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -124,7 +134,7 @@ pub struct Args {
     min_balance_raw: U256,
 
     /// Maximum number of WebSocket connections
-    #[clap(long, default_value = "100")]
+    #[clap(long, default_value = "1000")]
     max_connections: usize,
 
     /// Maximum size of the queue for each WebSocket connection
@@ -405,7 +415,7 @@ impl AppState {
     }
 }
 
-const MAX_ORDER_SIZE: usize = 25 * 1024 * 1024; // 25 mb
+const MAX_ORDER_SIZE: usize = 100 * 1024; // 100 KiB
 
 #[derive(OpenApi, Debug, Deserialize)]
 #[openapi(
@@ -605,7 +615,7 @@ mod tests {
     ) {
         let mut retry_delay = tokio::time::Duration::from_millis(50);
 
-        let health_url = format!("http://{}{}", addr, HEALTH_CHECK);
+        let health_url = format!("http://{addr}{HEALTH_CHECK}");
         for attempt in 1..=max_retries {
             match client.client.get(&health_url).send().await {
                 Ok(response) if response.status().is_success() => {
@@ -614,11 +624,10 @@ mod tests {
                 }
                 _ => {
                     if attempt == max_retries {
-                        panic!("Server failed to become healthy after {} attempts", max_retries);
+                        panic!("Server failed to become healthy after {max_retries} attempts");
                     }
                     println!(
-                        "Waiting for server to become healthy (attempt {}/{})",
-                        attempt, max_retries
+                        "Waiting for server to become healthy (attempt {attempt}/{max_retries})"
                     );
                     tokio::time::sleep(retry_delay).await;
                     retry_delay =
