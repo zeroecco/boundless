@@ -4,7 +4,6 @@ import { useState } from "react";
 type Network = "base-mainnet" | "base-sepolia";
 
 type PricingInputs = {
-  ethPrice: number;
   programMegaCycles: number;
   proofDeliveryTime: number;
 };
@@ -13,7 +12,6 @@ type NetworkConfig = {
   name: string;
   blocksPerMinute: number;
   currencySymbol: string;
-  minPriceMultiplier: number;
 };
 
 const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
@@ -21,41 +19,34 @@ const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     name: "Base Mainnet",
     blocksPerMinute: 30, // ~2 second block time
     currencySymbol: "ETH",
-    minPriceMultiplier: 0, // min price is 0 during mainnet beta incentives
   },
   "base-sepolia": {
     name: "Base Sepolia Testnet",
     blocksPerMinute: 30,
     currencySymbol: "Base SepETH",
-    minPriceMultiplier: 0, // 0 for testnet for now as well
   },
 };
 
 function calculateSuggestion(
   programMegaCycles: number,
-  ethPrice: number,
   proofDeliveryTime: number,
   networkConfig: NetworkConfig,
 ) {
-  // for testnet: 0.0001 eth per mcycle
-  const minPrice = programMegaCycles * 0.0001 * networkConfig.minPriceMultiplier;
-
   // from Jacob E: hardcode 100 million wei/cycle for max price
   // 10e8 wei / cycle = 10e14 wei / mcycle
   // max price in wei * 10e-18 = max price in eth
-  const maxPriceInWei = programMegaCycles * 1e14
+  const maxPriceInWei = programMegaCycles  * 1e14
   const maxPrice = maxPriceInWei * 1e-18 ;
 
   // allow people to execute before bidding go up
   const biddingStartDelay = Math.ceil(programMegaCycles / 30); // assuming 30 Mhz execution trace gen
 
-  // stake is in USDC so have to convert from wei to eth to USDC
-  const maxPriceInUSDC = maxPrice * ethPrice;
-  const lockInStakeUSDC = Math.max(5, maxPriceInUSDC * 10);
+  // assume 1000 MCycles = $10 USD lock stake
+  const lockInStakeUSDC = Math.max(5, ( programMegaCycles / 1000 ) * 10);
 
   return {
-    minPrice: minPrice,
-    maxPrice: maxPrice,
+    minPrice: 0,
+    maxPrice: Math.min(0.1, maxPrice), // set to 0.1 ETH max
     biddingStartDelay,
     rampUpBlocks: Math.min(100, Math.ceil(proofDeliveryTime * 0.5 * networkConfig.blocksPerMinute)),
     lockTimeoutBlocks: Math.ceil(proofDeliveryTime * networkConfig.blocksPerMinute),
@@ -66,7 +57,6 @@ function calculateSuggestion(
 export default function PricingCalculator() {
   const [network, setNetwork] = useState<Network>("base-mainnet");
   const [inputs, setInputs] = useState<PricingInputs>({
-    ethPrice: 3_800,
     programMegaCycles: 10,
     proofDeliveryTime: 10,
   });
@@ -75,7 +65,6 @@ export default function PricingCalculator() {
   const networkConfig = NETWORK_CONFIGS[network];
   const suggestion = calculateSuggestion(
     inputs.programMegaCycles,
-    inputs.ethPrice,
     inputs.proofDeliveryTime,
     networkConfig,
   );
@@ -157,19 +146,6 @@ export default function PricingCalculator() {
             id="proofDeliveryTime"
             value={inputs.proofDeliveryTime}
             onChange={(e) => handleNumericInput(e, "proofDeliveryTime")}
-            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
-          />
-        </div>
-
-        {/* Ethereum Price input in USD */}
-        <div>
-          <label htmlFor="ethPrice" className="mb-1 block text-sm">
-            Current Ether Price (USD)
-          </label>
-          <input
-            id="ethPrice"
-            value={inputs.ethPrice}
-            onChange={(e) => handleNumericInput(e, "ethPrice")}
             className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
           />
         </div>
