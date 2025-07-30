@@ -27,7 +27,7 @@ const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     name: "Base Sepolia Testnet",
     blocksPerMinute: 30,
     currencySymbol: "Base SepETH",
-    minPriceMultiplier: 1, // not 0 for testnet
+    minPriceMultiplier: 0, // 0 for testnet for now as well
   },
 };
 
@@ -39,13 +39,19 @@ function calculateSuggestion(
 ) {
   // for testnet: 0.0001 eth per mcycle
   const minPrice = programMegaCycles * 0.0001 * networkConfig.minPriceMultiplier;
-  // from Jacob E: hardcode highest price on July 7th 91e6 wei/cycle => 91e-6 eth per mcycle
-  const maxPrice = programMegaCycles * 91e-6;
-  // need to convert eth to USDC for lock stake in USDC during mainnet beta
-  const maxPriceInUSDC = maxPrice * ethPrice;
+
+  // from Jacob E: hardcode 100 million wei/cycle for max price
+  // 10e8 wei / cycle = 10e14 wei / mcycle
+  // max price in wei * 10e-18 = max price in eth
+  const maxPriceInWei = programMegaCycles * 1e14
+  const maxPrice = maxPriceInWei * 1e-18 ;
+
   // allow people to execute before bidding go up
   const biddingStartDelay = Math.ceil(programMegaCycles / 30); // assuming 30 Mhz execution trace gen
-  const lockInStakeUSDC = Math.min(5, maxPriceInUSDC * 10);
+
+  // stake is in USDC so have to convert from wei to eth to USDC
+  const maxPriceInUSDC = maxPrice * ethPrice;
+  const lockInStakeUSDC = Math.max(5, maxPriceInUSDC * 10);
 
   return {
     minPrice: minPrice,
