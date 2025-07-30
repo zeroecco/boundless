@@ -4,16 +4,16 @@ import { useState } from "react";
 type Network = "base-mainnet" | "base-sepolia";
 
 type PricingInputs = {
-  ethPrice: number,
-  programCycles: number;
-  desiredTimeMinutes: number;
+  ethPrice: number;
+  programMegaCycles: number;
+  proofDeliveryTime: number;
 };
 
 type NetworkConfig = {
   name: string;
   blocksPerMinute: number;
   currencySymbol: string;
-  basePriceMultiplier: number;
+  minPriceMultiplier: number;
 };
 
 const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
@@ -21,45 +21,78 @@ const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     name: "Base Mainnet",
     blocksPerMinute: 30, // ~2 second block time
     currencySymbol: "ETH",
-    basePriceMultiplier: 1,
+    minPriceMultiplier: 0, // min price is 0 during mainnet beta incentives
   },
   "base-sepolia": {
     name: "Base Sepolia Testnet",
     blocksPerMinute: 30,
     currencySymbol: "Base SepETH",
-    basePriceMultiplier: 0.001, // Much cheaper for testnet
+    minPriceMultiplier: 1, // not 0 for testnet
   },
 };
 
-function calculateSuggestion(cycles: number, ethPrice: number, minutes: number, networkConfig: NetworkConfig) {
-  const basePrice = (cycles / 1_000_000) * 0.0001 * networkConfig.basePriceMultiplier;
-  const biddingStartDelay = Math.ceil(cycles / (30 * 1_000_000)); // cycles / 30MHz in blocks
-  const maxPrice = basePrice * 2
-  const maxPriceInUSDC = maxPrice * ethPrice
-
-  const lockInStakeUSDC = maxPriceInUSDC * 10 > 5 ? maxPriceInUSDC * 10 : 5
-  // const lockInStakeUSDC = basePrice * 4 * 3000;
+function calculateSuggestion(
+  programMegaCycles: number,
+  ethPrice: number,
+  proofDeliveryTime: number,
+  networkConfig: NetworkConfig,
+) {
+  // for testnet: 0.0001 eth per mcycle
+  const minPrice = programMegaCycles * 0.0001 * networkConfig.minPriceMultiplier;
+  // from Jacob E: hardcode highest price on July 7th 91e6 wei/cycle => 91e-6 eth per mcycle
+  const maxPrice = programMegaCycles * 91e-6;
+  // need to convert eth to USDC for lock stake in USDC during mainnet beta
+  const maxPriceInUSDC = maxPrice * ethPrice;
+  // allow people to execute before bidding go up
+  const biddingStartDelay = Math.ceil(programMegaCycles / 30); // assuming 30 Mhz execution trace gen
+  const lockInStakeUSDC = Math.min(5, maxPriceInUSDC * 10);
 
   return {
-    minPrice: basePrice,
+    minPrice: minPrice,
     maxPrice: maxPrice,
     biddingStartDelay,
-    rampUpBlocks: Math.min(100, Math.ceil(minutes * 0.5 * networkConfig.blocksPerMinute)),
-    timeoutBlocks: Math.ceil(minutes * networkConfig.blocksPerMinute),
+    rampUpBlocks: Math.min(100, Math.ceil(proofDeliveryTime * 0.5 * networkConfig.blocksPerMinute)),
+    lockTimeoutBlocks: Math.ceil(proofDeliveryTime * networkConfig.blocksPerMinute),
     lockInStake: lockInStakeUSDC,
   };
 }
 
 export default function PricingCalculator() {
-  const [network, setNetwork] = useState<Network>("base-sepolia");
+  const [network, setNetwork] = useState<Network>("base-mainnet");
   const [inputs, setInputs] = useState<PricingInputs>({
     ethPrice: 3_800,
-    programCycles: 1_000_000,
-    desiredTimeMinutes: 10,
+    programMegaCycles: 10,
+    proofDeliveryTime: 10,
   });
+  const [copied, setCopied] = useState(false);
 
   const networkConfig = NETWORK_CONFIGS[network];
-  const suggestion = calculateSuggestion(inputs.programCycles, inputs.ethPrice, inputs.desiredTimeMinutes, networkConfig);
+  const suggestion = calculateSuggestion(
+    inputs.programMegaCycles,
+    inputs.ethPrice,
+    inputs.proofDeliveryTime,
+    networkConfig,
+  );
+
+  const yamlConfig = `offer:
+    min_price: ${suggestion.minPrice * 1e18} # wei
+    max_price: ${suggestion.maxPrice * 1e18} # wei
+    biddingStart: ${suggestion.biddingStartDelay} # blocks
+    rampUpPeriod: ${suggestion.rampUpBlocks} # blocks
+    timeout: 2700 # seconds
+    lockTimeout: ${suggestion.lockTimeoutBlocks} # blocks
+    lockStake: ${suggestion.lockInStake * 1e6} # USDC`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(yamlConfig);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
   const handleNumericInput = (e, field: keyof PricingInputs) => {
     const value = e.target.value.replace(/[^0-9]/g, "");
     setInputs((prev) => ({
@@ -71,25 +104,61 @@ export default function PricingCalculator() {
   return (
     <div className="my-8 rounded-lg border border-[var(--vocs-color_border);] p-6">
       <div className="space-y-4">
+
         {/* Network Dropdown */}
         <div>
           <label htmlFor="network-select" className="mb-2 block font-medium text-sm">
             Network
           </label>
-          <select
-            id="network-select"
-            value={network}
-            onChange={(e) => setNetwork(e.target.value as Network)}
-            className="w-full rounded border border-[var(--vocs-color_border);] bg-white px-3 py-2"
-          >
-            <option value="base-sepolia">Base Sepolia</option>
-            <option value="base-mainnet">Base Mainnet</option>
-          </select>
+          <div className="relative">
+            <select
+              id="network-select"
+              value={network}
+              onChange={(e) => setNetwork(e.target.value as Network)}
+              className="w-full rounded border border-[var(--vocs-color_border);] bg-white px-3 py-2 pr-10"
+              style={{ appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none' }}
+            >
+              <option value="base-sepolia">Base Sepolia</option>
+              <option value="base-mainnet">Base Mainnet</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+              <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
         </div>
 
+        {/* Program Cycles input in MCycles */}
+        <div>
+          <label htmlFor="programMegaCycles" className="mb-1 block text-sm">
+            Program Cycles (MCycles)
+          </label>
+          <input
+            id="programMegaCycles"
+            value={inputs.programMegaCycles}
+            onChange={(e) => handleNumericInput(e, "programMegaCycles")}
+            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
+          />
+        </div>
+
+        {/* Proof Delivery Time in minutes */}
+        <div>
+          <label htmlFor="proofDeliveryTime" className="mb-1 block text-sm">
+            Desired Proof Delivery Time (minutes)
+          </label>
+          <input
+            id="proofDeliveryTime"
+            value={inputs.proofDeliveryTime}
+            onChange={(e) => handleNumericInput(e, "proofDeliveryTime")}
+            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
+          />
+        </div>
+
+        {/* Ethereum Price input in USD */}
         <div>
           <label htmlFor="ethPrice" className="mb-1 block text-sm">
-            Current Ethereum Price
+            Current Ether Price (USD)
           </label>
           <input
             id="ethPrice"
@@ -99,32 +168,9 @@ export default function PricingCalculator() {
           />
         </div>
 
-        <div>
-          <label htmlFor="programCycles" className="mb-1 block text-sm">
-            Program Cycles
-          </label>
-          <input
-            id="programCycles"
-            value={inputs.programCycles}
-            onChange={(e) => handleNumericInput(e, "programCycles")}
-            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="desiredTimeMinutes" className="mb-1 block text-sm">
-            Desired Proof Time (in minutes)
-          </label>
-          <input
-            id="desiredTimeMinutes"
-            value={inputs.desiredTimeMinutes}
-            onChange={(e) => handleNumericInput(e, "desiredTimeMinutes")}
-            className="w-full rounded border border-[var(--vocs-color_border);] px-3 py-2"
-          />
-        </div>
-
+        {/* Suggested Offer Parameters */}
         <div className="pt-4">
-          <h4 className="mb-2 font-medium">Suggested Parameters</h4>
+          <h4 className="mb-2 font-medium">Suggested Offer Parameters</h4>
           <div className="rounded border border-[var(--vocs-color_border);] bg-muted p-4">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
@@ -178,8 +224,8 @@ export default function PricingCalculator() {
                 <dd>
                   <NumberFlow
                     className="font-mono"
-                    value={suggestion.timeoutBlocks}
-                    suffix={suggestion.timeoutBlocks === 1 ? " block" : " blocks"}
+                    value={suggestion.lockTimeoutBlocks}
+                    suffix={suggestion.lockTimeoutBlocks === 1 ? " block" : " blocks"}
                   />
                 </dd>
               </div>
@@ -200,6 +246,55 @@ export default function PricingCalculator() {
             </dl>
           </div>
         </div>
+
+        {/* Request YAML Configuration Generator */}
+        <div className="pt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h4 className="font-medium">
+              Offer Parameters {" "}
+              <a
+                href="https://github.com/boundless-xyz/boundless/blob/main/request.yaml"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--vocs-color_textAccent)] underline hover:opacity-80"
+              >
+              (request.yaml)
+              </a>
+            </h4>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1 rounded border border-[var(--vocs-color_border);] px-2 py-1 text-xs transition-colors hover:bg-muted"
+            >
+              {copied ? (
+                <>
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  Copy
+                </>
+              )}
+            </button>
+          </div>
+          <div className="rounded border border-[var(--vocs-color_border);] bg-muted p-4">
+            <pre className="overflow-x-auto text-sm">
+              <code className="language-yaml">
+                {yamlConfig}
+              </code>
+            </pre>
+          </div>
+        </div>
+
+
+
+
       </div>
     </div>
   );
