@@ -45,7 +45,8 @@ use super::{
 /// This is determined by the constant SLASHING_BURN_BPS defined in the BoundlessMarket contract.
 /// The value is 4 because the slashing burn is 75% of the stake, and we give the remaining 1/4 of that to the prover.
 /// TODO(https://github.com/boundless-xyz/boundless/issues/517): Retrieve this from the contract in the future
-const FRACTION_STAKE_REWARD: u64 = 4;
+const FRACTION_STAKE_NUMERATOR: u64 = 4;
+const FRACTION_STAKE_DENOMINATOR: u64 = 5;
 
 /// Boundless market errors.
 #[derive(Error, Debug)]
@@ -65,6 +66,10 @@ pub enum MarketError {
     /// Request has expired.
     #[error("Request has expired 0x{0:x}")]
     RequestHasExpired(U256),
+
+    /// Request already slashed.
+    #[error("Request is slashed 0x{0:x}")]
+    RequestIsSlashed(U256),
 
     /// Request malformed.
     #[error("Request error {0}")]
@@ -89,6 +94,14 @@ pub enum MarketError {
     /// Lock request reverted, possibly outbid.
     #[error("Lock request reverted, possibly outbid: txn_hash: {0}")]
     LockRevert(B256),
+
+    /// Lock request reverted, possibly outbid.
+    #[error("Slash request reverted, possibly already slashed: txn_hash: {0}")]
+    SlashRevert(B256),
+
+    /// Log not emitted.
+    #[error("Expected log was not emitted, txn {0} possibly reverted: {1}")]
+    LogNotEmitted(B256, anyhow::Error),
 
     /// General market error.
     #[error("Other error: {0:?}")]
@@ -337,8 +350,10 @@ impl<P: Provider> BoundlessMarketService<P> {
         let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         // Look for the logs for submitting the transaction.
-        let log = extract_tx_log::<IBoundlessMarket::RequestSubmitted>(&receipt)?;
-        Ok(U256::from(log.inner.data.requestId))
+        match extract_tx_log::<IBoundlessMarket::RequestSubmitted>(&receipt) {
+            Ok(log) => Ok(U256::from(log.inner.data.requestId)),
+            Err(e) => Err(MarketError::LogNotEmitted(receipt.transaction_hash, e)),
+        }
     }
 
     /// Submit a request such that it is publicly available for provers to evaluate and bid
@@ -361,8 +376,10 @@ impl<P: Provider> BoundlessMarketService<P> {
         let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
         // Look for the logs for submitting the transaction.
-        let log = extract_tx_log::<IBoundlessMarket::RequestSubmitted>(&receipt)?;
-        Ok(U256::from(log.inner.data.requestId))
+        match extract_tx_log::<IBoundlessMarket::RequestSubmitted>(&receipt) {
+            Ok(log) => Ok(U256::from(log.inner.data.requestId)),
+            Err(e) => Err(MarketError::LogNotEmitted(receipt.transaction_hash, e)),
+        }
     }
 
     /// Submit a request such that it is publicly available for provers to evaluate and bid
@@ -557,6 +574,10 @@ impl<P: Provider> BoundlessMarketService<P> {
         &self,
         request_id: U256,
     ) -> Result<IBoundlessMarket::ProverSlashed, MarketError> {
+        if self.is_slashed(request_id).await? {
+            return Err(MarketError::RequestIsSlashed(request_id));
+        }
+
         tracing::trace!("Calling slash({:x?})", request_id);
         let call = self.instance.slash(request_id).from(self.caller);
         let pending_tx = call.send().await?;
@@ -564,8 +585,14 @@ impl<P: Provider> BoundlessMarketService<P> {
 
         let receipt = self.get_receipt_with_retry(pending_tx).await?;
 
-        let log = extract_tx_log::<IBoundlessMarket::ProverSlashed>(&receipt)?;
-        Ok(log.inner.data)
+        if !receipt.status() {
+            return Err(MarketError::SlashRevert(receipt.transaction_hash));
+        }
+
+        match extract_tx_log::<IBoundlessMarket::ProverSlashed>(&receipt) {
+            Ok(log) => Ok(log.inner.data),
+            Err(e) => Err(MarketError::LogNotEmitted(receipt.transaction_hash, e)),
+        }
     }
 
     /// Submits a `FulfillmentTx`.
@@ -845,7 +872,8 @@ impl<P: Provider> BoundlessMarketService<P> {
             .with_timeout(Some(self.timeout))
             .get_receipt()
             .await
-            .context("failed to confirm tx")?;
+            .context("failed to confirm tx")
+            .map_err(MarketError::TxnConfirmationError)?;
 
         tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
 
@@ -883,7 +911,8 @@ impl<P: Provider> BoundlessMarketService<P> {
             .with_timeout(Some(self.timeout))
             .get_receipt()
             .await
-            .context("failed to confirm tx")?;
+            .context("failed to confirm tx")
+            .map_err(MarketError::TxnConfirmationError)?;
 
         tracing::info!("Submitted merkle root and proof for batch {}", tx_receipt.transaction_hash);
 
@@ -1471,7 +1500,11 @@ impl Offer {
     /// Returns the amount of stake that the protocol awards to the prover who fills an order that
     /// was locked by another prover but not fulfilled by lock expiry.
     pub fn stake_reward_if_locked_and_not_fulfilled(&self) -> U256 {
-        self.lockStake / U256::from(FRACTION_STAKE_REWARD)
+        self.lockStake
+            .checked_mul(U256::from(FRACTION_STAKE_NUMERATOR))
+            .unwrap()
+            .checked_div(U256::from(FRACTION_STAKE_DENOMINATOR))
+            .unwrap()
     }
 }
 
@@ -1623,5 +1656,11 @@ mod tests {
 
         // Price cannot exceed maxPrice
         assert!(offer.time_at_price(ether("3")).is_err());
+    }
+
+    #[test]
+    fn test_stake_reward_if_locked_and_not_fulfilled() {
+        let offer = &test_offer(100);
+        assert_eq!(offer.stake_reward_if_locked_and_not_fulfilled(), ether("0.8"));
     }
 }

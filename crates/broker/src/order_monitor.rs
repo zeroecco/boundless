@@ -228,7 +228,8 @@ where
             .market
             .get_status(request_id, Some(order.request.expires_at()))
             .await
-            .context("Failed to get request status")?;
+            .context("Failed to get request status")
+            .map_err(OrderMonitorErr::RpcErr)?;
         if order_status != RequestStatus::Unknown {
             tracing::info!("Request {:x} not open: {order_status:?}, skipping", request_id);
             // TODO: fetch some chain data to find out who / and for how much the order
@@ -418,11 +419,12 @@ where
             current_block_timestamp: u64,
             min_deadline: u64,
         ) -> bool {
-            if order.request.expires_at() < current_block_timestamp {
+            let expiration = order.expiry();
+            if expiration < current_block_timestamp {
                 tracing::debug!("Request {:x} has now expired. Skipping.", order.request.id);
                 false
-            } else if order.request.expires_at().saturating_sub(now_timestamp()) < min_deadline {
-                tracing::debug!("Request {:x} deadline at {} is less than the minimum deadline {} seconds required to prove an order. Skipping.", order.request.id, order.request.expires_at(), min_deadline);
+            } else if expiration.saturating_sub(now_timestamp()) < min_deadline {
+                tracing::debug!("Request {:x} deadline at {} is less than the minimum deadline {} seconds required to prove an order. Skipping.", order.request.id, expiration, min_deadline);
                 false
             } else {
                 true
@@ -544,6 +546,10 @@ where
                                         "Failed to lock order: {order_id} - {} - {inner:?}",
                                         err.code()
                                     );
+                                }
+                                OrderMonitorErr::AlreadyLocked => {
+                                    // For order already locked, we don't need to print the error backtrace.
+                                    tracing::warn!("Soft failed to lock request: {order_id} - {}", err.code());
                                 }
                                 _ => {
                                     tracing::warn!(
@@ -747,11 +753,7 @@ where
 
                 let proof_time_seconds = total_cycles.div_ceil(1_000).div_ceil(peak_prove_khz);
                 let completion_time = prover_available_at + proof_time_seconds;
-                let expiration = match order.fulfillment_type {
-                    FulfillmentType::LockAndFulfill => order.request.lock_expires_at(),
-                    FulfillmentType::FulfillAfterLockExpire => order.request.expires_at(),
-                    _ => panic!("Unsupported fulfillment type: {:?}", order.fulfillment_type),
-                };
+                let expiration = order.expiry();
 
                 if completion_time + config.batch_buffer_time_secs > expiration {
                     // If the order cannot be completed before its expiration, skip it permanently.
