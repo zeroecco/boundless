@@ -1102,6 +1102,7 @@ async fn submit_offer(client: StandardClient, args: &SubmitOfferArgs) -> Result<
         ProofType::Inclusion => requirements.selector(Selector::SetVerifierV0_7 as u32),
         ProofType::Groth16 => requirements.selector(Selector::Groth16V2_2 as u32),
         ProofType::Any => &mut requirements,
+        ProofType::ShrinkBitvm2 => requirements.selector(Selector::ShrinkBitvm2V0_1 as u32),
         ty => bail!("unsupported proof type provided in proof-type flag: {:?}", ty),
     };
     let request = request.with_requirements(requirements);

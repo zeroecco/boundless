@@ -97,3 +97,6 @@ lto = true
 # [profile.release]
 # lto = "fat"
 # codegen-units = 1
+
+[patch.crates-io]
+risc0-ethereum-contracts = { path = "/home/etu/risc0-ethereum/contracts" }

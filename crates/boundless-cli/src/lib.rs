@@ -40,7 +40,7 @@ use boundless_market::{
         Fulfillment as BoundlessFulfillment, RequestInputType,
     },
     input::GuestEnv,
-    selector::{is_groth16_selector, SupportedSelectors},
+    selector::{is_groth16_selector, is_shrink_bitvm2_selector, SupportedSelectors},
     storage::fetch_url,
     ProofRequest,
 };
@@ -303,6 +303,8 @@ impl DefaultProver {
             let order_seal = if is_groth16_selector(req.requirements.selector) {
                 let receipt = self.compress(&receipts[i]).await?;
                 encode_seal(&receipt)?
+            } else if is_shrink_bitvm2_selector(req.requirements.selector) {
+                todo!("not implemented yet")
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
