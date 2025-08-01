@@ -1,9 +1,9 @@
+import * as crypto from 'crypto';
 import * as aws from '@pulumi/aws';
 import * as awsx from '@pulumi/awsx';
+import type { Image } from '@pulumi/docker-build';
 import * as pulumi from '@pulumi/pulumi';
-import { Image } from '@pulumi/docker-build';
-import { getServiceNameV1, Severity } from '../../util';
-import * as crypto from 'crypto';
+import { Severity, getServiceNameV1 } from '../../util';
 
 interface OrderGeneratorArgs {
   chainId: string;
@@ -115,7 +115,7 @@ export class OrderGenerator extends pulumi.ComponentResource {
       },
     });
 
-    let environment = [
+    const environment = [
       {
         name: 'IPFS_GATEWAY_URL',
         value: args.ipfsGateway,
@@ -128,7 +128,7 @@ export class OrderGenerator extends pulumi.ComponentResource {
       { name: 'SECRET_HASH', value: secretHash },
     ]
 
-    let secrets = [
+    const secrets = [
       {
         name: 'RPC_URL',
         valueFrom: rpcUrlSecret.arn,
@@ -156,7 +156,7 @@ export class OrderGenerator extends pulumi.ComponentResource {
 
     const cluster = new aws.ecs.Cluster(`${serviceName}-cluster`, { name: serviceName });
 
-    let ogArgs = [
+    const ogArgs = [
       `--interval ${args.interval}`,
       `--min ${args.minPricePerMCycle}`,
       `--max ${args.maxPricePerMCycle}`,
