@@ -395,6 +395,16 @@ impl Prover for DefaultProver {
             .ok_or_else(|| ProverError::NotFound(format!("proof {proof_id}")))?;
         Ok(proof_data.compressed_receipt.as_ref().cloned())
     }
+
+    async fn shrink_bitvm2(&self, _proof_id: &str) -> Result<String, ProverError> {
+        todo!("Shrink BitVM is not implemented yet");
+    }
+    async fn get_shrink_bitvm2_receipt(
+        &self,
+        _proof_id: &str,
+    ) -> Result<Option<Vec<u8>>, ProverError> {
+        todo!("Shrink BitVM is not implemented yet");
+    }
 }
 
 #[cfg(test)]

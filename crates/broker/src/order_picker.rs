@@ -2710,6 +2710,15 @@ pub(crate) mod tests {
         ) -> Result<Option<Vec<u8>>, ProverError> {
             self.default_prover.get_compressed_receipt(proof_id).await
         }
+        async fn shrink_bitvm2(&self, _proof_id: &str) -> Result<String, ProverError> {
+            todo!("Shrink BitVM is not implemented yet");
+        }
+        async fn get_shrink_bitvm2_receipt(
+            &self,
+            _proof_id: &str,
+        ) -> Result<Option<Vec<u8>>, ProverError> {
+            todo!("Shrink BitVM is not implemented yet");
+        }
     }
 
     #[tokio::test]
