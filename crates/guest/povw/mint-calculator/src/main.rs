@@ -74,7 +74,6 @@ fn main() {
                 }
             }
 
-            // TODO: Consider minting to an address that is not necessarily the log id.
             let epoch_number = update_event.epochNumber.to::<u32>();
             let epoch_total_work = *epochs.get(&epoch_number).unwrap_or_else(|| {
                 panic!("no epoch finalized event processed for epoch number {epoch_number}")

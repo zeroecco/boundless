@@ -38,7 +38,7 @@ async fn basic() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // Post a work log update
     let signer = PrivateKeySigner::random();
@@ -79,7 +79,7 @@ async fn proportional_rewards_same_epoch() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     let signer1 = PrivateKeySigner::random();
     let signer2 = PrivateKeySigner::random();
@@ -134,20 +134,15 @@ async fn proportional_rewards_same_epoch() -> anyhow::Result<()> {
     let tolerance = U256::from(10);
     assert!(
         balance1.abs_diff(expected1) <= tolerance,
-        "Signer1 should receive ~30 tokens, got {}, expected {}",
-        balance1,
-        expected1
+        "Signer1 should receive ~30 tokens, got {balance1}, expected {expected1}"
     );
     assert!(
         balance2.abs_diff(expected2) <= tolerance,
-        "Signer2 should receive ~70 tokens, got {}, expected {}",
-        balance2,
-        expected2
+        "Signer2 should receive ~70 tokens, got {balance2}, expected {expected2}"
     );
 
     println!(
-        "Proportional rewards verified: {} tokens to signer1, {} tokens to signer2",
-        balance1, balance2
+        "Proportional rewards verified: {balance1} tokens to signer1, {balance2} tokens to signer2"
     );
     Ok(())
 }
@@ -157,7 +152,7 @@ async fn sequential_mints_per_epoch() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let first_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Starting epoch: {}", first_epoch);
+    println!("Starting epoch: {first_epoch}");
 
     let signer = PrivateKeySigner::random();
 
@@ -189,7 +184,7 @@ async fn sequential_mints_per_epoch() -> anyhow::Result<()> {
         balance_after_first_mint, epoch_reward,
         "After first mint should have full epoch reward"
     );
-    println!("Balance after first mint: {} tokens", balance_after_first_mint);
+    println!("Balance after first mint: {balance_after_first_mint} tokens");
 
     // Second epoch update (chained from first)
     let second_epoch = ctx.povw_contract.currentEpoch().call().await?;
@@ -218,7 +213,7 @@ async fn sequential_mints_per_epoch() -> anyhow::Result<()> {
     let expected_total = epoch_reward * U256::from(2); // Both full epoch rewards
 
     assert_eq!(final_balance, expected_total, "Final balance should be exactly 2x epoch reward");
-    println!("Final balance after both mints: {} tokens", final_balance);
+    println!("Final balance after both mints: {final_balance} tokens");
 
     Ok(())
 }
@@ -228,7 +223,7 @@ async fn cross_epoch_mint() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let first_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Starting epoch: {}", first_epoch);
+    println!("Starting epoch: {first_epoch}");
 
     let signer = PrivateKeySigner::random();
 
@@ -280,7 +275,7 @@ async fn cross_epoch_mint() -> anyhow::Result<()> {
         final_balance, expected_total,
         "Final balance should be exactly 2x epoch reward from both epochs"
     );
-    println!("Final balance after cross-epoch mint: {} tokens", final_balance);
+    println!("Final balance after cross-epoch mint: {final_balance} tokens");
 
     Ok(())
 }
@@ -537,7 +532,7 @@ async fn mint_to_value_recipient() -> anyhow::Result<()> {
     let value_recipient = PrivateKeySigner::random();
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // Work log controlled by work_log_signer, but rewards should go to value_recipient
     let update = LogBuilderJournal {
@@ -585,8 +580,7 @@ async fn mint_to_value_recipient() -> anyhow::Result<()> {
     );
 
     println!(
-        "Verified: work_log_signer balance = {}, value_recipient balance = {}",
-        work_log_signer_balance, value_recipient_balance
+        "Verified: work_log_signer balance = {work_log_signer_balance}, value_recipient balance = {value_recipient_balance}"
     );
 
     Ok(())
@@ -600,7 +594,7 @@ async fn single_work_log_multiple_recipients() -> anyhow::Result<()> {
     let recipient2 = PrivateKeySigner::random();
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // First update: work_log_signer -> recipient1
     let first_update = LogBuilderJournal {
@@ -654,21 +648,14 @@ async fn single_work_log_multiple_recipients() -> anyhow::Result<()> {
     assert_eq!(work_log_signer_balance, U256::ZERO, "Work log signer should not receive tokens");
     assert!(
         recipient1_balance.abs_diff(expected_recipient1) <= tolerance,
-        "Recipient1 should get ~60% of epoch reward, got {}, expected {}",
-        recipient1_balance,
-        expected_recipient1
+        "Recipient1 should get ~60% of epoch reward, got {recipient1_balance}, expected {expected_recipient1}"
     );
     assert!(
         recipient2_balance.abs_diff(expected_recipient2) <= tolerance,
-        "Recipient2 should get ~40% of epoch reward, got {}, expected {}",
-        recipient2_balance,
-        expected_recipient2
+        "Recipient2 should get ~40% of epoch reward, got {recipient2_balance}, expected {expected_recipient2}"
     );
 
-    println!(
-        "Verified balances: recipient1={}, recipient2={}",
-        recipient1_balance, recipient2_balance
-    );
+    println!("Verified balances: recipient1={recipient1_balance}, recipient2={recipient2_balance}");
 
     Ok(())
 }
@@ -681,7 +668,7 @@ async fn multiple_work_logs_same_recipient() -> anyhow::Result<()> {
     let shared_recipient = PrivateKeySigner::random();
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // First work log update -> shared_recipient
     let first_update = LogBuilderJournal {
@@ -737,12 +724,10 @@ async fn multiple_work_logs_same_recipient() -> anyhow::Result<()> {
     assert_eq!(work_log_signer2_balance, U256::ZERO, "Work log signer2 should not receive tokens");
     assert!(
         shared_recipient_balance.abs_diff(epoch_reward) <= tolerance,
-        "Shared recipient should get ~full epoch reward, got {}, expected {}",
-        shared_recipient_balance,
-        epoch_reward
+        "Shared recipient should get ~full epoch reward, got {shared_recipient_balance}, expected {epoch_reward}"
     );
 
-    println!("Verified: shared_recipient balance = {}", shared_recipient_balance);
+    println!("Verified: shared_recipient balance = {shared_recipient_balance}");
 
     Ok(())
 }

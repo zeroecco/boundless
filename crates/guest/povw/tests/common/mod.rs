@@ -150,7 +150,7 @@ impl TestCtx {
 
         let new_epoch = self.povw_contract.currentEpoch().call().await?;
         assert_eq!(new_epoch, initial_epoch + epochs, "Epoch should have advanced by {epochs}");
-        println!("Time advanced: epoch {} -> {}", initial_epoch, new_epoch);
+        println!("Time advanced: epoch {initial_epoch} -> {new_epoch}");
         Ok(new_epoch)
     }
 
@@ -173,7 +173,7 @@ impl TestCtx {
             chain_id: self.chain_id,
         };
         let journal = execute_log_updater_guest(&input)?;
-        println!("Guest execution completed, journal: {:#?}", journal);
+        println!("Guest execution completed, journal: {journal:#?}");
 
         let fake_receipt: Receipt =
             FakeReceipt::new(ReceiptClaim::ok(BOUNDLESS_POVW_LOG_UPDATER_ID, journal.abi_encode()))
@@ -235,11 +235,8 @@ impl TestCtx {
     ) -> anyhow::Result<mint_calculator::Input> {
         // Query for WorkLogUpdated and EpochFinalized events, recording the block numbers that include these events.
         let latest_block = self.provider.get_block_number().await?;
-        let epoch_filter_str = if epochs.is_empty() {
-            "all epochs".to_string()
-        } else {
-            format!("epochs {:?}", epochs)
-        };
+        let epoch_filter_str =
+            if epochs.is_empty() { "all epochs".to_string() } else { format!("epochs {epochs:?}") };
         println!("Running mint operation for blocks: 0 to {latest_block}, filtering for {epoch_filter_str}");
 
         // Query for WorkLogUpdated events
@@ -298,7 +295,7 @@ impl TestCtx {
         }
 
         let sorted_blocks: Vec<u64> = block_numbers.into_iter().collect();
-        println!("Block numbers with events: {:?}", sorted_blocks);
+        println!("Block numbers with events: {sorted_blocks:?}");
 
         // Build the input for the mint_calculator, including input for Steel.
         let mint_input = mint_calculator::Input::build(

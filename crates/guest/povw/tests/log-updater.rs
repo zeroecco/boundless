@@ -381,7 +381,7 @@ async fn contract_integration() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // Construct and sign a WorkLogUpdate.
     let signer = PrivateKeySigner::random();
@@ -395,7 +395,7 @@ async fn contract_integration() -> anyhow::Result<()> {
 
     let update_event = ctx.post_work_log_update(&signer, &update, signer.address()).await?;
 
-    println!("WorkLogUpdated event: {:?}", update_event);
+    println!("WorkLogUpdated event: {update_event:?}");
     assert_eq!(update_event.workLogId, Address::from(update.work_log_id));
     assert_eq!(update_event.epochNumber, U256::from(initial_epoch));
     assert_eq!(update_event.initialCommit.as_slice(), update.initial_commit.as_bytes());
@@ -406,7 +406,7 @@ async fn contract_integration() -> anyhow::Result<()> {
     let new_epoch = ctx.advance_epochs(1).await?;
     let finalized_event = ctx.finalize_epoch().await?;
 
-    println!("EpochFinalized event: {:?}", finalized_event);
+    println!("EpochFinalized event: {finalized_event:?}");
     assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
     assert_eq!(finalized_event.totalWork, U256::from(update.update_value));
 
@@ -422,7 +422,7 @@ async fn two_updates_same_epoch_same_log_id() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     let signer = PrivateKeySigner::random();
 
@@ -473,7 +473,7 @@ async fn two_updates_same_epoch_different_log_ids() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     let signer1 = PrivateKeySigner::random();
     let signer2 = PrivateKeySigner::random();
@@ -533,7 +533,7 @@ async fn two_updates_subsequent_epochs_same_log_id() -> anyhow::Result<()> {
     let ctx = common::text_ctx().await?;
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     let signer = PrivateKeySigner::random();
 
@@ -557,7 +557,7 @@ async fn two_updates_subsequent_epochs_same_log_id() -> anyhow::Result<()> {
     let first_finalized_event = ctx.finalize_epoch().await?;
 
     let second_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Advanced to epoch: {}", second_epoch);
+    println!("Advanced to epoch: {second_epoch}");
 
     // Verify first epoch was finalized correctly
     assert_eq!(first_finalized_event.epoch, U256::from(initial_epoch));
@@ -695,7 +695,7 @@ async fn separate_value_recipient() -> anyhow::Result<()> {
     let value_recipient = PrivateKeySigner::random();
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // Work log is controlled by work_log_signer but rewards go to value_recipient
     let update = LogBuilderJournal {
@@ -708,7 +708,7 @@ async fn separate_value_recipient() -> anyhow::Result<()> {
 
     let update_event =
         ctx.post_work_log_update(&work_log_signer, &update, value_recipient.address()).await?;
-    println!("WorkLogUpdated event: {:?}", update_event);
+    println!("WorkLogUpdated event: {update_event:?}");
 
     // Verify event fields
     assert_eq!(update_event.workLogId, Address::from(update.work_log_id));
@@ -726,7 +726,7 @@ async fn multiple_recipients_same_work_log() -> anyhow::Result<()> {
     let recipient2 = PrivateKeySigner::random();
 
     let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
-    println!("Initial epoch: {}", initial_epoch);
+    println!("Initial epoch: {initial_epoch}");
 
     // First update: same work log, recipient1 gets rewards
     let first_update = LogBuilderJournal {
