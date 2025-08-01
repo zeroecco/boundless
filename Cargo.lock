@@ -2462,11 +2462,23 @@ version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bce8d6acc5286a16e94c29e9c885d1869358885e08a6feeb6bc54e36fe20055"
 dependencies = [
- "duplicate",
+ "duplicate 1.0.0",
  "maybe-async",
  "reqwest",
  "serde",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "bonsai-sdk"
+version = "1.4.1"
+source = "git+https://github.com/risc0/risc0?branch=flaub%2Fshrink-bitvm2#6ed3f0321638ae7eb9c097b8aa8becba3f4b1350"
+dependencies = [
+ "duplicate 2.0.0",
+ "maybe-async",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.12",
  "tokio",
 ]
 
@@ -2546,7 +2558,7 @@ dependencies = [
  "alloy",
  "anyhow",
  "bincode",
- "bonsai-sdk",
+ "bonsai-sdk 1.4.1",
  "boundless-assessor",
  "boundless-market",
  "boundless-market-test-utils",
@@ -2740,7 +2752,7 @@ dependencies = [
  "aws-sdk-s3",
  "aws-smithy-http-client",
  "bincode",
- "bonsai-sdk",
+ "bonsai-sdk 1.4.1",
  "boundless-assessor",
  "boundless-market",
  "boundless-market-test-utils",
@@ -3792,6 +3804,17 @@ checksum = "de78e66ac9061e030587b2a2e75cc88f22304913c907b11307bca737141230cb"
 dependencies = [
  "heck 0.4.1",
  "proc-macro-error",
+]
+
+[[package]]
+name = "duplicate"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97af9b5f014e228b33e77d75ee0e6e87960124f0f4b16337b586a6bec91867b1"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
 ]
 
 [[package]]
@@ -7121,6 +7144,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+ "version_check",
+ "yansi",
+]
+
+[[package]]
 name = "proptest"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8189,7 +8225,7 @@ dependencies = [
  "addr2line 0.22.0",
  "anyhow",
  "bincode",
- "bonsai-sdk",
+ "bonsai-sdk 1.4.0",
  "borsh",
  "bytemuck",
  "bytes",
