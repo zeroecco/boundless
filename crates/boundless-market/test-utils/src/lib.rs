@@ -29,7 +29,7 @@ use boundless_market::{
         boundless_market::BoundlessMarketService,
         bytecode::*,
         hit_points::{default_allowance, HitPointsService},
-        AssessorCommitment, AssessorJournal, Fulfillment, ProofRequest,
+        AssessorCommitment, AssessorJournal, Fulfillment, PredicateType, ProofRequest,
     },
     deployments::Deployment,
     dynamic_gas_filler::DynamicGasFiller,
@@ -403,8 +403,13 @@ pub fn mock_singleton(
         claimDigest: <[u8; 32]>::from(app_claim_digest).into(),
     }
     .eip712_hash_struct();
-    let assessor_journal =
-        AssessorJournal { selectors: vec![], root: assessor_root, prover, callbacks: vec![] };
+    let assessor_journal = AssessorJournal {
+        selectors: vec![],
+        root: assessor_root,
+        prover,
+        callbacks: vec![],
+        predicateTypes: vec![request.requirements.predicate.predicateType],
+    };
     let assesor_receipt_claim = ReceiptClaim::ok(ASSESSOR_GUEST_ID, assessor_journal.abi_encode());
     let assessor_claim_digest = assesor_receipt_claim.digest();
 
@@ -434,16 +439,24 @@ pub fn mock_singleton(
     .abi_encode_seal()
     .unwrap();
 
+    let mut image_id_or_claim_digest = request.requirements.imageId;
+    let mut journal = app_journal.bytes.into();
+    let predicate_type = request.requirements.predicate.predicateType;
+    if predicate_type == PredicateType::ClaimDigestMatch {
+        image_id_or_claim_digest = <[u8; 32]>::from(app_claim_digest).into();
+        journal = vec![].into();
+    };
     let fulfillment = Fulfillment {
         id: request.id,
         requestDigest: request_digest,
-        imageId: to_b256(Digest::from(ECHO_ID)),
-        journal: app_journal.bytes.into(),
+        imageIdOrClaimDigest: image_id_or_claim_digest,
+        journal,
         seal: set_inclusion_seal.into(),
+        predicateType: predicate_type,
     };
 
     let assessor_seal = SetInclusionReceipt::from_path_with_verifier_params(
-        ReceiptClaim::ok(ASSESSOR_GUEST_ID, MaybePruned::Pruned(Digest::ZERO)),
+        assesor_receipt_claim,
         merkle_path(&[app_claim_digest, assessor_claim_digest], 1),
         verifier_parameters.digest(),
     )

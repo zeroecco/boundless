@@ -5,6 +5,7 @@
 pragma solidity ^0.8.20;
 
 import {RequestId} from "./RequestId.sol";
+import {PredicateType} from "./Predicate.sol";
 
 using FulfillmentLibrary for Fulfillment global;
 
@@ -15,22 +16,21 @@ struct Fulfillment {
     RequestId id;
     /// @notice EIP-712 digest of request struct.
     bytes32 requestDigest;
-    /// @notice Image ID of the guest that was verifiably executed to satisfy the request.
-    /// @dev Must match the value in the request's requirements.
-    bytes32 imageId;
-    // TODO: Add a flag in the request to decide whether to post the journal. Note that
-    // if the journal and journal digest do not need to be delivered to the client, imageId will
-    // be replaced with claim digest, since it is captured in the requirements on the request,
-    // checked by the Assessor guest.
+    /// @notice The `PredicateType` of the request that is being fulfilled.
+    /// @dev When the `PredicateType` is `ClaimDigestMatch`, the imageIdOrClaimDigest field is the claim digest,
+    /// and otherwise it is the image ID of the guest that was executed.
+    PredicateType predicateType;
+    /// @notice Image ID of the guest that was verifiably executed to satisfy the request or claim digest.
+    /// @dev Must match the value in the request's requirements. If the journal and journal digest do not need
+    /// to be delivered to the client, imageId is replaced with claim digest, since it is captured in the
+    /// requirements on the request, checked by the Assessor guest.
+    bytes32 imageIdOrClaimDigest;
     /// @notice Journal committed by the guest program execution.
     /// @dev The journal is checked to satisfy the predicate specified on the request's requirements.
     bytes journal;
     /// @notice Cryptographic proof for the validity of the execution results.
     /// @dev This will be sent to the `IRiscZeroVerifier` associated with this contract.
     bytes seal;
-    /// @notice Flag to indicate that the imageID is a claim digest.
-    /// @dev If true, the imageId is a claim digest instead of an image ID.
-    bool isClaimDigest;
 }
 
 library FulfillmentLibrary {}

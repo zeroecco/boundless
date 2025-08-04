@@ -41,7 +41,10 @@ use token::{
 };
 use url::Url;
 
-use risc0_zkvm::sha::Digest;
+use risc0_zkvm::{
+    sha::{Digest, Digestible},
+    ReceiptClaim,
+};
 
 #[cfg(not(target_os = "zkvm"))]
 pub use risc0_ethereum_contracts::{encode_seal, selector::Selector, IRiscZeroSetVerifier};
@@ -709,10 +712,16 @@ use IRiscZeroSetVerifier::IRiscZeroSetVerifierErrors;
 impl Predicate {
     /// Evaluates the predicate against the given journal.
     #[inline]
-    pub fn eval(&self, journal: impl AsRef<[u8]>) -> bool {
+    pub fn eval(&self, image_id: B256, journal: impl AsRef<[u8]>) -> bool {
         match self.predicateType {
             PredicateType::DigestMatch => self.data.as_ref() == Sha256::digest(journal).as_slice(),
             PredicateType::PrefixMatch => journal.as_ref().starts_with(&self.data),
+            PredicateType::ClaimDigestMatch => {
+                self.data.as_ref()
+                    == ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal.as_ref().to_vec())
+                        .digest()
+                        .as_bytes()
+            }
             PredicateType::__Invalid => panic!("invalid PredicateType"),
         }
     }

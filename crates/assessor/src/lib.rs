@@ -77,7 +77,12 @@ impl Fulfillment {
     }
     /// Evaluates the requirements of the request.
     pub fn evaluate_requirements(&self) -> Result<(), Error> {
-        if !self.request.requirements.predicate.eval(&self.journal) {
+        if !self
+            .request
+            .requirements
+            .predicate
+            .eval(self.request.requirements.imageId, &self.journal)
+        {
             return Err(Error::PredicateEvaluationError);
         }
         Ok(())

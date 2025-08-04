@@ -37,7 +37,7 @@ use risc0_zkvm::{
 use boundless_market::{
     contracts::{
         AssessorJournal, AssessorReceipt, EIP712DomainSaltless,
-        Fulfillment as BoundlessFulfillment, RequestInputType,
+        Fulfillment as BoundlessFulfillment, PredicateType, RequestInputType,
     },
     input::GuestEnv,
     selector::{is_groth16_selector, is_shrink_bitvm2_selector, SupportedSelectors},
@@ -308,13 +308,20 @@ impl DefaultProver {
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
-
+            let mut image_id_or_claim_digest = req.requirements.imageId;
+            let mut journal = fills[i].journal.clone();
+            let predicate_type = req.requirements.predicate.predicateType;
+            if predicate_type == PredicateType::ClaimDigestMatch {
+                image_id_or_claim_digest = <[u8; 32]>::from(claims[i].digest()).into();
+                journal = vec![];
+            }
             let fulfillment = BoundlessFulfillment {
+                imageIdOrClaimDigest: image_id_or_claim_digest,
+                journal: journal.into(),
                 id: req.id,
                 requestDigest: req.eip712_signing_hash(&self.domain.alloy_struct()),
-                imageId: req.requirements.imageId,
-                journal: fills[i].journal.clone().into(),
                 seal: order_seal.into(),
+                predicateType: predicate_type,
             };
 
             boundless_fills.push(fulfillment);

@@ -406,8 +406,8 @@ impl IndexerDb for AnyDb {
         )
         .bind(format!("{:x}", fill.requestDigest))
         .bind(format!("{:x}", fill.id))
-        .bind(format!("{prover_address:x}"))
-        .bind(format!("{:x}", fill.imageId))
+        .bind(format!("{:x}", prover_address))
+        .bind(format!("{:x}", fill.imageIdOrClaimDigest))
         .bind(format!("{:x}", fill.journal))
         .bind(format!("{:x}", fill.seal))
         .bind(format!("{:x}", metadata.tx_hash))
@@ -874,9 +874,10 @@ mod tests {
         let fill = Fulfillment {
             requestDigest: B256::ZERO,
             id: U256::from(1),
-            imageId: B256::ZERO,
+            imageIdOrClaimDigest: B256::ZERO,
             journal: Bytes::default(),
             seal: Bytes::default(),
+            predicateType: PredicateType::PrefixMatch,
         };
 
         let prover_address = Address::ZERO;
