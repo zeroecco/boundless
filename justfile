@@ -229,6 +229,7 @@ localnet action="up": check-deps
             $HIT_POINTS_ADDRESS "mint(address, uint256)" $DEFAULT_ADDRESS $DEPOSIT_AMOUNT
 
         # Start order stream server
+        sleep 10
         just test-db setup
         echo "Starting order stream server..."
         DATABASE_URL={{DATABASE_URL}} RUST_LOG=$RUST_LOG ./target/debug/order_stream \
