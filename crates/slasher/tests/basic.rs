@@ -1,23 +1,30 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{process::Command, time::Duration};
 
 use alloy::{
     node_bindings::Anvil,
-    primitives::{Address, Bytes, Signature, U256},
+    primitives::{Address, Bytes, U256},
     providers::Provider,
     rpc::types::BlockNumberOrTag,
     signers::Signer,
 };
 use boundless_cli::OrderFulfilled;
-use boundless_market::{
-    contracts::{
-        boundless_market::{FulfillmentTx, UnlockedRequest},
-        Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput, Requirements,
-    },
-    order_stream_client::Order,
+use boundless_market::contracts::{
+    boundless_market::{FulfillmentTx, UnlockedRequest},
+    Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput, Requirements,
 };
 use boundless_market_test_utils::create_test_ctx;
 use boundless_market_test_utils::{ASSESSOR_GUEST_ELF, ECHO_ID, ECHO_PATH, SET_BUILDER_ELF};
@@ -77,7 +84,7 @@ async fn test_basic_usage() {
         "1",
     ];
 
-    println!("{} {:?}", exe_path, args);
+    println!("{exe_path} {args:?}");
 
     #[allow(clippy::zombie_processes)]
     let mut cli_process = Command::new(exe_path).args(args).spawn().unwrap();
@@ -109,7 +116,7 @@ async fn test_basic_usage() {
 
     // Do the operations that should trigger the slash
     ctx.customer_market.deposit(U256::from(1)).await.unwrap();
-    ctx.prover_market.lock_request(&request, &client_sig, None).await.unwrap();
+    ctx.prover_market.lock_request(&request, client_sig.clone(), None).await.unwrap();
 
     // Wait for the slash event with timeout
     tokio::select! {
@@ -149,7 +156,7 @@ async fn test_slash_fulfilled() {
         "1",
     ];
 
-    println!("{} {:?}", exe_path, args);
+    println!("{exe_path} {args:?}");
 
     #[allow(clippy::zombie_processes)]
     let mut cli_process = Command::new(exe_path).args(args).spawn().unwrap();
@@ -181,13 +188,8 @@ async fn test_slash_fulfilled() {
 
     // Do the operations that should trigger the slash
     ctx.customer_market.deposit(U256::from(1)).await.unwrap();
-    ctx.prover_market.lock_request(&request, &client_sig, None).await.unwrap();
+    ctx.prover_market.lock_request(&request, client_sig.clone(), None).await.unwrap();
     let domain = ctx.customer_market.eip712_domain().await.unwrap();
-    let order = Order::new(
-        request.clone(),
-        request.signing_hash(ctx.deployment.boundless_market_address, anvil.chain_id()).unwrap(),
-        Signature::try_from(client_sig.as_ref()).unwrap(),
-    );
     let prover = boundless_cli::DefaultProver::new(
         SET_BUILDER_ELF.to_vec(),
         ASSESSOR_GUEST_ELF.to_vec(),
@@ -195,7 +197,8 @@ async fn test_slash_fulfilled() {
         domain,
     )
     .unwrap();
-    let (fill, root_receipt, assessor_receipt) = prover.fulfill(&[order]).await.unwrap();
+    let (fill, root_receipt, assessor_receipt) =
+        prover.fulfill(&[(request.clone(), client_sig.clone())]).await.unwrap();
     let order_fulfilled = OrderFulfilled::new(fill, root_receipt, assessor_receipt).unwrap();
     let expires_at = request.offer.biddingStart + request.offer.timeout as u64;
     let lock_expires_at = request.offer.biddingStart + request.offer.lockTimeout as u64;
@@ -213,10 +216,7 @@ async fn test_slash_fulfilled() {
         if ts > lock_expires_at {
             break;
         }
-        println!(
-            "Waiting for lock to expire...{} < {} - Expires at {}",
-            ts, lock_expires_at, expires_at
-        );
+        println!("Waiting for lock to expire...{ts} < {lock_expires_at} - Expires at {expires_at}");
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 

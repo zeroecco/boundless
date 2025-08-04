@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use alloy::primitives::{Address, U256};
 use chrono::Utc;
@@ -98,8 +108,8 @@ fn generate_test_order(request_id: u32) -> Order {
         ),
         image_id: None,
         input_id: None,
-        proof_id: Some(format!("proof_{}", request_id)),
-        compressed_proof_id: Some(format!("compressed_proof_{}", request_id)),
+        proof_id: Some(format!("proof_{request_id}")),
+        compressed_proof_id: Some(format!("compressed_proof_{request_id}")),
         expire_timestamp: Some(1000),
         client_sig: vec![].into(),
         lock_price: Some(U256::from(10)),
@@ -109,6 +119,7 @@ fn generate_test_order(request_id: u32) -> Order {
         chain_id: 1,
         total_cycles: None,
         proving_started_at: None,
+        cached_id: Default::default(),
     }
 }
 
@@ -175,7 +186,7 @@ proptest! {
                             },
                             DbOperation::OperateOnExistingOrder(operation) => {
                                 // Skip if no orders have been added yet
-                                if state.added_orders.len() == 0 {
+                                if state.added_orders.is_empty() {
                                     continue;
                                 }
 
@@ -240,7 +251,7 @@ proptest! {
                                         }
                                     },
                                     BatchOperation::UpdateBatch { proof_id, order_count } => {
-                                        if state.added_orders.len() > 0 {
+                                        if !state.added_orders.is_empty() {
                                             let batch_id = db.get_current_batch().await.unwrap();
                                             // Select up to order_count random orders
                                             let count = std::cmp::min(order_count as usize, state.added_orders.len());
@@ -253,7 +264,7 @@ proptest! {
 
                                                 orders.push(AggregationOrder {
                                                     order_id: id.to_string(),
-                                                    proof_id: format!("proof_{}", id),
+                                                    proof_id: format!("proof_{id}"),
                                                     expiration: 1000,
                                                     fee: U256::from(10),
                                                 });

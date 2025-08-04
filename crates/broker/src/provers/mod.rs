@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::sync::Arc;
 
@@ -37,31 +47,31 @@ use crate::{
 
 #[derive(Error)]
 pub enum ProverError {
-    #[error("Bonsai proving error {0:?}")]
+    #[error("{code} Bonsai proving error {0:?}", code = self.code())]
     BonsaiErr(#[from] SdkErr),
 
-    #[error("Config error")]
+    #[error("{code} Config error {0}", code = self.code())]
     ConfigReadErr(#[from] ConfigErr),
 
-    #[error("Not found: {0}")]
+    #[error("{code} Not found: {0}", code = self.code())]
     NotFound(String),
 
-    #[error("Stark job missing stats data")]
+    #[error("{code} Stark job missing stats data", code = self.code())]
     MissingStatus,
 
-    #[error("Prover failure: {0}")]
+    #[error("{code} Prover failure: {0}", code = self.code())]
     ProvingFailed(String),
 
-    #[error("Bincode deserilization error")]
+    #[error("{code} Bincode deserilization error {0}", code = self.code())]
     BincodeErr(#[from] bincode::Error),
 
-    #[error("proof status expired retry count")]
+    #[error("{code} proof status expired retry count", code = self.code())]
     StatusFailure,
 
-    #[error("Prover internal error: {0}")]
+    #[error("{code} Prover internal error: {0}", code = self.code())]
     ProverInternalError(String),
 
-    #[error(transparent)]
+    #[error("{code} {0:?}", code = self.code())]
     UnexpectedError(#[from] anyhow::Error),
 }
 
@@ -106,6 +116,7 @@ pub trait Prover {
         input_id: &str,
         assumptions: Vec<String>,
         executor_limit: Option<u64>,
+        order_id: &str,
     ) -> Result<ProofResult, ProverError>;
     async fn prove_stark(
         &self,
@@ -123,6 +134,7 @@ pub trait Prover {
         self.wait_for_stark(&proof_id).await
     }
     async fn wait_for_stark(&self, proof_id: &str) -> Result<ProofResult, ProverError>;
+    async fn cancel_stark(&self, proof_id: &str) -> Result<(), ProverError>;
     async fn get_receipt(&self, proof_id: &str) -> Result<Option<Receipt>, ProverError>;
     async fn get_preflight_journal(&self, proof_id: &str) -> Result<Option<Vec<u8>>, ProverError>;
     async fn get_journal(&self, proof_id: &str) -> Result<Option<Vec<u8>>, ProverError>;

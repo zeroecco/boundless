@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{default::Default, str::FromStr, sync::Arc};
 
@@ -121,6 +131,7 @@ pub trait BrokerDb {
         lock_price: U256,
     ) -> Result<Order, DbError>;
     async fn get_order(&self, id: &str) -> Result<Option<Order>, DbError>;
+    async fn get_orders(&self, ids: &[&str]) -> Result<Vec<Order>, DbError>;
     async fn get_submission_order(
         &self,
         id: &str,
@@ -130,6 +141,11 @@ pub trait BrokerDb {
     async fn set_order_complete(&self, id: &str) -> Result<(), DbError>;
     /// Get all orders that are committed to be prove and be fulfilled.
     async fn get_committed_orders(&self) -> Result<Vec<Order>, DbError>;
+    /// Get all orders that are committed to be proved but have expired based on their expire_timestamp.
+    async fn get_expired_committed_orders(
+        &self,
+        grace_period_secs: i64,
+    ) -> Result<Vec<Order>, DbError>;
     async fn get_proving_order(&self) -> Result<Option<Order>, DbError>;
     async fn get_active_proofs(&self) -> Result<Vec<Order>, DbError>;
     async fn set_order_proof_id(&self, order_id: &str, proof_id: &str) -> Result<(), DbError>;
@@ -326,6 +342,21 @@ impl BrokerDb for SqliteDb {
         Ok(order.map(|x| x.data))
     }
 
+    async fn get_orders(&self, ids: &[&str]) -> Result<Vec<Order>, DbError> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(", ");
+        let query = format!("SELECT * FROM orders WHERE id IN ({placeholders})");
+
+        let mut q = sqlx::query_as::<_, DbOrder>(&query);
+        for id in ids {
+            q = q.bind(id);
+        }
+        let orders = q.fetch_all(&self.pool).await?;
+        Ok(orders.into_iter().map(|x| x.data).collect())
+    }
+
     #[instrument(level = "trace", skip_all, fields(id = %format!("{id}")))]
     async fn get_submission_order(
         &self,
@@ -425,6 +456,29 @@ impl BrokerDb for SqliteDb {
 
         // Break if any order-id's are invalid and raise
         orders.into_iter().map(|elm| Ok(elm.data)).collect()
+    }
+
+    #[instrument(level = "trace", skip(self))]
+    async fn get_expired_committed_orders(
+        &self,
+        grace_period_secs: i64,
+    ) -> Result<Vec<Order>, DbError> {
+        let orders: Vec<DbOrder> = sqlx::query_as(
+            r#"
+            SELECT * FROM orders
+                WHERE data->>'status' IN ($1, $2, $3, $4, $5)
+                AND data->>'expire_timestamp' IS NOT NULL AND data->>'expire_timestamp' < $6"#,
+        )
+        .bind(OrderStatus::PendingProving)
+        .bind(OrderStatus::Proving)
+        .bind(OrderStatus::PendingAgg)
+        .bind(OrderStatus::SkipAggregation)
+        .bind(OrderStatus::PendingSubmission)
+        .bind(Utc::now().timestamp().saturating_sub(grace_period_secs))
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(orders.into_iter().map(|db_order| db_order.data).collect())
     }
 
     #[instrument(level = "trace", skip_all)]
@@ -905,7 +959,7 @@ impl BrokerDb for SqliteDb {
             r#"
             INSERT INTO fulfilled_requests (id, block_number) VALUES ($1, $2)"#,
         )
-        .bind(format!("0x{:x}", request_id))
+        .bind(format!("0x{request_id:x}"))
         .bind(block_number as i64)
         .execute(&self.pool)
         .await?;
@@ -916,7 +970,7 @@ impl BrokerDb for SqliteDb {
     #[instrument(level = "trace", skip(self))]
     async fn is_request_fulfilled(&self, request_id: U256) -> Result<bool, DbError> {
         let res = sqlx::query(r#"SELECT * FROM fulfilled_requests WHERE id = $1"#)
-            .bind(format!("0x{:x}", request_id))
+            .bind(format!("0x{request_id:x}"))
             .fetch_optional(&self.pool)
             .await?;
 
@@ -933,7 +987,7 @@ impl BrokerDb for SqliteDb {
         sqlx::query(
             r#"INSERT INTO locked_requests (id, locker, block_number) VALUES ($1, $2, $3)"#,
         )
-        .bind(format!("0x{:x}", request_id))
+        .bind(format!("0x{request_id:x}"))
         .bind(locker)
         .bind(block_number as i64)
         .execute(&self.pool)
@@ -945,7 +999,7 @@ impl BrokerDb for SqliteDb {
     #[instrument(level = "trace", skip(self))]
     async fn is_request_locked(&self, request_id: U256) -> Result<bool, DbError> {
         let res = sqlx::query(r#"SELECT * FROM locked_requests WHERE id = $1"#)
-            .bind(format!("0x{:x}", request_id))
+            .bind(format!("0x{request_id:x}"))
             .fetch_optional(&self.pool)
             .await?;
 
@@ -956,7 +1010,7 @@ impl BrokerDb for SqliteDb {
     async fn get_request_locked(&self, request_id: U256) -> Result<Option<(String, u64)>, DbError> {
         let res: Option<DbLockedRequest> =
             sqlx::query_as(r#"SELECT * FROM locked_requests WHERE id = $1"#)
-                .bind(format!("0x{:x}", request_id))
+                .bind(format!("0x{request_id:x}"))
                 .fetch_optional(&self.pool)
                 .await?;
 
@@ -1064,6 +1118,34 @@ mod tests {
         let db_order = db.get_order(&order.id()).await.unwrap().unwrap();
 
         assert_eq!(order.request, db_order.request);
+    }
+
+    #[sqlx::test]
+    async fn get_orders(pool: SqlitePool) {
+        let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
+        let mut order1 = create_order();
+        order1.request.id = U256::from(1);
+        let mut order2 = create_order();
+        order2.request.id = U256::from(2);
+        let mut order3 = create_order();
+        order3.request.id = U256::from(3);
+        db.add_order(&order1).await.unwrap();
+        db.add_order(&order2).await.unwrap();
+        db.add_order(&order3).await.unwrap();
+
+        let ids = [order1.id(), order2.id(), order3.id()];
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let orders = db.get_orders(&id_refs).await.unwrap();
+        assert_eq!(orders.len(), 3);
+        let returned_ids: Vec<String> = orders.iter().map(|o| o.id()).collect();
+        assert!(returned_ids.contains(&order1.id()));
+        assert!(returned_ids.contains(&order2.id()));
+        assert!(returned_ids.contains(&order3.id()));
+
+        // Test empty input returns empty vec
+        let empty: Vec<&str> = vec![];
+        let orders = db.get_orders(&empty).await.unwrap();
+        assert!(orders.is_empty());
     }
 
     #[sqlx::test]
@@ -1455,6 +1537,106 @@ mod tests {
 
         // Different request should still not be locked
         assert!(!db.is_request_locked(U256::from(413)).await.unwrap());
+    }
+
+    #[sqlx::test]
+    async fn get_expired_committed_orders(pool: SqlitePool) {
+        let db: DbObj = Arc::new(SqliteDb::from(pool).await.unwrap());
+
+        let current_time = Utc::now().timestamp() as u64;
+        let past_time = current_time - 100;
+        let future_time = current_time + 100;
+
+        let mut orders = [
+            // Expired orders (should be returned)
+            Order {
+                status: OrderStatus::PendingProving,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::Proving,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::PendingAgg,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::SkipAggregation,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::PendingSubmission,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            // Non-expired orders (should NOT be returned)
+            Order {
+                status: OrderStatus::Aggregating,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::PendingProving,
+                expire_timestamp: Some(future_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::Proving,
+                expire_timestamp: Some(future_time),
+                ..create_order()
+            },
+            // Orders without expiration timestamp (should NOT be possible, but shouldn't error)
+            Order { status: OrderStatus::PendingProving, expire_timestamp: None, ..create_order() },
+            // Orders with non-committed status (should NOT be returned even if expired)
+            Order {
+                status: OrderStatus::Done,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::Failed,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+            Order {
+                status: OrderStatus::Skipped,
+                expire_timestamp: Some(past_time),
+                ..create_order()
+            },
+        ];
+
+        for (i, order) in orders.iter_mut().enumerate() {
+            order.request.id = U256::from(i);
+            db.add_order(order).await.unwrap();
+        }
+
+        let expired_orders = db.get_expired_committed_orders(0).await.unwrap();
+
+        assert_eq!(expired_orders.len(), 5);
+
+        for order in &expired_orders {
+            assert!(order.expire_timestamp.is_some());
+            assert!(order.expire_timestamp.unwrap() < current_time);
+            assert!(matches!(
+                order.status,
+                OrderStatus::PendingProving
+                    | OrderStatus::Proving
+                    | OrderStatus::PendingAgg
+                    | OrderStatus::SkipAggregation
+                    | OrderStatus::PendingSubmission
+            ));
+        }
+
+        let mut expected_ids: Vec<U256> = (0..5).map(|i| U256::from(i)).collect();
+        let mut returned_ids: Vec<U256> = expired_orders.iter().map(|o| o.request.id).collect();
+        returned_ids.sort();
+        expected_ids.sort();
+        assert_eq!(returned_ids, expected_ids);
     }
 
     #[sqlx::test]

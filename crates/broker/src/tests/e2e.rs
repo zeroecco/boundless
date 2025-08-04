@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{future::Future, path::PathBuf};
 
@@ -18,16 +28,25 @@ use boundless_market::{
     },
     selector::{is_groth16_selector, ProofType},
     storage::{MockStorageProvider, StorageProvider},
+    Deployment,
 };
 use boundless_market_test_utils::{
     create_test_ctx, deploy_mock_callback, get_mock_callback_count, ASSESSOR_GUEST_PATH, ECHO_ELF,
     ECHO_ID, SET_BUILDER_PATH,
 };
-use risc0_zkvm::{is_dev_mode, sha::Digest};
+use risc0_zkvm::sha::Digest;
 use tempfile::NamedTempFile;
 use tokio::{task::JoinSet, time::Duration};
 use tracing_test::traced_test;
 use url::Url;
+
+fn is_dev_mode() -> bool {
+    std::env::var("RISC0_DEV_MODE")
+        .ok()
+        .map(|x| x.to_lowercase())
+        .filter(|x| x == "1" || x == "true" || x == "yes")
+        .is_some()
+}
 
 fn generate_request(
     id: u32,
@@ -88,8 +107,7 @@ async fn new_config_with_min_deadline(min_batch_size: u32, min_deadline: u64) ->
 
 fn broker_args(
     config_file: PathBuf,
-    boundless_market_address: Address,
-    set_verifier_address: Address,
+    deployment: Deployment,
     rpc_url: Url,
     private_key: PrivateKeySigner,
 ) -> Args {
@@ -107,10 +125,8 @@ fn broker_args(
     Args {
         db_url: "sqlite::memory:".into(),
         config_file,
-        boundless_market_address,
-        set_verifier_address,
+        deployment: Some(deployment),
         rpc_url,
-        order_stream_url: None,
         private_key,
         bento_api_url: None,
         bonsai_api_key,
@@ -161,8 +177,7 @@ async fn simple_e2e() {
     let config = new_config(1).await;
     let args = broker_args(
         config.path().to_path_buf(),
-        ctx.deployment.boundless_market_address,
-        ctx.deployment.set_verifier_address,
+        ctx.deployment.clone(),
         anvil.endpoint_url(),
         ctx.prover_signer,
     );
@@ -232,8 +247,7 @@ async fn simple_e2e_with_callback() {
     let config = new_config(1).await;
     let args = broker_args(
         config.path().to_path_buf(),
-        ctx.deployment.boundless_market_address,
-        ctx.deployment.set_verifier_address,
+        ctx.deployment.clone(),
         anvil.endpoint_url(),
         ctx.prover_signer,
     );
@@ -308,8 +322,7 @@ async fn e2e_fulfill_after_lock_expiry() {
     let config = new_config_with_min_deadline(1, 0).await;
     let args = broker_args(
         config.path().to_path_buf(),
-        ctx.deployment.boundless_market_address,
-        ctx.deployment.set_verifier_address,
+        ctx.deployment.clone(),
         anvil.endpoint_url(),
         ctx.prover_signer,
     );
@@ -340,7 +353,7 @@ async fn e2e_fulfill_after_lock_expiry() {
     run_with_broker(broker, async move {
         let request_id = locker_market.submit_request(&request, &locker_signer).await.unwrap();
         let (_, client_sig) = locker_market.get_submitted_request(request_id, None).await.unwrap();
-        locker_market.lock_request(&request, &client_sig, None).await.unwrap();
+        locker_market.lock_request(&request, client_sig, None).await.unwrap();
 
         // Wait for fulfillment
         ctx.customer_market
@@ -357,7 +370,6 @@ async fn e2e_fulfill_after_lock_expiry() {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "runs a proof; requires BONSAI if RISC0_DEV_MODE=FALSE"]
 async fn e2e_with_selector() {
     // Setup anvil
     let anvil = Anvil::new().spawn();
@@ -376,8 +388,7 @@ async fn e2e_with_selector() {
     let config = new_config(1).await;
     let args = broker_args(
         config.path().to_path_buf(),
-        ctx.deployment.boundless_market_address,
-        ctx.deployment.set_verifier_address,
+        ctx.deployment.clone(),
         anvil.endpoint_url(),
         ctx.prover_signer,
     );
@@ -438,8 +449,7 @@ async fn e2e_with_multiple_requests() {
     let config = new_config(2).await;
     let args = broker_args(
         config.path().to_path_buf(),
-        ctx.deployment.boundless_market_address,
-        ctx.deployment.set_verifier_address,
+        ctx.deployment.clone(),
         anvil.endpoint_url(),
         ctx.prover_signer,
     );

@@ -1,10 +1,10 @@
-FROM rust:1.85.0-bookworm AS init
+FROM rust:1.88.0-bookworm AS init
 
 RUN apt-get -qq update && \
     apt-get install -y -q clang
 
 SHELL ["/bin/bash", "-c"]
-
+ARG CACHE_DATE=2025-07-17  # update this date to force rebuild
 RUN curl -L https://foundry.paradigm.xyz | bash && \
     source /root/.bashrc && \
     foundryup
@@ -13,11 +13,11 @@ RUN curl -L https://foundry.paradigm.xyz | bash && \
 # for shared build environments where Github rate limiting is an issue.
 RUN --mount=type=secret,id=githubTokenSecret,target=/run/secrets/githubTokenSecret \
     if [ -f /run/secrets/githubTokenSecret ]; then \
-        GITHUB_TOKEN=$(cat /run/secrets/githubTokenSecret) curl -L https://risczero.com/install | bash && \
-        GITHUB_TOKEN=$(cat /run/secrets/githubTokenSecret) PATH="$PATH:/root/.risc0/bin" rzup install; \
+    GITHUB_TOKEN=$(cat /run/secrets/githubTokenSecret) curl -L https://risczero.com/install | bash && \
+    GITHUB_TOKEN=$(cat /run/secrets/githubTokenSecret) PATH="$PATH:/root/.risc0/bin" rzup install; \
     else \
-        curl -L https://risczero.com/install | bash && \
-        PATH="$PATH:/root/.risc0/bin" rzup install; \
+    curl -L https://risczero.com/install | bash && \
+    PATH="$PATH:/root/.risc0/bin" rzup install; \
     fi
 
 RUN cargo install cargo-chef
@@ -64,7 +64,7 @@ SHELL ["/bin/bash", "-c"]
 RUN cargo build --release -p order-stream --bin order_stream && \
     cp /src/target/release/order_stream /src/order_stream
 
-FROM rust:1.85.0-bookworm AS runtime
+FROM rust:1.88.0-bookworm AS runtime
 
 RUN mkdir /app/
 

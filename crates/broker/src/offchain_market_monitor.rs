@@ -1,11 +1,20 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use alloy::signers::{local::PrivateKeySigner, Signer};
 use anyhow::Result;
 use boundless_market::order_stream_client::{order_stream, OrderStreamClient};
-use futures::TryStreamExt;
 use futures_util::StreamExt;
 
 use crate::{
@@ -15,6 +24,7 @@ use crate::{
     FulfillmentType, OrderRequest,
 };
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Error)]
 pub enum OffchainMarketMonitorErr {
@@ -59,62 +69,70 @@ impl OffchainMarketMonitor {
         client: OrderStreamClient,
         signer: &impl Signer,
         new_order_tx: tokio::sync::mpsc::Sender<Box<OrderRequest>>,
+        cancel_token: CancellationToken,
     ) -> Result<(), OffchainMarketMonitorErr> {
         tracing::debug!("Connecting to off-chain market: {}", client.base_url);
         let socket =
             client.connect_async(signer).await.map_err(OffchainMarketMonitorErr::WebSocketErr)?;
 
-        let stream = order_stream(socket);
+        let mut stream = order_stream(socket);
         tracing::info!("Subscribed to offchain Order stream");
-        stream
-            .map(Ok)
-            .try_for_each_concurrent(Some(10), |order_data| {
-                let new_order_tx = new_order_tx.clone();
-                async move {
-                    tracing::info!(
-                        "Detected new order with stream id {:x}, request id: {:x}",
-                        order_data.id,
-                        order_data.order.request.id
-                    );
 
-                    let new_order = OrderRequest::new(
-                        order_data.order.request,
-                        order_data.order.signature.as_bytes().into(),
-                        FulfillmentType::LockAndFulfill,
-                        client.boundless_market_address,
-                        client.chain_id,
-                    );
+        loop {
+            tokio::select! {
+                order_data = stream.next() => {
+                    match order_data {
+                        Some(order_data) => {
+                            tracing::info!(
+                                "Detected new order with stream id {:x}, request id: {:x}",
+                                order_data.id,
+                                order_data.order.request.id
+                            );
 
-                    if let Err(e) = new_order_tx.send(Box::new(new_order)).await {
-                        tracing::error!("Failed to send new order to broker: {}", e);
-                        Err(OffchainMarketMonitorErr::ReceiverDropped)
-                    } else {
-                        tracing::trace!(
-                            "Sent new off-chain order {:x} to OrderPicker via channel.",
-                            order_data.id
-                        );
-                        Ok(())
+                            let new_order = OrderRequest::new(
+                                order_data.order.request,
+                                order_data.order.signature.as_bytes().into(),
+                                FulfillmentType::LockAndFulfill,
+                                client.boundless_market_address,
+                                client.chain_id,
+                            );
+
+                            if let Err(e) = new_order_tx.send(Box::new(new_order)).await {
+                                tracing::error!("Failed to send new order to broker: {}", e);
+                                return Err(OffchainMarketMonitorErr::ReceiverDropped);
+                            } else {
+                                tracing::trace!(
+                                    "Sent new off-chain order {:x} to OrderPicker via channel.",
+                                    order_data.id
+                                );
+                            }
+                        }
+                        None => {
+                            return Err(OffchainMarketMonitorErr::WebSocketErr(anyhow::anyhow!(
+                                "Offchain order stream websocket exited, polling failed"
+                            )));
+                        }
                     }
                 }
-            })
-            .await?;
-
-        Err(OffchainMarketMonitorErr::WebSocketErr(anyhow::anyhow!(
-            "Offchain order stream websocket exited, polling failed"
-        )))
+                _ = cancel_token.cancelled() => {
+                    tracing::info!("Offchain market monitor received cancellation, shutting down gracefully");
+                    return Ok(());
+                }
+            }
+        }
     }
 }
 
 impl RetryTask for OffchainMarketMonitor {
     type Error = OffchainMarketMonitorErr;
-    fn spawn(&self) -> RetryRes<Self::Error> {
+    fn spawn(&self, cancel_token: CancellationToken) -> RetryRes<Self::Error> {
         let client = self.client.clone();
         let signer = self.signer.clone();
         let new_order_tx = self.new_order_tx.clone();
 
         Box::pin(async move {
             tracing::info!("Starting up offchain market monitor");
-            Self::monitor_orders(client, &signer, new_order_tx)
+            Self::monitor_orders(client, &signer, new_order_tx, cancel_token)
                 .await
                 .map_err(SupervisorErr::Recover)?;
             Ok(())

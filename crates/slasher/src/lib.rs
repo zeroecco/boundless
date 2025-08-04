@@ -1,12 +1,22 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{cmp::min, sync::Arc};
 
 use alloy::{
     network::{Ethereum, EthereumWallet},
-    primitives::{Address, U256},
+    primitives::{Address, B256, U256},
     providers::{
         fillers::{ChainIdFiller, JoinFill},
         Identity, Provider, ProviderBuilder, RootProvider,
@@ -63,6 +73,9 @@ pub enum ServiceError {
 
     #[error("Request not expired")]
     RequestNotExpired,
+
+    #[error("Slash reverted for request 0x{0:x}, tx_hash: {1:?}")]
+    SlashRevert(U256, B256),
 }
 
 #[derive(Clone)]
@@ -164,6 +177,7 @@ where
                             }
                             // Recoverable errors
                             ServiceError::BoundlessMarketError(_)
+                            | ServiceError::SlashRevert(_, _)
                             | ServiceError::EventQueryError(_)
                             | ServiceError::RpcError(_)
                             | ServiceError::BlockTimestampNotFound(_) => {
@@ -392,6 +406,32 @@ where
                 Ok(_) => {
                     tracing::info!("Slashing successful for request 0x{:x}", request_id);
                     self.remove_order(request_id).await?;
+                }
+                Err(MarketError::RequestIsSlashed(request_id)) => {
+                    tracing::warn!("Request 0x{:x} is already slashed, removing", request_id);
+                    self.remove_order(request_id).await?;
+                }
+                Err(MarketError::SlashRevert(tx_hash)) => {
+                    // If already slashed should be caught by the error above, but double check here in case race condition
+                    // caused the previous call to miss the slashing.
+                    let slashed = self.boundless_market.is_slashed(request_id).await?;
+                    if slashed {
+                        tracing::warn!("Tx 0x{:x} reverted when slashing request 0x{:x}. Request is already slashed, removing", tx_hash, request_id);
+                        self.remove_order(request_id).await?;
+                    } else {
+                        tracing::error!("Tx 0x{:x} for request 0x{:x} reverted and request is not slashed already", tx_hash, request_id);
+                        return Err(ServiceError::SlashRevert(request_id, tx_hash));
+                    }
+                }
+                Err(MarketError::LogNotEmitted(tx_hash, err)) => {
+                    let slashed = self.boundless_market.is_slashed(request_id).await?;
+                    if slashed {
+                        tracing::warn!("Tx 0x{:x} did not emit expected Slashed event for request 0x{:x} [{}]. Request is already slashed, removing", tx_hash, request_id, err);
+                        self.remove_order(request_id).await?;
+                    } else {
+                        tracing::error!("Tx 0x{:x} for request 0x{:x} did not emit expected Slashed event [{}]. Request is not slashed already", tx_hash, request_id, err);
+                        return Err(ServiceError::SlashRevert(request_id, tx_hash));
+                    }
                 }
                 Err(err) => {
                     let err_msg = err.to_string();

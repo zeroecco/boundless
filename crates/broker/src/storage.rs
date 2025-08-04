@@ -1,8 +1,18 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use crate::{config::ConfigLock, errors::CodedError};
+use crate::{config::ConfigLock, errors::CodedError, is_dev_mode};
 use alloy::primitives::bytes::Buf;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -64,18 +74,21 @@ impl CodedError for StorageErr {
 pub(crate) async fn create_uri_handler(
     uri_str: &str,
     config: &ConfigLock,
+    skip_max_size_check: bool,
 ) -> Result<Arc<dyn Handler>, StorageErr> {
     let uri = url::Url::parse(uri_str)?;
 
     match uri.scheme() {
         "file" => {
-            if !risc0_zkvm::is_dev_mode() {
+            if !is_dev_mode() {
                 return Err(StorageErr::UnsupportedScheme("file".to_string()));
             }
-            let max_size = {
-                let config = &config.lock_all().expect("lock failed").market;
-                config.max_file_size
+            let max_size = if skip_max_size_check {
+                usize::MAX
+            } else {
+                config.lock_all().expect("lock failed").market.max_file_size
             };
+
             let handler = FileHandler { path: uri.path().into(), max_size };
 
             Ok(Arc::new(handler))
@@ -83,7 +96,8 @@ pub(crate) async fn create_uri_handler(
         "http" | "https" => {
             let (max_size, max_retries, cache_dir) = {
                 let config = &config.lock_all().expect("lock failed").market;
-                (config.max_file_size, config.max_fetch_retries, config.cache_dir.clone())
+                let size = if skip_max_size_check { usize::MAX } else { config.max_file_size };
+                (size, config.max_fetch_retries, config.cache_dir.clone())
             };
             let handler = HttpHandler::new(uri, max_size, cache_dir, max_retries).await?;
 
@@ -92,7 +106,8 @@ pub(crate) async fn create_uri_handler(
         "s3" => {
             let (max_size, max_retries) = {
                 let config = &config.lock_all().expect("lock failed").market;
-                (config.max_file_size, config.max_fetch_retries)
+                let size = if skip_max_size_check { usize::MAX } else { config.max_file_size };
+                (size, config.max_fetch_retries)
             };
             let handler = S3Handler::new(uri, max_size, max_retries).await?;
 
@@ -335,19 +350,28 @@ pub async fn upload_image_uri(
     let required_image_id = Digest::from(request.requirements.imageId.0);
     let image_id_str = required_image_id.to_string();
     if prover.has_image(&image_id_str).await? {
-        tracing::debug!("Skipping program upload for cached image ID: {image_id_str}");
+        tracing::debug!(
+            "Skipping program upload for cached image ID: {image_id_str} for request {:x}",
+            request.id
+        );
         return Ok(image_id_str);
     }
 
-    tracing::debug!("Fetching program with image ID {image_id_str} from URI {}", request.imageUrl);
-    let uri = create_uri_handler(&request.imageUrl, config).await.context("URL handling failed")?;
+    tracing::debug!(
+        "Fetching program for request {:x} with image ID {image_id_str} from URI {}",
+        request.id,
+        request.imageUrl
+    );
+    let uri = create_uri_handler(&request.imageUrl, config, false)
+        .await
+        .context("URL handling failed")?;
 
     let image_data = uri
         .fetch()
         .await
         .with_context(|| format!("Failed to fetch image URI: {}", request.imageUrl))?;
-    let image_id =
-        risc0_zkvm::compute_image_id(&image_data).context("Failed to compute image ID")?;
+    let image_id = risc0_zkvm::compute_image_id(&image_data)
+        .context(format!("Failed to compute image ID for request {:x}", request.id))?;
 
     anyhow::ensure!(
         image_id == required_image_id,
@@ -356,7 +380,10 @@ pub async fn upload_image_uri(
         image_id
     );
 
-    tracing::debug!("Uploading program with image ID {image_id_str} to prover");
+    tracing::debug!(
+        "Uploading program for request {:x} with image ID {image_id_str} to prover",
+        request.id
+    );
     prover
         .upload_image(&image_id_str, image_data)
         .await
@@ -384,8 +411,20 @@ pub async fn upload_input_uri(
             let input_uri_str =
                 std::str::from_utf8(&request.input.data).context("input url is not utf8")?;
             tracing::debug!("Input URI string: {input_uri_str}");
-            let input_uri =
-                create_uri_handler(input_uri_str, config).await.context("URL handling failed")?;
+            let priority_requestor_addresses = {
+                let conf = config.lock_all().context("Failed to read config")?;
+                conf.market.priority_requestor_addresses.clone()
+            };
+
+            let client_addr = request.client_address();
+            let skip_max_size_limit = if let Some(allow_addresses) = priority_requestor_addresses {
+                allow_addresses.contains(&client_addr)
+            } else {
+                false
+            };
+            let input_uri = create_uri_handler(input_uri_str, config, skip_max_size_limit)
+                .await
+                .context("URL handling failed")?;
 
             let input_data = boundless_market::input::GuestEnv::decode(
                 &input_uri

@@ -92,6 +92,7 @@ pub struct Order {
     #[schema(value_type = Object)]
     pub request_digest: B256,
     /// Order signature
+    // TODO: This should not be Signature. It should be Bytes or Vec<u8>.
     #[schema(value_type = Object)]
     pub signature: Signature,
 }
@@ -382,10 +383,7 @@ impl OrderStreamClient {
 ///     let socket = client.connect_async(signer).await.unwrap();
 ///     let mut order_stream = order_stream(socket);
 ///     while let Some(order) = order_stream.next().await {
-///         match order {
-///             Ok(order) => println!("Received order: {:?}", order),
-///             Err(err) => eprintln!("Error: {}", err),
-///         }
+///         println!("Received order: {:?}", order)
 ///     }
 /// }
 /// ```

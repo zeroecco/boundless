@@ -12,16 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
+use std::{future::Future, str::FromStr, time::Duration};
 
 use alloy::{
-    network::{Ethereum, EthereumWallet},
+    network::{Ethereum, EthereumWallet, TxSigner},
     primitives::{Address, Bytes, U256},
-    providers::{fillers::ChainIdFiller, Provider, ProviderBuilder},
-    signers::{local::PrivateKeySigner, Signer},
+    providers::{fillers::ChainIdFiller, DynProvider, Provider, ProviderBuilder},
+    signers::{
+        local::{LocalSignerError, PrivateKeySigner},
+        Signer,
+    },
 };
 use alloy_primitives::{Signature, B256};
-use alloy_sol_types::SolStruct;
 use anyhow::{anyhow, bail, Context, Result};
 use risc0_aggregation::SetInclusionReceipt;
 use risc0_ethereum_contracts::set_verifier::SetVerifierService;
@@ -37,7 +39,7 @@ use crate::{
     deployments::Deployment,
     dynamic_gas_filler::DynamicGasFiller,
     nonce_layer::NonceProvider,
-    order_stream_client::{Order, OrderStreamClient},
+    order_stream_client::OrderStreamClient,
     request_builder::{
         FinalizerConfigBuilder, OfferLayer, OfferLayerConfigBuilder, RequestBuilder,
         RequestIdLayer, RequestIdLayerConfigBuilder, StandardRequestBuilder,
@@ -47,7 +49,7 @@ use crate::{
         StandardStorageProvider, StandardStorageProviderError, StorageProvider,
         StorageProviderConfig,
     },
-    util::{NotProvided, StandardRpcProvider},
+    util::NotProvided,
 };
 
 /// Builder for the [Client] with standard implementations for the required components.
@@ -55,7 +57,6 @@ use crate::{
 pub struct ClientBuilder<St = NotProvided, Si = NotProvided> {
     deployment: Option<Deployment>,
     rpc_url: Option<Url>,
-    wallet: Option<EthereumWallet>,
     signer: Option<Si>,
     storage_provider: Option<St>,
     tx_timeout: Option<std::time::Duration>,
@@ -75,7 +76,6 @@ impl<St, Si> Default for ClientBuilder<St, Si> {
         Self {
             deployment: None,
             rpc_url: None,
-            wallet: None,
             signer: None,
             storage_provider: None,
             tx_timeout: None,
@@ -95,45 +95,100 @@ impl ClientBuilder {
     }
 }
 
+/// A utility trait used in the [ClientBuilder] to handle construction of the [alloy] [Provider].
+pub trait ClientProviderBuilder {
+    /// Error returned by methods on this [ClientProviderBuilder].
+    type Error;
+
+    /// Build a provider connected to the given RPC URL.
+    fn build_provider(
+        &self,
+        rpc_url: impl AsRef<str>,
+    ) -> impl Future<Output = Result<DynProvider, Self::Error>>;
+
+    /// Get the default signer address that will be used by this provider, or `None` if no signer.
+    fn signer_address(&self) -> Option<Address>;
+}
+
+impl<St, Si> ClientProviderBuilder for ClientBuilder<St, Si>
+where
+    Si: TxSigner<Signature> + Send + Sync + Clone + 'static,
+{
+    type Error = anyhow::Error;
+
+    async fn build_provider(&self, rpc_url: impl AsRef<str>) -> Result<DynProvider, Self::Error> {
+        let rpc_url = rpc_url.as_ref();
+        let provider = match self.signer.clone() {
+            Some(signer) => {
+                let dynamic_gas_filler = DynamicGasFiller::new(
+                    0.2,  // 20% increase of gas limit
+                    0.05, // 5% increase of gas_price per pending transaction
+                    2.0,  // 2x max gas multiplier
+                    signer.address(),
+                );
+
+                // Connect the RPC provider.
+                let base_provider = ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .filler(ChainIdFiller::default())
+                    .filler(dynamic_gas_filler)
+                    .layer(BalanceAlertLayer::new(self.balance_alerts.clone().unwrap_or_default()))
+                    .connect(rpc_url)
+                    .await
+                    .with_context(|| format!("failed to connect provider to {rpc_url}"))?;
+                NonceProvider::new(base_provider, EthereumWallet::from(signer)).erased()
+            }
+            None => ProviderBuilder::new()
+                .connect(rpc_url)
+                .await
+                .with_context(|| format!("failed to connect provider to {rpc_url}"))?
+                .erased(),
+        };
+        Ok(provider)
+    }
+
+    fn signer_address(&self) -> Option<Address> {
+        self.signer.as_ref().map(|signer| signer.address())
+    }
+}
+
+impl<St> ClientProviderBuilder for ClientBuilder<St, NotProvided> {
+    type Error = anyhow::Error;
+
+    async fn build_provider(&self, rpc_url: impl AsRef<str>) -> Result<DynProvider, Self::Error> {
+        let rpc_url = rpc_url.as_ref();
+        let provider = ProviderBuilder::new()
+            .connect(rpc_url)
+            .await
+            .with_context(|| format!("failed to connect provider to {rpc_url}"))?
+            .erased();
+        Ok(provider)
+    }
+
+    fn signer_address(&self) -> Option<Address> {
+        None
+    }
+}
+
 impl<St, Si> ClientBuilder<St, Si> {
     /// Build the client
     pub async fn build(
         self,
-    ) -> Result<Client<StandardRpcProvider, St, StandardRequestBuilder<StandardRpcProvider, St>, Si>>
+    ) -> Result<Client<DynProvider, St, StandardRequestBuilder<DynProvider, St>, Si>>
     where
         St: Clone,
-        Si: Clone,
+        Self: ClientProviderBuilder<Error = anyhow::Error>,
     {
-        let rpc_url = self.rpc_url.context("rpc_url is not set on ClientBuilder")?;
-        let wallet = self.wallet.context("wallet is not set on ClientBuilder")?;
-
-        let wallet_default_signer = wallet.default_signer().address();
-
-        let dynamic_gas_filler = DynamicGasFiller::new(
-            0.2,  // 20% increase of gas limit
-            0.05, // 5% increase of gas_price per pending transaction
-            2.0,  // 2x max gas multiplier
-            wallet_default_signer,
-        );
-
-        // Connect the RPC provider.
-        let base_provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .filler(ChainIdFiller::default())
-            .filler(dynamic_gas_filler)
-            .layer(BalanceAlertLayer::new(self.balance_alerts.unwrap_or_default()))
-            .connect(rpc_url.as_str())
-            .await
-            .with_context(|| format!("failed to connect provider to {rpc_url}"))?;
-        let provider = NonceProvider::new(base_provider, wallet.clone());
+        let rpc_url = self.rpc_url.clone().context("rpc_url is not set on ClientBuilder")?;
+        let provider = self.build_provider(&rpc_url).await?;
 
         // Resolve the deployment information.
         let chain_id =
             provider.get_chain_id().await.context("failed to query chain ID from RPC provider")?;
-        let deployment = self
-            .deployment
-            .or_else(|| Deployment::from_chain_id(chain_id))
-            .with_context(|| format!("no deployment provided for unknown chain_id {chain_id}"))?;
+        let deployment =
+            self.deployment.clone().or_else(|| Deployment::from_chain_id(chain_id)).with_context(
+                || format!("no deployment provided for unknown chain_id {chain_id}"),
+            )?;
 
         // Check that the chain ID is matches the deployment, to avoid misconfigurations.
         if deployment.chain_id.map(|id| id != chain_id).unwrap_or(false) {
@@ -144,12 +199,12 @@ impl<St, Si> ClientBuilder<St, Si> {
         let boundless_market = BoundlessMarketService::new(
             deployment.boundless_market_address,
             provider.clone(),
-            wallet_default_signer,
+            self.signer_address().unwrap_or(Address::ZERO),
         );
         let set_verifier = SetVerifierService::new(
             deployment.set_verifier_address,
             provider.clone(),
-            wallet_default_signer,
+            self.signer_address().unwrap_or(Address::ZERO),
         );
 
         // Build the order stream client, if a URL was provided.
@@ -210,16 +265,43 @@ impl<St, Si> ClientBuilder<St, Si> {
         Self { rpc_url: Some(rpc_url), ..self }
     }
 
-    /// Set the private key
+    /// Set the signer from the given private key.
+    /// ```rust
+    /// # use boundless_market::Client;
+    /// use alloy::signers::local::PrivateKeySigner;
+    ///
+    /// Client::builder().with_private_key(PrivateKeySigner::random());
+    /// ```
     pub fn with_private_key(
         self,
         private_key: impl Into<PrivateKeySigner>,
     ) -> ClientBuilder<St, PrivateKeySigner> {
+        self.with_signer(private_key.into())
+    }
+
+    /// Set the signer from the given private key as a string.
+    /// ```rust
+    /// # use boundless_market::Client;
+    ///
+    /// Client::builder().with_private_key_str(
+    ///     "0x1cee2499e12204c2ed600d780a22a67b3c5fff3310d984cca1f24983d565265c"
+    /// ).unwrap();
+    /// ```
+    pub fn with_private_key_str(
+        self,
+        private_key: impl AsRef<str>,
+    ) -> Result<ClientBuilder<St, PrivateKeySigner>, LocalSignerError> {
+        Ok(self.with_signer(PrivateKeySigner::from_str(private_key.as_ref())?))
+    }
+
+    /// Set the signer and wallet.
+    pub fn with_signer<Zi>(self, signer: impl Into<Option<Zi>>) -> ClientBuilder<St, Zi>
+    where
+        Zi: Signer + Clone + TxSigner<Signature> + Send + Sync + 'static,
+    {
         // NOTE: We can't use the ..self syntax here because return is not Self.
-        let private_key_signer = private_key.into();
         ClientBuilder {
-            wallet: Some(EthereumWallet::from(private_key_signer.clone())),
-            signer: Some(private_key_signer),
+            signer: signer.into(),
             deployment: self.deployment,
             storage_provider: self.storage_provider,
             rpc_url: self.rpc_url,
@@ -230,11 +312,6 @@ impl<St, Si> ClientBuilder<St, Si> {
             request_id_layer_config: self.request_id_layer_config,
             request_finalizer_config: self.request_finalizer_config,
         }
-    }
-
-    /// Set the wallet
-    pub fn with_wallet(self, wallet: impl Into<Option<EthereumWallet>>) -> Self {
-        Self { wallet: wallet.into(), ..self }
     }
 
     /// Set the transaction timeout in seconds
@@ -259,7 +336,6 @@ impl<St, Si> ClientBuilder<St, Si> {
             storage_provider,
             deployment: self.deployment,
             rpc_url: self.rpc_url,
-            wallet: self.wallet,
             signer: self.signer,
             tx_timeout: self.tx_timeout,
             balance_alerts: self.balance_alerts,
@@ -352,7 +428,7 @@ impl<St, Si> ClientBuilder<St, Si> {
 #[non_exhaustive]
 /// Client for interacting with the boundless market.
 pub struct Client<
-    P = StandardRpcProvider,
+    P = DynProvider,
     St = StandardStorageProvider,
     R = StandardRequestBuilder,
     Si = PrivateKeySigner,
@@ -383,9 +459,9 @@ pub struct Client<
 
 /// Alias for a [Client] instantiated with the standard implementations provided by this crate.
 pub type StandardClient = Client<
-    StandardRpcProvider,
+    DynProvider,
     StandardStorageProvider,
-    StandardRequestBuilder<StandardRpcProvider>,
+    StandardRequestBuilder<DynProvider>,
     PrivateKeySigner,
 >;
 
@@ -657,7 +733,7 @@ where
     pub async fn submit_request_onchain_with_signature(
         &self,
         request: &ProofRequest,
-        signature: &Bytes,
+        signature: impl Into<Bytes>,
     ) -> Result<(U256, u64), ClientError> {
         let request = request.clone();
         request.validate()?;
@@ -781,37 +857,57 @@ where
         Ok((journal, receipt))
     }
 
-    /// Fetch an order as a proof request and signature pair.
+    /// Fetch a proof request and its signature, querying first offchain, and then onchain.
     ///
-    /// If the request is not found in the boundless market, it will be fetched from the order stream service.
-    pub async fn fetch_order(
+    /// This method does not verify the signature, and the order cannot be guarenteed to be
+    /// authorized by this call alone.
+    ///
+    /// The request is first looked up offchain using the order stream service, then onchain using
+    /// event queries. The offchain query is sent first, since it is quick to check. Querying
+    /// onchain uses event logs, and will take more time to find requests that are further in the
+    /// past.
+    ///
+    /// Providing a `tx_hash` will speed up onchain queries, by fetching the transaction containing
+    /// the request. Providing the `request_digest` allows differentiating between multiple
+    /// requests with the same ID. If set to `None`, the first found request matching the ID will
+    /// be returned.
+    pub async fn fetch_proof_request(
         &self,
         request_id: U256,
         tx_hash: Option<B256>,
         request_digest: Option<B256>,
-    ) -> Result<Order, ClientError> {
-        match self.boundless_market.get_submitted_request(request_id, tx_hash).await {
-            Ok((request, signature_bytes)) => {
-                let domain = self.boundless_market.eip712_domain().await?;
-                let digest = request.eip712_signing_hash(&domain.alloy_struct());
-                if let Some(expected_digest) = request_digest {
-                    if digest != expected_digest {
-                        return Err(ClientError::RequestError(RequestError::DigestMismatch));
+    ) -> Result<(ProofRequest, Bytes), ClientError> {
+        if let Some(ref order_stream_client) = self.offchain_client {
+            tracing::debug!("Querying the order stream for request: 0x{request_id:x} using request_digest {request_digest:?}");
+            match order_stream_client.fetch_order(request_id, request_digest).await {
+                Ok(order) => {
+                    tracing::debug!("Found request 0x{request_id:x} offchain");
+                    return Ok((order.request, Bytes::from(order.signature.as_bytes())));
+                }
+                Err(err) => {
+                    // TODO: Provide a type-safe way to handle this error.
+                    if err.to_string().contains("No order found") {
+                        tracing::debug!("Request 0x{request_id:x} not found offchain");
+                    } else {
+                        tracing::error!(
+                            "Error querying order stream for request 0x{request_id:x}; err = {err}"
+                        );
                     }
                 }
-                Ok(Order {
-                    request,
-                    request_digest: digest,
-                    signature: Signature::try_from(signature_bytes.as_ref())
-                        .map_err(|_| ClientError::Error(anyhow!("Failed to parse signature")))?,
-                })
             }
-            Err(_) => Ok(self
-                .offchain_client
-                .as_ref()
-                .context("Request not found on-chain and order stream client not available. Please provide an order stream URL")?
-                .fetch_order(request_id, request_digest)
-                .await?),
+        } else {
+            tracing::debug!("Skipping query for request offchain; no order stream client provided");
+        }
+
+        tracing::debug!(
+            "Querying the blockchain for request: 0x{request_id:x} using tx_hash {tx_hash:?}"
+        );
+        match self.boundless_market.get_submitted_request(request_id, tx_hash).await {
+            Ok((proof_request, signature)) => Ok((proof_request, signature)),
+            Err(err @ MarketError::RequestNotFound(_)) => Err(err.into()),
+            err @ Err(_) => err
+                .with_context(|| format!("error querying for 0x{request_id:x} onchain"))
+                .map_err(Into::into),
         }
     }
 }

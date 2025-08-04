@@ -10,7 +10,7 @@ import * as crypto from 'crypto';
 
 export class BonsaiECSBroker extends pulumi.ComponentResource {
   constructor(name: string, args: {
-    chainId: string;
+    chainId: ChainId;
     privateKey: string | pulumi.Output<string>;
     ethRpcUrl: string | pulumi.Output<string>;
     orderStreamUrl: string | pulumi.Output<string>;
@@ -49,7 +49,8 @@ export class BonsaiECSBroker extends pulumi.ComponentResource {
       dockerTag,
       ciCacheSecret,
       githubTokenSecret,
-      boundlessAlertsTopicArns
+      boundlessAlertsTopicArns,
+      chainId,
     } = args;
     const serviceName = name;
 
@@ -108,7 +109,7 @@ export class BonsaiECSBroker extends pulumi.ComponentResource {
     });
 
     // EFS
-    const fileSystem = new aws.efs.FileSystem(`${serviceName}-efs-rev4`, {
+    const fileSystem = new aws.efs.FileSystem(`${serviceName}-efs-rev6`, {
       encrypted: true,
       tags: {
         Name: serviceName,
@@ -146,6 +147,17 @@ export class BonsaiECSBroker extends pulumi.ComponentResource {
             Action: ['secretsmanager:GetSecretValue', 'ssm:GetParameters'],
             Resource: [privateKeySecret.arn, bonsaiSecret.arn, ethRpcUrlSecret.arn, orderStreamUrlSecret.arn],
           },
+          // Needed for ECS Exec
+          {
+            Effect: 'Allow',
+            Action: [
+              "ssmmessages:CreateControlChannel",
+              "ssmmessages:CreateDataChannel",
+              "ssmmessages:OpenControlChannel",
+              "ssmmessages:OpenDataChannel"
+            ],
+            Resource: "*"
+          }
         ],
       },
     }, { dependsOn: [taskRole] });
@@ -408,6 +420,44 @@ export class BonsaiECSBroker extends pulumi.ComponentResource {
 
     const alarmActions = boundlessAlertsTopicArns ?? [];
 
-    createProverAlarms(serviceName, logGroup, [service, logGroup], alarmActions);
+    createProverAlarms(chainId, serviceName, logGroup, [service, logGroup], alarmActions);
+
+    // Alarms for CPUUtilization and MemoryUtilization, alarm if over 80% for 5 consecutive minutes.
+    new aws.cloudwatch.MetricAlarm(`${serviceName}-cpu-utilization-alarm`, {
+      name: `${serviceName}-cpu-utilization-alarm`,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold',
+      evaluationPeriods: 5,
+      datapointsToAlarm: 5,
+      metricName: 'CPUUtilization',
+      namespace: 'AWS/ECS',
+      period: 60,
+      statistic: 'Average',
+      threshold: 80,
+      alarmDescription: 'This metric monitors the CPU utilization of the broker task.',
+      alarmActions: alarmActions,
+      dimensions: {
+        ServiceName: serviceName,
+        ClusterName: cluster.name,
+      },
+    });
+
+    new aws.cloudwatch.MetricAlarm(`${serviceName}-memory-utilization-alarm`, {
+      name: `${serviceName}-memory-utilization-alarm`,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold',
+      metricName: 'MemoryUtilization',
+      namespace: 'AWS/ECS',
+      period: 60,
+      evaluationPeriods: 5,
+      datapointsToAlarm: 5,
+      statistic: 'Average',
+      threshold: 80,
+      alarmDescription: 'This metric monitors the memory utilization of the broker task.',
+      alarmActions: alarmActions,
+      dimensions: {
+        ServiceName: serviceName,
+        ClusterName: cluster.name,
+      },
+    });
+
   }
 }

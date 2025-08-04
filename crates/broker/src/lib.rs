@@ -1,8 +1,22 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use std::{path::PathBuf, sync::Arc, time::SystemTime};
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+    time::SystemTime,
+};
 
 use crate::storage::create_uri_handler;
 use alloy::{
@@ -16,6 +30,7 @@ use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, ProofRequest},
     order_stream_client::OrderStreamClient,
     selector::is_groth16_selector,
+    Deployment,
 };
 use chrono::{serde::ts_seconds, DateTime, Utc};
 use clap::Parser;
@@ -30,10 +45,12 @@ use serde::{Deserialize, Serialize};
 use task::{RetryPolicy, Supervisor};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 const NEW_ORDER_CHANNEL_CAPACITY: usize = 1000;
 const PRICING_CHANNEL_CAPACITY: usize = 1000;
+const ORDER_STATE_CHANNEL_CAPACITY: usize = 1000;
 
 pub(crate) mod aggregator;
 pub(crate) mod chain_monitor;
@@ -45,15 +62,17 @@ pub(crate) mod market_monitor;
 pub(crate) mod offchain_market_monitor;
 pub(crate) mod order_monitor;
 pub(crate) mod order_picker;
+pub(crate) mod prioritization;
 pub(crate) mod provers;
 pub(crate) mod proving;
+pub(crate) mod reaper;
 pub(crate) mod rpc_retry_policy;
 pub(crate) mod storage;
 pub(crate) mod submitter;
 pub(crate) mod task;
 pub(crate) mod utils;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// sqlite database connection url
@@ -64,22 +83,13 @@ pub struct Args {
     #[clap(long, env, default_value = "http://localhost:8545")]
     pub rpc_url: Url,
 
-    /// Order stream server URL
-    #[clap(long, env)]
-    pub order_stream_url: Option<Url>,
-
     /// wallet key
     #[clap(long, env)]
     pub private_key: PrivateKeySigner,
 
-    /// Boundless market address
-    #[clap(long, env)]
-    pub boundless_market_address: Address,
-
-    /// Risc zero Set verifier address
-    // TODO: Get this from the market contract via view call
-    #[clap(long, env)]
-    pub set_verifier_address: Address,
+    /// Boundless deployment configuration (contract addresses, etc.)
+    #[clap(flatten, next_help_heading = "Boundless Deployment")]
+    pub deployment: Option<Deployment>,
 
     /// local prover API (Bento)
     ///
@@ -165,13 +175,22 @@ enum FulfillmentType {
     FulfillWithoutLocking,
 }
 
+/// Message sent from MarketMonitor to OrderPicker about order state changes
+#[derive(Debug, Clone)]
+pub enum OrderStateChange {
+    /// Order has been locked by a prover
+    Locked { request_id: U256, prover: Address },
+    /// Order has been fulfilled
+    Fulfilled { request_id: U256 },
+}
+
 /// Helper function to format an order ID consistently
 fn format_order_id(
     request_id: &U256,
     signing_hash: &FixedBytes<32>,
     fulfillment_type: &FulfillmentType,
 ) -> String {
-    format!("0x{:x}-{}-{:?}", request_id, signing_hash, fulfillment_type)
+    format!("0x{request_id:x}-{signing_hash}-{fulfillment_type:?}")
 }
 
 /// Order request from the network.
@@ -189,6 +208,8 @@ struct OrderRequest {
     total_cycles: Option<u64>,
     target_timestamp: Option<u64>,
     expire_timestamp: Option<u64>,
+    #[serde(skip)]
+    cached_id: OnceLock<String>,
 }
 
 impl OrderRequest {
@@ -210,6 +231,7 @@ impl OrderRequest {
             total_cycles: None,
             target_timestamp: None,
             expire_timestamp: None,
+            cached_id: OnceLock::new(),
         }
     }
 
@@ -217,9 +239,15 @@ impl OrderRequest {
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
     pub fn id(&self) -> String {
-        let signing_hash =
-            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
-        format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
+        self.cached_id
+            .get_or_init(|| {
+                let signing_hash = self
+                    .request
+                    .signing_hash(self.boundless_market_address, self.chain_id)
+                    .unwrap();
+                format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
+            })
+            .clone()
     }
 
     fn to_order(&self, status: OrderStatus) -> Order {
@@ -241,6 +269,7 @@ impl OrderRequest {
             compressed_proof_id: None,
             lock_price: None,
             error_msg: None,
+            cached_id: OnceLock::new(),
         }
     }
 
@@ -253,6 +282,28 @@ impl OrderRequest {
         order.lock_price = Some(lock_price);
         order.proving_started_at = Some(Utc::now().timestamp().try_into().unwrap());
         order
+    }
+
+    /// Returns the relevant expiration timestamp for this order based on its fulfillment type.
+    /// - For LockAndFulfill orders: returns lock expiration
+    /// - For FulfillAfterLockExpire/FulfillWithoutLocking orders: returns order expiration
+    pub fn expiry(&self) -> u64 {
+        match self.fulfillment_type {
+            FulfillmentType::LockAndFulfill => self.request.lock_expires_at(),
+            FulfillmentType::FulfillAfterLockExpire => self.request.expires_at(),
+            FulfillmentType::FulfillWithoutLocking => self.request.expires_at(),
+        }
+    }
+}
+
+impl std::fmt::Display for OrderRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let total_mcycles = if self.total_cycles.is_some() {
+            format!(" ({} mcycles)", self.total_cycles.unwrap() / 1_000_000)
+        } else {
+            "".to_string()
+        };
+        write!(f, "{}{} [{}]", self.id(), total_mcycles, format_expiries(&self.request))
     }
 }
 
@@ -269,7 +320,7 @@ impl OrderRequest {
 /// details. Those also result in separate Order objects being created.
 ///
 /// See the id() method for more details on how Orders are identified.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct Order {
     /// Address of the boundless market contract. Stored as it is required to compute the order id.
     boundless_market_address: Address,
@@ -317,6 +368,8 @@ struct Order {
     lock_price: Option<U256>,
     /// Failure message
     error_msg: Option<String>,
+    #[serde(skip)]
+    cached_id: OnceLock<String>,
 }
 
 impl Order {
@@ -324,9 +377,15 @@ impl Order {
     // This structure supports multiple different ProofRequests with the same request_id, and different
     // fulfillment types.
     pub fn id(&self) -> String {
-        let signing_hash =
-            self.request.signing_hash(self.boundless_market_address, self.chain_id).unwrap();
-        format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
+        self.cached_id
+            .get_or_init(|| {
+                let signing_hash = self
+                    .request
+                    .signing_hash(self.boundless_market_address, self.chain_id)
+                    .unwrap();
+                format_order_id(&self.request.id, &signing_hash, &self.fulfillment_type)
+            })
+            .clone()
     }
 
     pub fn is_groth16(&self) -> bool {
@@ -336,7 +395,12 @@ impl Order {
 
 impl std::fmt::Display for Order {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id())
+        let total_mcycles = if self.total_cycles.is_some() {
+            format!(" ({} mcycles)", self.total_cycles.unwrap() / 1_000_000)
+        } else {
+            "".to_string()
+        };
+        write!(f, "{}{} [{}]", self.id(), total_mcycles, format_expiries(&self.request))
     }
 }
 
@@ -397,19 +461,104 @@ impl<P> Broker<P>
 where
     P: Provider<Ethereum> + 'static + Clone + WalletProvider,
 {
-    pub async fn new(args: Args, provider: P) -> Result<Self> {
+    pub async fn new(mut args: Args, provider: P) -> Result<Self> {
         let config_watcher =
             ConfigWatcher::new(&args.config_file).await.context("Failed to load broker config")?;
 
         let db: DbObj =
             Arc::new(SqliteDb::new(&args.db_url).await.context("Failed to connect to sqlite DB")?);
 
+        let chain_id = provider.get_chain_id().await.context("Failed to get chain ID")?;
+
+        // Resolve deployment configuration if not provided, or validate if provided
+        if let Some(manual_deployment) = &args.deployment {
+            // Check if there's a default deployment for this chain ID
+            if let Some(expected_deployment) = Deployment::from_chain_id(chain_id) {
+                Self::validate_deployment_config(manual_deployment, &expected_deployment, chain_id);
+            } else {
+                tracing::info!("Using manually configured deployment for chain ID {chain_id} (no default available)");
+            }
+        } else {
+            args.deployment = Some(Deployment::from_chain_id(chain_id)
+                .with_context(|| format!("No default deployment found for chain ID {chain_id}. Please specify deployment configuration manually."))?);
+            tracing::info!("Using default deployment configuration for chain ID {chain_id}");
+        }
+
         Ok(Self { args, db, provider: Arc::new(provider), config_watcher })
+    }
+
+    pub fn deployment(&self) -> &Deployment {
+        self.args.deployment.as_ref().unwrap()
+    }
+
+    fn validate_deployment_config(manual: &Deployment, expected: &Deployment, chain_id: u64) {
+        let mut warnings = Vec::new();
+
+        if manual.boundless_market_address != expected.boundless_market_address {
+            warnings.push(format!(
+                "boundless_market_address mismatch: configured={}, expected={}",
+                manual.boundless_market_address, expected.boundless_market_address
+            ));
+        }
+
+        if manual.set_verifier_address != expected.set_verifier_address {
+            warnings.push(format!(
+                "set_verifier_address mismatch: configured={}, expected={}",
+                manual.set_verifier_address, expected.set_verifier_address
+            ));
+        }
+
+        if let (Some(manual_addr), Some(expected_addr)) =
+            (manual.verifier_router_address, expected.verifier_router_address)
+        {
+            if manual_addr != expected_addr {
+                warnings.push(format!(
+                    "verifier_router_address mismatch: configured={manual_addr}, expected={expected_addr}"
+                ));
+            }
+        }
+
+        if let (Some(manual_addr), Some(expected_addr)) =
+            (manual.stake_token_address, expected.stake_token_address)
+        {
+            if manual_addr != expected_addr {
+                warnings.push(format!(
+                    "stake_token_address mismatch: configured={manual_addr}, expected={expected_addr}"
+                ));
+            }
+        }
+
+        if manual.order_stream_url != expected.order_stream_url {
+            warnings.push(format!(
+                "order_stream_url mismatch: configured={:?}, expected={:?}",
+                manual.order_stream_url, expected.order_stream_url
+            ));
+        }
+
+        if let (Some(chain_id), Some(expected_chain_id)) = (manual.chain_id, expected.chain_id) {
+            if chain_id != expected_chain_id {
+                warnings.push(format!(
+                    "chain_id mismatch: configured={chain_id}, expected={expected_chain_id}"
+                ));
+            }
+        }
+
+        if warnings.is_empty() {
+            tracing::info!(
+                "Manual deployment configuration matches expected defaults for chain ID {chain_id}"
+            );
+        } else {
+            tracing::warn!(
+                "Manual deployment configuration differs from expected defaults for chain ID {chain_id}: {}",
+                warnings.join(", ")
+            );
+            tracing::warn!("This may indicate a configuration error. Please verify your deployment addresses are correct.");
+        }
     }
 
     async fn fetch_and_upload_set_builder_image(&self, prover: &ProverObj) -> Result<Digest> {
         let set_verifier_contract = SetVerifierService::new(
-            self.args.set_verifier_address,
+            self.deployment().set_verifier_address,
             self.provider.clone(),
             Address::ZERO,
         );
@@ -424,6 +573,7 @@ where
             config.prover.set_builder_guest_path.clone()
         };
 
+        tracing::debug!("Uploading set builder image: {}", image_url_str);
         self.fetch_and_upload_image(prover, image_id, image_url_str, path)
             .await
             .context("uploading set builder image")?;
@@ -432,7 +582,7 @@ where
 
     async fn fetch_and_upload_assessor_image(&self, prover: &ProverObj) -> Result<Digest> {
         let boundless_market = BoundlessMarketService::new(
-            self.args.boundless_market_address,
+            self.deployment().boundless_market_address,
             self.provider.clone(),
             Address::ZERO,
         );
@@ -445,6 +595,7 @@ where
             config.prover.assessor_set_guest_path.clone()
         };
 
+        tracing::debug!("Uploading assessor image: {}", image_url_str);
         self.fetch_and_upload_image(prover, image_id, image_url_str, path)
             .await
             .context("uploading assessor image")?;
@@ -480,7 +631,7 @@ where
 
             file_program_buf
         } else {
-            let image_uri = create_uri_handler(&image_url_str, &self.config_watcher.config)
+            let image_uri = create_uri_handler(&image_url_str, &self.config_watcher.config, false)
                 .await
                 .context("Failed to parse image URI")?;
             tracing::debug!("Downloading image from: {image_uri}");
@@ -508,6 +659,12 @@ where
             config.market.lookback_blocks
         };
 
+        // Create two cancellation tokens for graceful shutdown:
+        // 1. Non-critical tasks (order discovery, picking, monitoring) - cancelled immediately on shutdown signal
+        // 2. Critical tasks (proving, aggregation, submission) - cancelled only after committed orders complete
+        let non_critical_cancel_token = CancellationToken::new();
+        let critical_cancel_token = CancellationToken::new();
+
         let chain_monitor = Arc::new(
             chain_monitor::ChainMonitorService::new(self.provider.clone())
                 .await
@@ -516,8 +673,10 @@ where
 
         let cloned_chain_monitor = chain_monitor.clone();
         let cloned_config = config.clone();
+        // Critical task, as is relied on to query current chain state
+        let cancel_token = critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(cloned_chain_monitor, cloned_config)
+            Supervisor::new(cloned_chain_monitor, cloned_config, cancel_token)
                 .spawn()
                 .await
                 .context("Failed to start chain monitor")?;
@@ -525,24 +684,37 @@ where
         });
 
         let chain_id = self.provider.get_chain_id().await.context("Failed to get chain ID")?;
-        let client =
-            self.args.order_stream_url.clone().map(|url| {
-                OrderStreamClient::new(url, self.args.boundless_market_address, chain_id)
-            });
+        let client = self
+            .deployment()
+            .order_stream_url
+            .clone()
+            .map(|url| -> Result<OrderStreamClient> {
+                let url = Url::parse(&url).context("Failed to parse order stream URL")?;
+                Ok(OrderStreamClient::new(
+                    url,
+                    self.deployment().boundless_market_address,
+                    chain_id,
+                ))
+            })
+            .transpose()?;
 
         // Create a channel for new orders to be sent to the OrderPicker / from monitors
         let (new_order_tx, new_order_rx) = mpsc::channel(NEW_ORDER_CHANNEL_CAPACITY);
 
+        // Create a broadcast channel for order state change messages
+        let (order_state_tx, _) = tokio::sync::broadcast::channel(ORDER_STATE_CHANNEL_CAPACITY);
+
         // spin up a supervisor for the market monitor
         let market_monitor = Arc::new(market_monitor::MarketMonitor::new(
             loopback_blocks,
-            self.args.boundless_market_address,
+            self.deployment().boundless_market_address,
             self.provider.clone(),
             self.db.clone(),
             chain_monitor.clone(),
             self.args.private_key.address(),
             client.clone(),
             new_order_tx.clone(),
+            order_state_tx.clone(),
         ));
 
         let block_times =
@@ -551,8 +723,9 @@ where
         tracing::debug!("Estimated block time: {block_times}");
 
         let cloned_config = config.clone();
+        let cancel_token = non_critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(market_monitor, cloned_config)
+            Supervisor::new(market_monitor, cloned_config, cancel_token)
                 .spawn()
                 .await
                 .context("Failed to start market monitor")?;
@@ -568,8 +741,9 @@ where
                     new_order_tx.clone(),
                 ));
             let cloned_config = config.clone();
+            let cancel_token = non_critical_cancel_token.clone();
             supervisor_tasks.spawn(async move {
-                Supervisor::new(offchain_market_monitor, cloned_config)
+                Supervisor::new(offchain_market_monitor, cloned_config, cancel_token)
                     .spawn()
                     .await
                     .context("Failed to start offchain market monitor")?;
@@ -578,7 +752,7 @@ where
         }
 
         // Construct the prover object interface
-        let prover: provers::ProverObj = if risc0_zkvm::is_dev_mode() {
+        let prover: provers::ProverObj = if is_dev_mode() {
             tracing::warn!("WARNING: Running the Broker in dev mode does not generate valid receipts. \
             Receipts generated from this process are invalid and should never be used in production.");
             Arc::new(provers::DefaultProver::new())
@@ -603,20 +777,32 @@ where
 
         let (pricing_tx, pricing_rx) = mpsc::channel(PRICING_CHANNEL_CAPACITY);
 
+        let stake_token_decimals = BoundlessMarketService::new(
+            self.deployment().boundless_market_address,
+            self.provider.clone(),
+            Address::ZERO,
+        )
+        .stake_token_decimals()
+        .await
+        .context("Failed to get stake token decimals. Possible RPC error.")?;
+
         // Spin up the order picker to pre-flight and find orders to lock
         let order_picker = Arc::new(order_picker::OrderPicker::new(
             self.db.clone(),
             config.clone(),
             prover.clone(),
-            self.args.boundless_market_address,
+            self.deployment().boundless_market_address,
             self.provider.clone(),
             chain_monitor.clone(),
             new_order_rx,
             pricing_tx,
+            stake_token_decimals,
+            order_state_tx.clone(),
         ));
         let cloned_config = config.clone();
+        let cancel_token = non_critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(order_picker, cloned_config)
+            Supervisor::new(order_picker, cloned_config, cancel_token)
                 .spawn()
                 .await
                 .context("Failed to start order picker")?;
@@ -624,14 +810,20 @@ where
         });
 
         let proving_service = Arc::new(
-            proving::ProvingService::new(self.db.clone(), prover.clone(), config.clone())
-                .await
-                .context("Failed to initialize proving service")?,
+            proving::ProvingService::new(
+                self.db.clone(),
+                prover.clone(),
+                config.clone(),
+                order_state_tx.clone(),
+            )
+            .await
+            .context("Failed to initialize proving service")?,
         );
 
         let cloned_config = config.clone();
+        let cancel_token = critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(proving_service, cloned_config)
+            Supervisor::new(proving_service, cloned_config, cancel_token)
                 .spawn()
                 .await
                 .context("Failed to start proving service")?;
@@ -639,14 +831,7 @@ where
         });
 
         let prover_addr = self.args.private_key.address();
-        let stake_token_decimals = BoundlessMarketService::new(
-            self.args.boundless_market_address,
-            self.provider.clone(),
-            Address::ZERO,
-        )
-        .stake_token_decimals()
-        .await
-        .context("Failed to get stake token decimals. Possible RPC error.")?;
+
         let order_monitor = Arc::new(order_monitor::OrderMonitor::new(
             self.db.clone(),
             self.provider.clone(),
@@ -654,13 +839,18 @@ where
             config.clone(),
             block_times,
             prover_addr,
-            self.args.boundless_market_address,
+            self.deployment().boundless_market_address,
             pricing_rx,
             stake_token_decimals,
+            order_monitor::RpcRetryConfig {
+                retry_count: self.args.rpc_retry_max.into(),
+                retry_sleep_ms: self.args.rpc_retry_backoff,
+            },
         )?);
         let cloned_config = config.clone();
+        let cancel_token = non_critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(order_monitor, cloned_config)
+            Supervisor::new(order_monitor, cloned_config, cancel_token)
                 .spawn()
                 .await
                 .context("Failed to start order monitor")?;
@@ -676,7 +866,7 @@ where
                 chain_id,
                 set_builder_img_id,
                 assessor_img_id,
-                self.args.boundless_market_address,
+                self.deployment().boundless_market_address,
                 prover_addr,
                 config.clone(),
                 prover.clone(),
@@ -686,12 +876,27 @@ where
         );
 
         let cloned_config = config.clone();
+        let cancel_token = critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(aggregator, cloned_config)
+            Supervisor::new(aggregator, cloned_config, cancel_token)
                 .with_retry_policy(RetryPolicy::CRITICAL_SERVICE)
                 .spawn()
                 .await
                 .context("Failed to start aggregator service")?;
+            Ok(())
+        });
+
+        // Start the ReaperTask to check for expired committed orders
+        let reaper =
+            Arc::new(reaper::ReaperTask::new(self.db.clone(), config.clone(), prover.clone()));
+        let cloned_config = config.clone();
+        // Using critical cancel token to ensure no stuck expired jobs on shutdown
+        let cancel_token = critical_cancel_token.clone();
+        supervisor_tasks.spawn(async move {
+            Supervisor::new(reaper, cloned_config, cancel_token)
+                .spawn()
+                .await
+                .context("Failed to start reaper service")?;
             Ok(())
         });
 
@@ -700,13 +905,14 @@ where
             config.clone(),
             prover.clone(),
             self.provider.clone(),
-            self.args.set_verifier_address,
-            self.args.boundless_market_address,
+            self.deployment().set_verifier_address,
+            self.deployment().boundless_market_address,
             set_builder_img_id,
         )?);
         let cloned_config = config.clone();
+        let cancel_token = critical_cancel_token.clone();
         supervisor_tasks.spawn(async move {
-            Supervisor::new(submitter, cloned_config)
+            Supervisor::new(submitter, cloned_config, cancel_token)
                 .with_retry_policy(RetryPolicy::CRITICAL_SERVICE)
                 .spawn()
                 .await
@@ -714,36 +920,117 @@ where
             Ok(())
         });
 
-        // Monitor the different supervisor tasks
-        while let Some(res) = supervisor_tasks.join_next().await {
-            let status = match res {
-                Err(join_err) if join_err.is_cancelled() => {
-                    tracing::info!("Tokio task exited with cancellation status: {join_err:?}");
-                    continue;
+        // Monitor the different supervisor tasks and handle shutdown
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler");
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .expect("Failed to install SIGINT handler");
+        loop {
+            tracing::info!("Waiting for supervisor tasks to complete...");
+            tokio::select! {
+                // Handle supervisor task results
+                Some(res) = supervisor_tasks.join_next() => {
+                    let status = match res {
+                        Err(join_err) if join_err.is_cancelled() => {
+                            tracing::info!("Tokio task exited with cancellation status: {join_err:?}");
+                            continue;
+                        }
+                        Err(join_err) => {
+                            tracing::error!("Tokio task exited with error status: {join_err:?}");
+                            anyhow::bail!("Task exited with error status: {join_err:?}")
+                        }
+                        Ok(status) => status,
+                    };
+                    match status {
+                        Err(err) => {
+                            tracing::error!("Task exited with error status: {err:?}");
+                            anyhow::bail!("Task exited with error status: {err:?}")
+                        }
+                        Ok(()) => {
+                            tracing::info!("Task exited with ok status");
+                        }
+                    }
                 }
-                Err(join_err) => {
-                    tracing::error!("Tokio task exited with error status: {join_err:?}");
-                    // TODO(#BM-470): Here, we should be using a cancellation token to signal to all
-                    // the tasks under this supervisor that they should exit, then set a timer (e.g.
-                    // for 30) to give them time to gracefully shut down.
-                    anyhow::bail!("Task exited with error status: {join_err:?}")
+                // Handle shutdown signals
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received CTRL+C, starting graceful shutdown...");
+                    break;
                 }
-                Ok(status) => status,
-            };
-            match status {
-                Err(err) => {
-                    tracing::error!("Task exited with error status: {err:?}");
-                    // TODO(#BM-470): Here, we should be using a cancellation token to signal to all
-                    // the tasks under this supervisor that they should exit, then set a timer (e.g.
-                    // for 30) to give them time to gracefully shut down.
-                    anyhow::bail!("Task exited with error status: {err:?}")
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM, starting graceful shutdown...");
+                    break;
                 }
-                Ok(()) => {
-                    tracing::info!("Task exited with ok status");
+                _ = sigint.recv() => {
+                    tracing::info!("Received SIGINT, starting graceful shutdown...");
+                    break;
                 }
             }
         }
 
+        // Phase 1: Cancel non-critical tasks immediately to stop taking new work
+        tracing::info!("Cancelling non-critical tasks (order discovery, picking, monitoring)...");
+        non_critical_cancel_token.cancel();
+
+        // Phase 2: Wait for committed orders to complete, then cancel critical tasks
+        self.shutdown_and_cancel_critical_tasks(critical_cancel_token).await?;
+
+        Ok(())
+    }
+
+    async fn shutdown_and_cancel_critical_tasks(
+        &self,
+        critical_cancel_token: CancellationToken,
+    ) -> Result<(), anyhow::Error> {
+        // 2 hour max to shutdown time, to avoid indefinite shutdown time.
+        const SHUTDOWN_GRACE_PERIOD_SECS: u32 = 2 * 60 * 60;
+        const SLEEP_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let start_time = std::time::Instant::now();
+        let grace_period = std::time::Duration::from_secs(SHUTDOWN_GRACE_PERIOD_SECS as u64);
+        let mut last_log = "".to_string();
+        while start_time.elapsed() < grace_period {
+            let in_progress_orders = self.db.get_committed_orders().await?;
+            if in_progress_orders.is_empty() {
+                break;
+            }
+
+            let new_log = format!(
+                "Waiting for {} in-progress orders to complete...\n{}",
+                in_progress_orders.len(),
+                in_progress_orders
+                    .iter()
+                    .map(|order| { format!("[{:?}] {}", order.status, order) })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+
+            if new_log != last_log {
+                tracing::info!("{}", new_log);
+                last_log = new_log;
+            }
+
+            tokio::time::sleep(SLEEP_DURATION).await;
+        }
+
+        // Cancel critical tasks after committed work completes (or timeout)
+        tracing::info!("Cancelling critical tasks...");
+        critical_cancel_token.cancel();
+
+        if start_time.elapsed() >= grace_period {
+            let in_progress_orders = self.db.get_committed_orders().await?;
+            tracing::info!(
+                "Shutdown timed out after {} seconds. Exiting with {} in-progress orders: {}",
+                SHUTDOWN_GRACE_PERIOD_SECS,
+                in_progress_orders.len(),
+                in_progress_orders
+                    .iter()
+                    .map(|order| format!("[{:?}] {}", order.status, order))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        } else {
+            tracing::info!("Shutdown complete");
+        }
         Ok(())
     }
 }
@@ -752,6 +1039,37 @@ where
 // TODO(#379): Avoid drift relative to the chain's timestamps.
 pub(crate) fn now_timestamp() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+}
+
+// Utility function to format the expiries of a request in a human readable format
+fn format_expiries(request: &ProofRequest) -> String {
+    let now: i64 = now_timestamp().try_into().unwrap();
+    let lock_expires_at: i64 = request.lock_expires_at().try_into().unwrap();
+    let lock_expires_delta = lock_expires_at - now;
+    let lock_expires_delta_str = if lock_expires_delta > 0 {
+        format!("{lock_expires_delta} seconds from now")
+    } else {
+        format!("{} seconds ago", lock_expires_delta.abs())
+    };
+    let expires_at: i64 = request.expires_at().try_into().unwrap();
+    let expires_at_delta = expires_at - now;
+    let expires_at_delta_str = if expires_at_delta > 0 {
+        format!("{expires_at_delta} seconds from now")
+    } else {
+        format!("{} seconds ago", expires_at_delta.abs())
+    };
+    format!(
+        "lock expires at {lock_expires_at} ({lock_expires_delta_str}), expires at {expires_at} ({expires_at_delta_str})"
+    )
+}
+
+/// Returns `true` if the dev mode environment variable is enabled.
+pub(crate) fn is_dev_mode() -> bool {
+    std::env::var("RISC0_DEV_MODE")
+        .ok()
+        .map(|x| x.to_lowercase())
+        .filter(|x| x == "1" || x == "true" || x == "yes")
+        .is_some()
 }
 
 #[cfg(feature = "test-utils")]
@@ -787,10 +1105,8 @@ pub mod test_utils {
             let args = Args {
                 db_url: "sqlite::memory:".into(),
                 config_file: config_file.path().to_path_buf(),
-                boundless_market_address: ctx.deployment.boundless_market_address,
-                set_verifier_address: ctx.deployment.set_verifier_address,
+                deployment: Some(ctx.deployment.clone()),
                 rpc_url,
-                order_stream_url: None,
                 private_key: ctx.prover_signer.clone(),
                 bento_api_url: None,
                 bonsai_api_key: None,

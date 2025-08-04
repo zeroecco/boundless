@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use alloy::{
     primitives::utils::parse_ether,
@@ -28,8 +38,8 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .with_span_events(FmtSpan::CLOSE)
-            .with_ansi(false)
             .json()
+            .with_ansi(false)
             .init();
     } else {
         tracing_subscriber::fmt()
@@ -76,11 +86,12 @@ async fn main() -> Result<()> {
         .connect_client(client);
 
     let provider = NonceProvider::new(base_provider, wallet.clone());
+    let broker = Broker::new(args.clone(), provider.clone()).await?;
 
     // TODO: Move this code somewhere else / monitor our balanceOf and top it up as needed
     if let Some(deposit_amount) = args.deposit_amount.as_ref() {
         let boundless_market = BoundlessMarketService::new(
-            args.boundless_market_address,
+            broker.deployment().boundless_market_address,
             provider.clone(),
             provider.default_signer_address(),
         );
@@ -92,8 +103,7 @@ async fn main() -> Result<()> {
             .context("Failed to deposit to market")?;
     }
 
-    let broker = Broker::new(args, provider).await?;
-
+    // Await broker shutdown before returning from main
     broker.start_service().await.context("Broker service failed")?;
 
     Ok(())

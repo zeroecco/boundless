@@ -10,6 +10,13 @@ mcycle_price = "0.0000005"
 # Similar to the mcycle_price option above. This is used to determine the minimum price to accept an
 # order when paid in staking tokens, as is the case for orders with an expired lock.
 mcycle_price_stake_token = "0.0001"
+# Optional priority requestor addresses that can bypass the mcycle limit and max input size limit.
+#
+# If enabled, the order will be preflighted without constraints.
+priority_requestor_addresses = [
+	"0x48268bE6235A23eb7b67356469362869D5d0293f",
+	"0x0466ACfc0F27bBA9fBB7A8508f576527e81E83Bd",
+]
 # Estimated peak performance of the proving cluster, in kHz.
 #
 # Used to estimate proving capacity and accept only as much work as the prover can handle. Estimates
@@ -19,7 +26,7 @@ peak_prove_khz = 100
 # Optional max cycles (in mcycles)
 #
 # Orders over this max_cycles will be skipped after preflight
-#max_mcycle_limit = 1000
+max_mcycle_limit = 8000
 # Max journal size in bytes
 #
 # Orders that produce a journal larger than this size in preflight will be skipped. Since journals
@@ -36,7 +43,7 @@ lookback_blocks = 300 # 300 blocks ~ 1 hour @ 12s block times
 # Max stake amount, denominated in the Boundless staking token.
 #
 # Requests that require a higher stake than this will not be considered.
-max_stake = "5" # HP
+max_stake = "25" # USDC
 # Max input / image file size allowed for downloading from request URLs.
 max_file_size = 50_000_000
 # Max retries for fetching input / image contents from URLs
@@ -45,6 +52,23 @@ max_file_size = 50_000_000
 #
 # Maximum number of concurrent proofs that can be processed at once
 max_concurrent_proofs = 2
+# Maximum number of orders to concurrently work on pricing
+#
+# Used to limit pricing tasks spawned to prevent overwhelming the system
+#max_concurrent_preflights = 4
+# Order pricing priority mode
+#
+# Determines how orders are prioritized for pricing. Options:
+# - "random": Process orders in random order to distribute competition among provers (default)
+# - "observation_time": Process orders in the order they were observed (FIFO)
+# - "shortest_expiry": Process orders by shortest expiry first (earliest deadline)
+#order_pricing_priority = "random"
+# Order commitment priority mode
+#
+# Determines how orders are prioritized when committing to prove them. Options:
+# - "random": Process orders in random order to distribute competition among provers (default)
+# - "shortest_expiry": Process orders by shortest expiry first (lock expiry for lock-and-fulfill orders, request expiry for others)
+#order_commitment_priority = "random"
 # Max critical task retries on recoverable failures.
 #
 # The broker service has a number of subtasks. Some are considered critical. If a task fails, it
@@ -54,6 +78,10 @@ max_critical_task_retries = 10
 #
 # If enabled, all requests from clients not in the allow list are skipped.
 #allow_client_addresses = []
+# Optional deny list for requestor address.
+#
+# If enabled, all requests from clients in the deny list are skipped.
+#deny_requestor_addresses = []
 # lockRequest priority gas
 #
 # Optional additional gas to add to the transaction for lockinRequest, good
@@ -97,8 +125,6 @@ stake_balance_error_threshold = "5"
 #groth16_verify_gas_estimate = 250000
 
 [prover]
-# Optional config, if using bonsai set the zkVM version here
-bonsai_r0_zkvm_ver = "2.0.0"
 # Number of retries to poll for proving status.
 #
 # Provides a little durability for transient failures.
@@ -124,9 +150,20 @@ proof_retry_sleep_ms = 500
 #
 # When using a durable deploy, set this to the published current SOT guest
 # program path on the system
-#set_builder_guest_path = "./target/riscv-guest/riscv32im-risc0-zkvm-elf/release/set-builder-guest"
+#set_builder_guest_path = "./target/riscv-guest/guest-set-builder/set-builder/riscv32im-risc0-zkvm-elf/release/set-builder.bin"
 # Assessor ELF path
-#assessor_set_guest_path = "./target/riscv-guest/riscv32im-risc0-zkvm-elf/release/assessor-guest"
+#assessor_set_guest_path = "./target/riscv-guest/guest-assessor/assessor-guest/riscv32im-risc0-zkvm-elf/release/assessor-guest.bin"
+# Interval for checking expired committed orders (in seconds)
+#
+# This is the interval at which the ReaperTask will check for expired orders and mark them as failed.
+# If not set, it defaults to 60 seconds.
+#reaper_interval_secs = 60
+# Grace period before marking expired orders as failed (in seconds)
+#
+# This provides a buffer time after an order expires before the reaper marks it as failed.
+# This helps prevent race conditions with the aggregator that might be processing the order.
+# If not set, it defaults to 10800 seconds (3 hours).
+# reaper_grace_period_secs = 10800
 
 [batcher]
 # Max batch duration before publishing (in seconds)
@@ -137,7 +174,7 @@ min_batch_size = 1
 #
 # Number of seconds before the lowest block deadline in the order batch
 # to flush the batch. This should be approximately snark_proving_time * 2
-block_deadline_buffer_secs = 120
+block_deadline_buffer_secs = 180
 # Timeout, in seconds for transaction confirmations
 txn_timeout = 45
 # Use the single TXN submission that batches submit_merkle / fulfill_batch into
@@ -158,3 +195,7 @@ withdraw = false
 #batch_max_fees = "0.1"
 # Number of attempts to make to submit a batch before abandoning
 #max_submission_attempts = 2
+
+# Optional config, only needed if using bonsai to set the zkVM version header. Not necessary when
+# using Bento as the prover.
+# bonsai_r0_zkvm_ver = "2.3.0"

@@ -20,7 +20,12 @@ deployment_secrets.toml
 # Except for the templates and running network env files
 !.env.broker-template
 !.env.localnet-template
-!.env.testnet
+!.env.eth-sepolia
+!.env.base-sepolia
+!.env.base
+
+# Ignore broker config file(s)
+*broker*.toml
 
 # Cargo
 target/
@@ -29,6 +34,10 @@ target/
 .DS_Store
 .idea
 .aider*
+.claude
+CLAUDE.md
+.cursor
+
 
 # Ignore generated files
 contracts/src/SetBuilderImageID.sol

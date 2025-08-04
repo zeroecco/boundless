@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{str::FromStr, time::Duration};
 
@@ -104,7 +114,7 @@ async fn run(args: Args) -> Result<()> {
     let request = client.build_request(request).await?;
     let signature: Bytes = request.abi_encode().into();
     let (request_id, expires_at) =
-        client.submit_request_onchain_with_signature(&request, &signature).await?;
+        client.submit_request_onchain_with_signature(&request, signature).await?;
     tracing::info!("Request {:x} submitted", request_id);
 
     // Wait for the request to be fulfilled by the market. The market will return the journal and seal.
@@ -243,7 +253,7 @@ mod tests {
             },
 
             _ = tokio::time::sleep(Duration::from_secs(TIMEOUT_SECS)) => {
-                panic!("The run function did not complete within {} seconds", TIMEOUT_SECS)
+                panic!("The run function did not complete within {TIMEOUT_SECS} seconds")
             }
         }
 

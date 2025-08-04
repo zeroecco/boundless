@@ -1,6 +1,16 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::future::Future;
 
@@ -10,6 +20,7 @@ use bonsai_sdk::{
     SdkErr,
 };
 use risc0_zkvm::Receipt;
+use sqlx::{self, Postgres, Transaction};
 
 use super::{ExecutorResp, ProofResult, Prover, ProverError};
 use crate::{config::ProverConf, futures_retry::retry_only};
@@ -18,18 +29,25 @@ use crate::{
     futures_retry::retry,
 };
 
+#[derive(Debug, Clone, Copy)]
+enum ProverType {
+    Bonsai,
+    Bento,
+}
+
 pub struct Bonsai {
     client: BonsaiClient,
     req_retry_sleep_ms: u64,
     req_retry_count: u64,
     status_poll_ms: u64,
     status_poll_retry_count: u64,
+    prover_type: ProverType,
 }
 
 impl Bonsai {
     pub fn new(config: ConfigLock, api_url: &str, api_key: &str) -> Result<Self, ProverError> {
         let (
-            risc0_ver,
+            bonsai_r0_zkvm_ver,
             req_retry_count,
             req_retry_sleep_ms,
             status_poll_ms,
@@ -37,12 +55,19 @@ impl Bonsai {
         ) = {
             let config = config.lock_all().unwrap();
             (
-                config.prover.bonsai_r0_zkvm_ver.as_ref().ok_or(ConfigErr::InvalidConfig)?.clone(),
+                config.prover.bonsai_r0_zkvm_ver.clone(),
                 config.prover.req_retry_count,
                 config.prover.req_retry_sleep_ms,
                 config.prover.status_poll_ms,
                 config.prover.status_poll_retry_count,
             )
+        };
+
+        let prover_type = if api_key.is_empty() { ProverType::Bento } else { ProverType::Bonsai };
+
+        let risc0_ver = match prover_type {
+            ProverType::Bento => risc0_zkvm::VERSION.to_string(),
+            ProverType::Bonsai => bonsai_r0_zkvm_ver.ok_or(ConfigErr::InvalidConfig)?,
         };
 
         Ok(Self {
@@ -51,6 +76,7 @@ impl Bonsai {
             req_retry_count,
             status_poll_ms,
             status_poll_retry_count,
+            prover_type,
         })
     }
 
@@ -95,10 +121,10 @@ impl Bonsai {
                     let receipt_buf = client.download(&output).await?;
                     return Ok(bincode::deserialize(&receipt_buf)?);
                 }
-                _ => {
+                status_code => {
                     let err_msg = status.error_msg.unwrap_or_default();
                     return Err(ProverError::ProvingFailed(format!(
-                        "snark proving failed: {err_msg}"
+                        "snark proving failed with status {status_code}: {err_msg}"
                     )));
                 }
             }
@@ -181,7 +207,7 @@ impl StatusPoller {
                         return Err(ProverError::MissingStatus);
                     };
                     tracing::trace!(
-                        "Proof {proof_id:?} succeeded with user cycles: {} and total cycles: {}",
+                        "Session {proof_id:?} succeeded with user cycles: {} and total cycles: {}",
                         stats.cycles,
                         stats.total_cycles
                     );
@@ -236,13 +262,13 @@ impl StatusPoller {
                     continue;
                 }
                 "SUCCEEDED" => return Ok(proof_id.uuid.clone()),
-                _ => {
+                status_code => {
                     let err_msg = status.error_msg.unwrap_or_default();
                     if err_msg.contains("INTERNAL_ERROR") {
                         return Err(ProverError::ProverInternalError(err_msg.clone()));
                     }
                     return Err(ProverError::ProvingFailed(format!(
-                        "snark proving failed: {err_msg}"
+                        "snark proving failed with status {status_code}: {err_msg}"
                     )));
                 }
             }
@@ -278,9 +304,12 @@ impl Prover for Bonsai {
         input_id: &str,
         assumptions: Vec<String>,
         executor_limit: Option<u64>,
+        order_id: &str,
     ) -> Result<ProofResult, ProverError> {
         self.retry_only(
             || async {
+                // Convert cycles to Mi-cycles (1024*1024) for Bonsai API
+                let bonsai_limit = executor_limit.map(|cycles| cycles.div_ceil(1024 * 1024));
                 let preflight_id: SessionId = self
                     .retry(
                         || async {
@@ -291,7 +320,7 @@ impl Prover for Bonsai {
                                     input_id.into(),
                                     assumptions.clone(),
                                     true,
-                                    executor_limit,
+                                    bonsai_limit,
                                 )
                                 .await?)
                         },
@@ -299,6 +328,9 @@ impl Prover for Bonsai {
                     )
                     .await?;
 
+                tracing::debug!(
+                    "Created session for preflight: {preflight_id:?} for order id {order_id:?} with image id {image_id} and input id {input_id}"
+                );
                 let poller = StatusPoller {
                     poll_sleep_ms: self.status_poll_ms,
                     retry_counts: self.status_poll_retry_count,
@@ -337,10 +369,12 @@ impl Prover for Bonsai {
         assumptions: Vec<String>,
     ) -> Result<ProofResult, ProverError> {
         let proof_id = self.prove_stark(image_id, input_id, assumptions).await?;
+        tracing::debug!("Created session for prove stark: {proof_id}");
         self.wait_for_stark(&proof_id).await
     }
 
     async fn wait_for_stark(&self, proof_id: &str) -> Result<ProofResult, ProverError> {
+        tracing::debug!("Waiting for stark proof {} to complete", proof_id);
         let proof_id = SessionId::new(proof_id.into());
 
         let poller = StatusPoller {
@@ -349,6 +383,85 @@ impl Prover for Bonsai {
         };
 
         poller.poll_with_retries_session_id(&proof_id, &self.client).await
+    }
+
+    async fn cancel_stark(&self, proof_id: &str) -> Result<(), ProverError> {
+        // TODO this is a temporary workaround to cancel a job in Bento. This should be implemented
+        // and migrated to use just the Bonsai API in future versions.
+        match self.prover_type {
+            ProverType::Bonsai => {
+                tracing::debug!("Cancelling Bonsai stark session {}", proof_id);
+                let session_id = SessionId::new(proof_id.into());
+                session_id.stop(&self.client).await?;
+                Ok(())
+            }
+            ProverType::Bento => {
+                tracing::debug!("Cancelling Bento job {}", proof_id);
+                // Create postgres connection for Bento cancellation
+                match create_pg_pool().await {
+                    Ok(pool) => {
+                        let mut tx: Transaction<'_, Postgres> = match pool.begin().await {
+                            Ok(tx) => tx,
+                            Err(e) => {
+                                tracing::error!("Failed to begin transaction: {}", e);
+                                return Err(ProverError::ProvingFailed(format!(
+                                    "Failed to begin transaction: {e}"
+                                )));
+                            }
+                        };
+                        if let Err(e) =
+                            sqlx::query("UPDATE jobs SET state = 'failed' WHERE id = $1::uuid")
+                                .bind(proof_id)
+                                .execute(&mut *tx)
+                                .await
+                        {
+                            tracing::error!("Failed to update job state: {}", e);
+                            return Err(ProverError::ProvingFailed(format!(
+                                "Failed to update job: {e}"
+                            )));
+                        }
+
+                        if let Err(e) = sqlx::query("DELETE FROM task_deps WHERE job_id = $1::uuid")
+                            .bind(proof_id)
+                            .execute(&mut *tx)
+                            .await
+                        {
+                            tracing::error!("Failed to delete task dependencies: {}", e);
+                            return Err(ProverError::ProvingFailed(format!(
+                                "Failed to delete task deps: {e}"
+                            )));
+                        }
+
+                        if let Err(e) = sqlx::query("DELETE FROM tasks WHERE job_id = $1::uuid")
+                            .bind(proof_id)
+                            .execute(&mut *tx)
+                            .await
+                        {
+                            tracing::error!("Failed to delete tasks: {}", e);
+                            return Err(ProverError::ProvingFailed(format!(
+                                "Failed to delete tasks: {e}"
+                            )));
+                        }
+
+                        if let Err(e) = tx.commit().await {
+                            tracing::error!("Failed to commit transaction: {}", e);
+                            return Err(ProverError::ProvingFailed(format!(
+                                "Failed to commit transaction: {e}"
+                            )));
+                        }
+
+                        tracing::info!("Successfully cancelled Bento job {}", proof_id);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to connect to PostgreSQL: {}", e);
+                        Err(ProverError::ProvingFailed(format!(
+                            "Failed to connect to postgres: {e}"
+                        )))
+                    }
+                }
+            }
+        }
     }
 
     async fn get_receipt(&self, proof_id: &str) -> Result<Option<Receipt>, ProverError> {
@@ -410,4 +523,21 @@ impl Prover for Bonsai {
 
         Ok(Some(receipt_buf))
     }
+}
+
+async fn create_pg_pool() -> Result<sqlx::PgPool, sqlx::Error> {
+    let user = std::env::var("POSTGRES_USER").unwrap_or_else(|_| "worker".to_string());
+    let password = std::env::var("POSTGRES_PASSWORD").unwrap_or_else(|_| "password".to_string());
+    let db = std::env::var("POSTGRES_DB").unwrap_or_else(|_| "taskdb".to_string());
+    let host = match std::env::var("POSTGRES_HOST").unwrap_or_else(|_| "postgres".to_string()) {
+        host if host != "postgres" => host,
+        // Use local connection for postgres, as "postgres" not compatible with docker
+        _ => "127.0.0.1".to_string(),
+    };
+
+    let port = std::env::var("POSTGRES_PORT").unwrap_or_else(|_| "5432".to_string());
+
+    let connection_string = format!("postgres://{user}:{password}@{host}:{port}/{db}");
+
+    sqlx::PgPool::connect(&connection_string).await
 }

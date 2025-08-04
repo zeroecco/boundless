@@ -1,16 +1,7 @@
 // Copyright 2025 RISC Zero, Inc.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Use of this source code is governed by the Business Source License
+// as found in the LICENSE-BSL file.
 
 //! Assessor is a guest that verifies the fulfillment of a request.
 
@@ -142,7 +133,7 @@ pub fn process_tree(values: Vec<Digest>) -> Digest {
     let mut n = values.len();
     let mut leaves = values.clone();
     while n > 1 {
-        let next_level_length = (n + 1) / 2;
+        let next_level_length = n.div_ceil(2);
         for i in 0..(n / 2) {
             leaves[i] = commutative_keccak256(&leaves[2 * i], &leaves[2 * i + 1]);
         }

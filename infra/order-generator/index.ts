@@ -25,7 +25,7 @@ export = () => {
   const dockerRemoteBuilder = isDev ? process.env.DOCKER_REMOTE_BUILDER : undefined;
   const setVerifierAddr = baseConfig.require('SET_VERIFIER_ADDR');
   const boundlessMarketAddr = baseConfig.require('BOUNDLESS_MARKET_ADDR');
-  const pinataGateway = baseConfig.require('PINATA_GATEWAY_URL');
+  const ipfsGateway = baseConfig.require('IPFS_GATEWAY_URL');
   const baseStackName = baseConfig.require('BASE_STACK');
   const baseStack = new pulumi.StackReference(baseStackName);
   const vpcId = baseStack.getOutput('VPC_ID') as pulumi.Output<string>;
@@ -117,6 +117,7 @@ export = () => {
   const offchainLockTimeout = offchainConfig.get('LOCK_TIMEOUT');
   const offchainTimeout = offchainConfig.get('TIMEOUT');
   const offchainSecondsPerMCycle = offchainConfig.get('SECONDS_PER_MCYCLE');
+  const offchainInterval = offchainConfig.get('INTERVAL');
   new OrderGenerator('offchain', {
     chainId,
     stackName,
@@ -133,8 +134,8 @@ export = () => {
     logLevel,
     setVerifierAddr,
     boundlessMarketAddr,
-    pinataGateway,
-    interval,
+    ipfsGateway,
+    interval: offchainInterval ?? interval,
     lockStakeRaw,
     minPricePerMCycle,
     maxPricePerMCycle,
@@ -158,6 +159,7 @@ export = () => {
   const onchainLockTimeout = onchainConfig.get('LOCK_TIMEOUT');
   const onchainTimeout = onchainConfig.get('TIMEOUT');
   const onchainSecondsPerMCycle = onchainConfig.get('SECONDS_PER_MCYCLE');
+  const onchainInterval = onchainConfig.get('INTERVAL');
   new OrderGenerator('onchain', {
     chainId,
     stackName,
@@ -170,8 +172,8 @@ export = () => {
     logLevel,
     setVerifierAddr,
     boundlessMarketAddr,
-    pinataGateway,
-    interval,
+    ipfsGateway,
+    interval: onchainInterval ?? interval,
     lockStakeRaw,
     rampUp: onchainRampUp,
     inputMaxMCycles: onchainInputMaxMCycles,

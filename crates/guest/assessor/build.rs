@@ -1,6 +1,7 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Use of this source code is governed by the Business Source License
+// as found in the LICENSE-BSL file.
 
 use std::{collections::HashMap, env, path::PathBuf};
 
@@ -36,6 +37,6 @@ fn main() {
         .with_elf_sol_path(SOLIDITY_ELF_PATH);
 
     if let Err(e) = generate_solidity_files(guests.as_slice(), &solidity_opts) {
-        println!("cargo:warning=Failed to generate Solidity files: {}", e);
+        println!("cargo:warning=Failed to generate Solidity files: {e}");
     };
 }

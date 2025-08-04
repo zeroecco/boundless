@@ -1,6 +1,7 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Use of this source code is governed by the Business Source License
+// as found in the LICENSE-BSL file.
 
 pragma solidity ^0.8.20;
 
@@ -55,8 +56,10 @@ contract RequestLockTest is Test {
         );
         assertEq(requestLock.price, 0, "Price not zeroed out");
         assertEq(requestLock.stake, 0, "Stake not zeroed out");
+        // Request digest is needed for multiple proofs being delivered for a single request,
+        // and partial fulfillment use cases.
+        assertTrue(requestLock.requestDigest != bytes32(0), "Request digest should not be zero");
         assertSlot1Clear();
-        assertSlot2Clear();
     }
 
     function testSetProverPaidAfterLockDeadline() public {
@@ -74,7 +77,9 @@ contract RequestLockTest is Test {
         assertEq(requestLock.price, 0, "Price not zeroed out");
         assertEq(requestLock.stake, 0, "Stake not zeroed out");
         assertSlot1Clear();
-        assertSlot2Clear();
+        // Request digest is needed for multiple proofs being delivered for a single request,
+        // and partial fulfillment use cases.
+        assertTrue(requestLock.requestDigest != bytes32(0), "Request digest should not be zero");
     }
 
     function testIsProverPaidBeforeLockDeadline() public {

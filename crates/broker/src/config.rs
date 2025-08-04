@@ -1,8 +1,19 @@
-// Copyright (c) 2025 RISC Zero, Inc.
+// Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -46,10 +57,62 @@ mod defaults {
         250_000
     }
 
+    pub const fn additional_proof_cycles() -> u64 {
+        // 2 mcycles for assessor + 270k cycles for set builder by default
+        2_000_000 + 270_000
+    }
+
     pub const fn max_submission_attempts() -> u32 {
         2
     }
+
+    pub const fn reaper_interval_secs() -> u32 {
+        60
+    }
+
+    pub const fn reaper_grace_period_secs() -> u32 {
+        10800
+    }
+
+    pub const fn max_concurrent_preflights() -> u32 {
+        4
+    }
 }
+
+/// Order pricing priority mode for determining which orders to price first
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderPricingPriority {
+    /// Process orders in random order to distribute competition among provers
+    Random,
+    /// Process orders in the order they were observed (FIFO)
+    ObservationTime,
+    /// Process orders by shortest expiry first (earliest deadline)
+    ShortestExpiry,
+}
+
+impl Default for OrderPricingPriority {
+    fn default() -> Self {
+        Self::Random
+    }
+}
+
+/// Order commitment priority mode for determining which orders to commit to first
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderCommitmentPriority {
+    /// Process orders in random order to distribute competition among provers
+    Random,
+    /// Process orders by shortest expiry first (lock expiry for lock-and-fulfill orders, request expiry for others)
+    ShortestExpiry,
+}
+
+impl Default for OrderCommitmentPriority {
+    fn default() -> Self {
+        Self::Random
+    }
+}
+
 /// All configuration related to markets mechanics
 #[derive(Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -74,6 +137,11 @@ pub struct MarketConf {
     ///
     /// Orders over this max_cycles will be skipped after preflight
     pub max_mcycle_limit: Option<u64>,
+    /// Optional priority requestor addresses that can bypass the mcycle limit and max input size limit.
+    ///
+    /// If enabled, the order will be preflighted without constraints.
+    #[serde(alias = "priority_requestor_addresses")]
+    pub priority_requestor_addresses: Option<Vec<Address>>,
     /// Max journal size in bytes
     ///
     /// Orders that produce a journal larger than this size in preflight will be skipped. Since journals
@@ -101,6 +169,10 @@ pub struct MarketConf {
     ///
     /// If enabled, all requests from clients not in the allow list are skipped.
     pub allow_client_addresses: Option<Vec<Address>>,
+    /// Optional deny list for requestor address.
+    ///
+    /// If enabled, all requests from clients in the deny list are skipped.
+    pub deny_requestor_addresses: Option<HashSet<Address>>,
     /// lockRequest priority gas
     ///
     /// Optional additional gas to add to the transaction for lockinRequest, good
@@ -129,6 +201,11 @@ pub struct MarketConf {
     /// conservative default will be used.
     #[serde(default = "defaults::groth16_verify_gas_estimate")]
     pub groth16_verify_gas_estimate: u64,
+    /// Additional cycles to be proven for each order.
+    ///
+    /// This is currently the sum of the cycles for the assessor and set builder.
+    #[serde(default = "defaults::additional_proof_cycles")]
+    pub additional_proof_cycles: u64,
     /// Optional balance warning threshold (in native token)
     ///
     /// If the submitter balance drops below this the broker will issue warning logs
@@ -154,6 +231,26 @@ pub struct MarketConf {
     ///
     /// If not set, files will be re-downloaded every time
     pub cache_dir: Option<PathBuf>,
+    /// Maximum number of orders to concurrently work on pricing
+    ///
+    /// Used to limit pricing tasks spawned to prevent overwhelming the system
+    #[serde(default = "defaults::max_concurrent_preflights")]
+    pub max_concurrent_preflights: u32,
+    /// Order pricing priority mode
+    ///
+    /// Determines how orders are prioritized for pricing. Options:
+    /// - "random": Process orders in random order to distribute competition among provers (default)
+    /// - "observation_time": Process orders in the order they were observed (FIFO)
+    /// - "shortest_expiry": Process orders by shortest expiry first (earliest deadline)
+    #[serde(default)]
+    pub order_pricing_priority: OrderPricingPriority,
+    /// Order commitment priority mode
+    ///
+    /// Determines how orders are prioritized when committing to prove them. Options:
+    /// - "random": Process orders in random order to distribute competition among provers (default)
+    /// - "shortest_expiry": Process orders by shortest expiry first (lock expiry for lock-and-fulfill orders, request expiry for others)
+    #[serde(default, alias = "expired_order_fulfillment_priority")]
+    pub order_commitment_priority: OrderCommitmentPriority,
 }
 
 impl Default for MarketConf {
@@ -165,24 +262,30 @@ impl Default for MarketConf {
             mcycle_price_stake_token: "0.001".to_string(),
             assumption_price: None,
             max_mcycle_limit: None,
+            priority_requestor_addresses: None,
             max_journal_bytes: defaults::max_journal_bytes(), // 10 KB
             peak_prove_khz: None,
             min_deadline: 120, // 2 mins
             lookback_blocks: 100,
             max_stake: "0.1".to_string(),
             allow_client_addresses: None,
+            deny_requestor_addresses: None,
             lockin_priority_gas: None,
             max_file_size: 50_000_000,
             max_fetch_retries: Some(2),
             lockin_gas_estimate: defaults::lockin_gas_estimate(),
             fulfill_gas_estimate: defaults::fulfill_gas_estimate(),
             groth16_verify_gas_estimate: defaults::groth16_verify_gas_estimate(),
+            additional_proof_cycles: defaults::additional_proof_cycles(),
             balance_warn_threshold: None,
             balance_error_threshold: None,
             stake_balance_warn_threshold: None,
             stake_balance_error_threshold: None,
             max_concurrent_proofs: None,
             cache_dir: None,
+            max_concurrent_preflights: defaults::max_concurrent_preflights(),
+            order_pricing_priority: OrderPricingPriority::default(),
+            order_commitment_priority: OrderCommitmentPriority::default(),
         }
     }
 }
@@ -226,6 +329,19 @@ pub struct ProverConf {
     /// will be retried, but after this number of retries, the process will exit.
     /// None indicates there are infinite number of retries.
     pub max_critical_task_retries: Option<u32>,
+    /// Interval for checking expired committed orders (in seconds)
+    ///
+    /// This is the interval at which the ReaperTask will check for expired orders and mark them as failed.
+    /// If not set, it defaults to 60 seconds.
+    #[serde(default = "defaults::reaper_interval_secs")]
+    pub reaper_interval_secs: u32,
+    /// Grace period before marking expired orders as failed (in seconds)
+    ///
+    /// This provides a buffer time after an order expires before the reaper marks it as failed.
+    /// This helps prevent race conditions with the aggregator that might be processing the order.
+    /// If not set, it defaults to 30 seconds.
+    #[serde(default = "defaults::reaper_grace_period_secs")]
+    pub reaper_grace_period_secs: u32,
 }
 
 impl Default for ProverConf {
@@ -241,6 +357,8 @@ impl Default for ProverConf {
             set_builder_guest_path: None,
             assessor_set_guest_path: None,
             max_critical_task_retries: None,
+            reaper_interval_secs: defaults::reaper_interval_secs(),
+            reaper_grace_period_secs: defaults::reaper_grace_period_secs(),
         }
     }
 }
@@ -315,8 +433,10 @@ pub struct Config {
 impl Config {
     /// Load the config from disk
     pub async fn load(path: &Path) -> Result<Self> {
-        let data = fs::read_to_string(path).await.context("Failed to read config file")?;
-        toml::from_str(&data).context("Failed to parse toml file")
+        let data = fs::read_to_string(path)
+            .await
+            .context(format!("Failed to read config file from {path:?}"))?;
+        toml::from_str(&data).context(format!("Failed to parse toml file from {path:?}"))
     }
 
     /// Write the config to disk
@@ -507,6 +627,7 @@ max_stake = "0.1"
 max_file_size = 50_000_000
 max_fetch_retries = 10
 allow_client_addresses = ["0x0000000000000000000000000000000000000000"]
+deny_requestor_addresses = ["0x0000000000000000000000000000000000000000"]
 lockin_priority_gas = 100
 max_mcycle_limit = 10
 
@@ -611,6 +732,10 @@ error = ?"#;
             assert_eq!(config.market.min_deadline, 300);
             assert_eq!(config.market.lookback_blocks, 100);
             assert_eq!(config.market.allow_client_addresses, Some(vec![Address::ZERO]));
+            assert_eq!(
+                config.market.deny_requestor_addresses,
+                Some([Address::ZERO].into_iter().collect())
+            );
             assert_eq!(config.market.lockin_priority_gas, Some(100));
             assert_eq!(config.market.max_fetch_retries, Some(10));
             assert_eq!(config.market.max_mcycle_limit, Some(10));
