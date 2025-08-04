@@ -28,6 +28,9 @@ struct Fulfillment {
     /// @notice Cryptographic proof for the validity of the execution results.
     /// @dev This will be sent to the `IRiscZeroVerifier` associated with this contract.
     bytes seal;
+    /// @notice Flag to indicate that the imageID is a claim digest.
+    /// @dev If true, the imageId is a claim digest instead of an image ID.
+    bool isClaimDigest;
 }
 
 library FulfillmentLibrary {}

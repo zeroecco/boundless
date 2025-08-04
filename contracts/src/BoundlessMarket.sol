@@ -255,8 +255,10 @@ contract BoundlessMarket is
         // Verify the application receipts.
         for (uint256 i = 0; i < fills.length; i++) {
             Fulfillment calldata fill = fills[i];
-
-            bytes32 claimDigest = ReceiptClaimLib.ok(fill.imageId, sha256(fill.journal)).digest();
+            bytes32 claimDigest = fill.imageId;
+            if (!fill.isClaimDigest) {
+                claimDigest = ReceiptClaimLib.ok(fill.imageId, sha256(fill.journal)).digest();
+            }
             leaves[i] = AssessorCommitment(i, fill.id, fill.requestDigest, claimDigest).eip712Digest();
 
             // If the requestor did not specify a selector, we verify with DEFAULT_MAX_GAS_FOR_VERIFY gas limit.
