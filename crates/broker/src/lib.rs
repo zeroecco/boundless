@@ -752,28 +752,31 @@ where
         }
 
         // Construct the prover object interface
-        let prover: provers::ProverObj = if is_dev_mode() {
-            tracing::warn!("WARNING: Running the Broker in dev mode does not generate valid receipts. \
-            Receipts generated from this process are invalid and should never be used in production.");
-            Arc::new(provers::DefaultProver::new())
-        } else if let (Some(bonsai_api_key), Some(bonsai_api_url)) =
-            (self.args.bonsai_api_key.as_ref(), self.args.bonsai_api_url.as_ref())
-        {
-            tracing::info!("Configured to run with Bonsai backend");
-            Arc::new(
-                provers::Bonsai::new(config.clone(), bonsai_api_url.as_ref(), bonsai_api_key)
-                    .context("Failed to construct Bonsai client")?,
-            )
-        } else if let Some(bento_api_url) = self.args.bento_api_url.as_ref() {
-            tracing::info!("Configured to run with Bento backend");
+        // let prover: provers::ProverObj = if is_dev_mode() {
+        //     tracing::warn!("WARNING: Running the Broker in dev mode does not generate valid receipts. \
+        //     Receipts generated from this process are invalid and should never be used in production.");
+        //     Arc::new(provers::DefaultProver::new())
+        // } else if let (Some(bonsai_api_key), Some(bonsai_api_url)) =
+        //     (self.args.bonsai_api_key.as_ref(), self.args.bonsai_api_url.as_ref())
+        // {
+        //     tracing::info!("Configured to run with Bonsai backend");
+        //     Arc::new(
+        //         provers::Bonsai::new(config.clone(), bonsai_api_url.as_ref(), bonsai_api_key)
+        //             .context("Failed to construct Bonsai client")?,
+        //     )
+        // } else if let Some(bento_api_url) = self.args.bento_api_url.as_ref() {
+        //     tracing::info!("Configured to run with Bento backend");
 
-            Arc::new(
-                provers::Bonsai::new(config.clone(), bento_api_url.as_ref(), "")
-                    .context("Failed to initialize Bento client")?,
-            )
-        } else {
-            Arc::new(provers::DefaultProver::new())
-        };
+        //     Arc::new(
+        //         provers::Bonsai::new(config.clone(), bento_api_url.as_ref(), "")
+        //             .context("Failed to initialize Bento client")?,
+        //     )
+        // } else {
+        //     tracing::warn!("LOCAL PROBVER!!");
+        //     Arc::new(provers::DefaultProver::new())
+        // };
+
+        let prover: provers::ProverObj = Arc::new(provers::DefaultProver::new());
 
         let (pricing_tx, pricing_rx) = mpsc::channel(PRICING_CHANNEL_CAPACITY);
 

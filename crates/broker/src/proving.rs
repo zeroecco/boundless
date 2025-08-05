@@ -101,6 +101,7 @@ impl ProvingService {
             .await
             .context("Monitoring proof (stark) failed")?;
 
+        tracing::info!("is_groth16: {is_groth16}, snark_proof_id: {snark_proof_id:?}");
         if is_groth16 && snark_proof_id.is_none() {
             let compressed_proof_id =
                 self.prover.compress(stark_proof_id).await.context("Failed to compress proof")?;

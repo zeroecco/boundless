@@ -345,6 +345,7 @@ impl Prover for DefaultProver {
     }
 
     async fn compress(&self, proof_id: &str) -> Result<String, ProverError> {
+        tracing::info!("Compressing proof Groth16 {proof_id}");
         let receipt = self
             .get_receipt(proof_id)
             .await?
