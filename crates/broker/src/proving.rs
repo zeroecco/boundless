@@ -341,8 +341,9 @@ impl ProvingService {
             }
             Err(err) => {
                 tracing::error!(
-                    "Order {} failed to prove after {} retries: {err:?}",
+                    "Order {} with job id {} failed to prove after {} retries: {err:?}",
                     order_id,
+                    order.proof_id.as_deref().unwrap_or("<invalid>"),
                     proof_retry_count
                 );
 
@@ -510,6 +511,7 @@ mod tests {
             chain_id: 1,
             total_cycles: None,
             proving_started_at: None,
+            cached_id: Default::default(),
         }
     }
 
@@ -663,6 +665,7 @@ mod tests {
             chain_id: 1,
             total_cycles: None,
             proving_started_at: None,
+            cached_id: Default::default(),
         };
         db.add_order(&order).await.unwrap();
 
