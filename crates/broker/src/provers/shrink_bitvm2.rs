@@ -44,7 +44,7 @@ pub(crate) async fn prove_and_verify(
     Ok(final_receipt)
 }
 
-fn calculate_output_prefix(control_id: &Digest, method_id: &[u8]) -> [u8; 32] {
+fn calculate_output_prefix(control_id: &Digest, image_id: &[u8]) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
 
     let verifier_params = risc0_zkvm::SuccinctReceiptVerifierParameters::default();
@@ -53,7 +53,7 @@ fn calculate_output_prefix(control_id: &Digest, method_id: &[u8]) -> [u8; 32] {
     for byte in &mut control_root_bytes {
         *byte = byte.reverse_bits();
     }
-    let pre_state_bytes = method_id.to_vec();
+    let pre_state_bytes = image_id.to_vec();
     let control_id_bytes = control_id.as_bytes();
 
     // Expected post state for an execution that halted successfully
@@ -72,17 +72,21 @@ fn calculate_output_prefix(control_id: &Digest, method_id: &[u8]) -> [u8; 32] {
 fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u8]) -> Result<()> {
     let control_id = BN254_IDENTITY_CONTROL_ID;
 
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&calculate_output_prefix(&control_id, image_id.as_bytes()));
-    hasher.update(&final_receipt.journal.bytes);
-    let expected_output = hasher.finalize();
+    let expected_output_bytes =
+        compute_output_bytes(&control_id, &image_id, &final_receipt.journal.bytes);
 
-    let expected_output_bytes: [u8; 32] = expected_output.into();
     let expected_output_bytes: [u8; 31] = expected_output_bytes[..31].try_into()?;
 
     ensure!(expected_output_bytes == output_bytes, "check output: public output mismatch");
 
     Ok(())
+}
+
+fn compute_output_bytes(control_id: &Digest, image_id: &Digest, journal_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&calculate_output_prefix(control_id, image_id.as_bytes()));
+    hasher.update(journal_bytes);
+    hasher.finalize().into()
 }
 
 async fn decode_output(public_path: &Path) -> Result<Vec<u8>> {
@@ -399,18 +403,17 @@ mod tests {
     use crate::provers::{DefaultProver, ProofResult, Prover};
 
     use super::*;
+    use ark_ff::PrimeField;
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
     use risc0_zkvm::sha::Digest;
     use tempfile::tempdir;
-
     #[test_log::test(tokio::test)]
     async fn test_shrink() {
         let work_dir = tempdir().expect("Failed to create temp dir");
-        let proof_path = work_dir.path().join("proof.json");
         let prover = DefaultProver::new();
 
         // Upload test data
-        let input_data = [255u8; 50].to_vec(); // Example input data
+        let input_data = [255u8; 32].to_vec(); // Example input data
         let input_id = prover.upload_input(input_data.clone()).await.unwrap();
         let image_id = Digest::from(ECHO_ID);
         prover.upload_image(&image_id.to_string(), ECHO_ELF.to_vec()).await.unwrap();
@@ -418,30 +421,40 @@ mod tests {
         // Run SNARK proving
         let ProofResult { id: stark_id, .. } =
             prover.prove_and_monitor_stark(&image_id.to_string(), &input_id, vec![]).await.unwrap();
+
         let snark_id =
             prover.shrink_bitvm2(&stark_id, Some(work_dir.path().to_path_buf())).await.unwrap();
 
         // Fetch the compressed receipt
         let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
-        let receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
+        let shrink_receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
 
-        // verify_proof(&receipt, &input_data).unwrap();
-        // let public_input_scalar = risc0_groth16::PublicInputsJson {
-        //     values: vec![ark_bn254::Fr::from_be_bytes_mod_order(&input_data).to_string()],
-        // }
-        // .to_scalar()
-        // .unwrap();
-        // println!("R0 Verify Start");
+        let stark_receipt = prover.get_receipt(&stark_id).await.unwrap().unwrap();
 
-        // // let proof_content = tokio::fs::read_to_string(proof_path).await.unwrap();
-        // // let proof_json: Groth16ProofJson = serde_json::from_str(&proof_content).unwrap();
-        // // let seal = proof_json.try_into().unwrap();
-        // let seal = Seal::from_vec(&receipt.inner.groth16().unwrap().seal)
-        //     .expect("Failed to create seal from receipt");
-        // let verifying_key = get_r0_verifying_key();
+        let groth16_receipt = shrink_receipt.inner.groth16().unwrap();
+        let groth16_seal = Groth16Seal::from_vec(&groth16_receipt.seal)
+            .expect("Failed to create Groth16 seal from receipt");
 
-        // let v = risc0_groth16::Verifier::new(&seal, &public_input_scalar, &verifying_key).unwrap();
-        // println!("R0 Verify result: {:?}", v.verify().is_ok());
-        // assert!(v.verify().is_ok(), "R0 verification failed");
+        let final_output_bytes = compute_output_bytes(
+            &BN254_IDENTITY_CONTROL_ID,
+            &image_id,
+            &stark_receipt.journal.bytes,
+        );
+        let final_output_trimmed: [u8; 31] = final_output_bytes[..31].try_into().unwrap();
+        let public_input_scalar = ark_bn254::Fr::from_be_bytes_mod_order(&final_output_trimmed);
+
+        let public_input_scalar_str = public_input_scalar.to_string();
+        let public_input_scalar =
+            risc0_groth16::PublicInputsJson { values: vec![public_input_scalar_str] }
+                .to_scalar()
+                .unwrap();
+        println!("R0 Verify Start");
+
+        let verifying_key = get_r0_verifying_key();
+
+        let v = risc0_groth16::Verifier::new(&groth16_seal, &public_input_scalar, &verifying_key)
+            .unwrap();
+        println!("R0 Verify result: {:?}", v.verify().is_ok());
+        assert!(v.verify().is_ok(), "R0 verification failed");
     }
 }
