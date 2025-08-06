@@ -330,7 +330,7 @@ async fn reject_invalid_steel_commitment() -> anyhow::Result<()> {
     let err = result.unwrap_err();
     println!("Contract correctly rejected invalid Steel commitment: {err}");
     // Check for InvalidSteelCommitment error selector 0x36ce79a0
-    assert!(err.to_string().contains("0x36ce79a0"));
+    assert!(err.to_string().contains("0xa7e6de3e"));
 
     Ok(())
 }
