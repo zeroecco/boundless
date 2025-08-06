@@ -2704,6 +2704,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "boundless-sdk"
+version = "0.14.0"
+dependencies = [
+ "alloy",
+ "alloy-chains",
+ "alloy-primitives 1.2.1",
+ "anyhow",
+ "boundless-market",
+ "boundless-market-test-utils",
+ "bytemuck",
+ "clap",
+ "derive_builder",
+ "hex",
+ "order-stream",
+ "risc0-zkvm",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "serde_yaml 0.9.34+deprecated",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "boundless-slasher"
 version = "0.14.0"
 dependencies = [
