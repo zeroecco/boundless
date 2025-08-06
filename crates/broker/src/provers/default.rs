@@ -18,9 +18,11 @@ use crate::config::ProverConf;
 use crate::provers::{ExecutorResp, ProofResult, Prover, ProverError};
 use anyhow::{Context, Result as AnyhowResult};
 use async_trait::async_trait;
+use num_bigint::BigUint;
+use num_traits::Num;
 use risc0_zkvm::{
-    default_executor, default_prover, ExecutorEnv, ProveInfo, ProverOpts, Receipt, SessionInfo,
-    VERSION,
+    default_executor, default_prover, seal_to_json, ExecutorEnv, Groth16ProofJson, ProveInfo,
+    ProverOpts, Receipt, SessionInfo, VERSION,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -397,17 +399,217 @@ impl Prover for DefaultProver {
         Ok(proof_data.compressed_receipt.as_ref().cloned())
     }
 
-    async fn shrink_bitvm2(&self, _proof_id: &str) -> Result<String, ProverError> {
-        todo!("Shrink BitVM is not implemented yet");
+    async fn shrink_bitvm2(&self, proof_id: &str) -> Result<String, ProverError> {
+        tracing::info!("Compressing proof Shrink bitvm2 {proof_id}");
+        let receipt = self
+            .get_receipt(proof_id)
+            .await?
+            .ok_or_else(|| ProverError::NotFound(format!("no receipt for proof {proof_id}")))?;
+
+        let proof_id = format!("snark_{}", Uuid::new_v4());
+        self.state.proofs.write().await.insert(proof_id.clone(), ProofData::default());
+
+        tracing::debug!("shrink bitvm2 identity_p254 for proof {proof_id}");
+        let succinct_receipt = receipt.inner.succinct().unwrap();
+        let p254_receipt = risc0_zkvm::recursion::identity_p254(succinct_receipt)
+            .context("identity predicate failed")?;
+
+        tracing::info!("Completing identity predicate, {proof_id}");
+
+        let work_dir = tempdir().context("Failed to create tmpdir")?;
+
+        let compress_result =
+            prove_and_verify(&proof_id, work_dir.path(), p254_receipt, receipt.journal)
+                .await
+                .map_err(ProverError::from);
+
+        let compressed_bytes = compress_result
+            .as_ref()
+            .map(|receipt| bincode::serialize(receipt).unwrap())
+            .unwrap_or_default();
+
+        let mut proofs = self.state.proofs.write().await;
+        let proof = proofs.get_mut(&proof_id).unwrap();
+        match compress_result {
+            Ok(_) => {
+                proof.status = Status::Succeeded;
+                proof.compressed_receipt = Some(compressed_bytes);
+
+                Ok(proof_id)
+            }
+            Err(err) => {
+                proof.status = Status::Failed;
+                proof.error_msg = err.to_string();
+
+                Err(err)
+            }
+        }
     }
     async fn get_shrink_bitvm2_receipt(
         &self,
-        _proof_id: &str,
+        proof_id: &str,
     ) -> Result<Option<Vec<u8>>, ProverError> {
-        todo!("Shrink BitVM is not implemented yet");
+        let proofs = self.state.proofs.read().await;
+        let proof_data = proofs
+            .get(proof_id)
+            .ok_or_else(|| ProverError::NotFound(format!("proof {proof_id}")))?;
+        Ok(proof_data.compressed_receipt.as_ref().cloned())
     }
 }
 
+use std::path::Path;
+
+use anyhow::Result;
+
+use risc0_zkvm::{
+    sha::Digestible, Digest, Groth16Receipt, Groth16Seal, Journal, ReceiptClaim, SuccinctReceipt,
+};
+use tempfile::tempdir;
+use tokio::process::Command;
+
+async fn prove_and_verify(
+    proof_id: &str,
+    work_dir: &Path,
+    p254_receipt: SuccinctReceipt<ReceiptClaim>,
+    journal: Journal,
+) -> Result<Receipt, anyhow::Error> {
+    let receipt_claim = p254_receipt.claim.clone().value()?;
+
+    let seal_path = work_dir.join("input.json");
+    let proof_path = work_dir.join("proof.json");
+
+    write_seal(proof_id, &journal.bytes, p254_receipt, &receipt_claim, &seal_path).await?;
+
+    let proof_json = generate_proof(proof_id, work_dir, &proof_path).await?;
+    tracing::info!("{proof_id}: generated shrink groth16 proof");
+
+    let final_receipt = finalize(journal.bytes, receipt_claim, proof_json)?;
+
+    Ok(final_receipt)
+}
+
+fn finalize(
+    journal_bytes: Vec<u8>,
+    receipt_claim: ReceiptClaim,
+    proof_json: Groth16ProofJson,
+) -> Result<Receipt> {
+    let seal: Groth16Seal = proof_json.try_into()?;
+    let groth16_receipt = Groth16Receipt::new(seal.to_vec(), receipt_claim.into(), Digest::ZERO);
+    let receipt = Receipt::new(risc0_zkvm::InnerReceipt::Groth16(groth16_receipt), journal_bytes);
+    Ok(receipt)
+}
+
+async fn write_seal(
+    proof_id: &str,
+    journal_bytes: &[u8],
+    p254_receipt: SuccinctReceipt<ReceiptClaim>,
+    receipt_claim: &ReceiptClaim,
+    seal_path: &Path,
+) -> Result<()> {
+    tracing::info!("{proof_id}: Writing seal");
+
+    let seal_bytes = p254_receipt.get_seal_bytes();
+    let mut seal_json = Vec::new();
+    seal_to_json(seal_bytes.as_slice(), &mut seal_json)?;
+    let mut seal_json: serde_json::Value =
+        serde_json::from_str(std::str::from_utf8(seal_json.as_slice())?)?;
+
+    let mut journal_bits = Vec::new();
+    for byte in journal_bytes {
+        for i in 0..8 {
+            journal_bits.push((byte >> (7 - i)) & 1);
+        }
+    }
+
+    let pre_state_digest_bits: Vec<_> = receipt_claim
+        .pre
+        .digest()
+        .as_bytes()
+        .iter()
+        .flat_map(|&byte| (0..8).rev().map(move |i| ((byte >> i) & 1).to_string()))
+        .collect();
+
+    let post_state_digest_bits: Vec<_> = receipt_claim
+        .post
+        .digest()
+        .as_bytes()
+        .iter()
+        .flat_map(|&byte| (0..8).rev().map(move |i| ((byte >> i) & 1).to_string()))
+        .collect();
+
+    let mut id_bn254_fr_bits: Vec<String> = p254_receipt
+        .control_id
+        .as_bytes()
+        .iter()
+        .flat_map(|&byte| (0..8).rev().map(move |i| ((byte >> i) & 1).to_string()))
+        .collect();
+    id_bn254_fr_bits.remove(248);
+    id_bn254_fr_bits.remove(248);
+
+    let mut succinct_control_root_bytes: [u8; 32] =
+        risc0_zkvm::SuccinctReceiptVerifierParameters::default()
+            .control_root
+            .as_bytes()
+            .try_into()?;
+
+    succinct_control_root_bytes.reverse();
+    let succinct_control_root_hex = hex::encode(succinct_control_root_bytes);
+
+    let a1_str = succinct_control_root_hex[0..32].to_string();
+    let a0_str = succinct_control_root_hex[32..64].to_string();
+    let a0_dec = to_decimal(&a0_str).context("a0_str returned None")?;
+    let a1_dec = to_decimal(&a1_str).context("a1_str returned None")?;
+
+    let control_root = vec![a0_dec, a1_dec];
+
+    seal_json["journal_digest_bits"] = journal_bits.into();
+    seal_json["pre_state_digest_bits"] = pre_state_digest_bits.into();
+    seal_json["post_state_digest_bits"] = post_state_digest_bits.into();
+    seal_json["id_bn254_fr_bits"] = id_bn254_fr_bits.into();
+    seal_json["control_root"] = control_root.into();
+
+    tokio::fs::write(seal_path, serde_json::to_string_pretty(&seal_json)?).await?;
+
+    Ok(())
+}
+
+// #!/bin/bash
+//
+// set -eoux
+//
+// ulimit -s unlimited
+// ./verify_for_guest /mnt/input.json output.wtns
+// rapidsnark verify_for_guest_final.zkey output.wtns /mnt/proof.json /mnt/public.json
+
+async fn generate_proof(
+    job_id: &str,
+    work_dir: &Path,
+    proof_path: &Path,
+) -> Result<Groth16ProofJson> {
+    tracing::info!("{job_id}: docker run ozancw/risc0-to-bitvm2-groth16-prover");
+
+    let volume = format!("{}:/mnt", work_dir.display());
+    let status = Command::new("docker")
+        .args(["run", "--rm", "-v", &volume, "ozancw/risc0-to-bitvm2-groth16-prover"])
+        .status()
+        .await?;
+
+    anyhow::ensure!(
+        status.success(),
+        "{job_id}: ozancw/risc0-to-bitvm2-groth16-prover failed: {:?}",
+        status.code()
+    );
+
+    let proof_content = tokio::fs::read_to_string(proof_path).await?;
+    let proof_json: Groth16ProofJson = serde_json::from_str(&proof_content)?;
+
+    Ok(proof_json)
+}
+
+fn to_decimal(s: &str) -> Option<String> {
+    let int = BigUint::from_str_radix(s, 16).ok();
+    int.map(|n| n.to_str_radix(10))
+}
 #[cfg(test)]
 mod tests {
     use super::*;

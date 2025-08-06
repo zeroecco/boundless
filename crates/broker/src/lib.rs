@@ -29,7 +29,7 @@ use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, ProofRequest},
     order_stream_client::OrderStreamClient,
-    selector::is_groth16_selector,
+    selector::{is_groth16_selector, is_shrink_bitvm2_selector},
     Deployment,
 };
 use chrono::{serde::ts_seconds, DateTime, Utc};
@@ -307,6 +307,13 @@ impl std::fmt::Display for OrderRequest {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CompressionType {
+    None,
+    Groth16,
+    ShrinkBitvm2,
+}
+
 /// An Order represents a proof request and a specific method of fulfillment.
 ///
 /// Requests can be fulfilled in multiple ways, for example by locking then fulfilling them,
@@ -388,8 +395,21 @@ impl Order {
             .clone()
     }
 
-    pub fn is_groth16(&self) -> bool {
+    fn is_groth16(&self) -> bool {
         is_groth16_selector(self.request.requirements.selector)
+    }
+
+    fn is_shrink_bitvm2(&self) -> bool {
+        is_shrink_bitvm2_selector(self.request.requirements.selector)
+    }
+    pub fn compression_type(&self) -> CompressionType {
+        if self.is_groth16() {
+            CompressionType::Groth16
+        } else if self.is_shrink_bitvm2() {
+            CompressionType::ShrinkBitvm2
+        } else {
+            CompressionType::None
+        }
     }
 }
 
