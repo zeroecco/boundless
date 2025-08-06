@@ -230,15 +230,6 @@ fn to_decimal(s: &str) -> Option<String> {
     int.map(|n| n.to_str_radix(10))
 }
 
-pub(crate) fn get_r0_verifying_key() -> risc0_groth16::VerifyingKey {
-    let json_content = std::fs::read_to_string("/home/etu/risc0-to-bitvm2/vkey_guest.json")
-        .expect("Failed to read verification key JSON file");
-    let vk_json: risc0_groth16::VerifyingKeyJson =
-        serde_json::from_str(&json_content).expect("Failed to parse verification key JSON");
-
-    vk_json.verifying_key().unwrap()
-}
-
 pub(crate) fn verify_proof(final_receipt: &Receipt, output_bytes: &[u8]) -> Result<()> {
     use ark_ff::PrimeField;
 
@@ -407,6 +398,16 @@ mod tests {
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
     use risc0_zkvm::sha::Digest;
     use tempfile::tempdir;
+
+    fn get_r0_verifying_key() -> risc0_groth16::VerifyingKey {
+        let json_content = std::fs::read_to_string("/home/etu/risc0-to-bitvm2/vkey_guest.json")
+            .expect("Failed to read verification key JSON file");
+        let vk_json: risc0_groth16::VerifyingKeyJson =
+            serde_json::from_str(&json_content).expect("Failed to parse verification key JSON");
+
+        vk_json.verifying_key().unwrap()
+    }
+
     #[test_log::test(tokio::test)]
     async fn test_shrink() {
         let work_dir = tempdir().expect("Failed to create temp dir");

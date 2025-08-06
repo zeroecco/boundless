@@ -584,6 +584,14 @@ impl Predicate {
     pub fn prefix_match(prefix: impl Into<Bytes>) -> Self {
         Self { predicateType: PredicateType::PrefixMatch, data: prefix.into() }
     }
+
+    /// TODO(ec2)
+    pub fn claim_digest_match(claim_digest: impl Into<Digest>) -> Self {
+        Self {
+            predicateType: PredicateType::ClaimDigestMatch,
+            data: claim_digest.into().as_bytes().to_vec().into(),
+        }
+    }
 }
 
 impl Callback {
@@ -730,10 +738,18 @@ impl Predicate {
             PredicateType::DigestMatch => self.data.as_ref() == Sha256::digest(journal).as_slice(),
             PredicateType::PrefixMatch => journal.as_ref().starts_with(&self.data),
             PredicateType::ClaimDigestMatch => {
-                self.data.as_ref()
-                    == ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal.as_ref().to_vec())
-                        .digest()
-                        .as_bytes()
+                let journal_bytes = journal.as_ref().to_vec();
+                let receipt_claim_digest =
+                    ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal_bytes.clone())
+                        .digest();
+                println!(
+                    "Evaluating ClaimDigestMatch\n predicate: {}\n journal: {}\n receipt_claim_digest: {}\n image_id: {:?}",
+                    hex::encode(&self.data),
+                    hex::encode(journal_bytes),
+                    hex::encode(receipt_claim_digest.as_bytes()),
+                    image_id
+                );
+                self.data.as_ref() == receipt_claim_digest.as_bytes()
             }
             PredicateType::__Invalid => panic!("invalid PredicateType"),
         }

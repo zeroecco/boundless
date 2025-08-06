@@ -304,7 +304,12 @@ impl DefaultProver {
                 let receipt = self.compress(&receipts[i]).await?;
                 encode_seal(&receipt)?
             } else if is_shrink_bitvm2_selector(req.requirements.selector) {
-                todo!("not implemented yet")
+                // let receipt = self
+                //     .shrink_bitvm2(&receipts[i].id, None)
+                //     .await
+                //     .context("Failed to shrink BitVM2 receipt")?;
+
+                todo!("Shrink BitVM2 receipt is not implemented yet");
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
@@ -439,6 +444,37 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let (request, signature) = setup_proving_request_and_signature(&signer, None).await;
 
+        let domain = eip712_domain(Address::ZERO, 1);
+        let prover = DefaultProver::new(
+            SET_BUILDER_ELF.to_vec(),
+            ASSESSOR_GUEST_ELF.to_vec(),
+            Address::ZERO,
+            domain,
+        )
+        .expect("failed to create prover");
+
+        prover.fulfill(&[(request, signature.as_bytes().into())]).await.unwrap();
+    }
+    /// TODO(ec2): implement this test
+    #[tokio::test]
+    #[test_log::test]
+    async fn test_shrink() {
+        let input = [255u8; 32].to_vec(); // Example output data
+
+        let signer = PrivateKeySigner::random();
+        let request = ProofRequest::new(
+            RequestId::new(signer.address(), 0),
+            Requirements::new(
+                Digest::from(ECHO_ID),
+                Predicate::claim_digest_match(ReceiptClaim::ok(ECHO_ID, input.clone()).digest()),
+            )
+            .with_selector(FixedBytes::from(Selector::ShrinkBitvm2V0_1 as u32)),
+            format!("file://{ECHO_PATH}"),
+            RequestInput::builder().write_slice(&input).build_inline().unwrap(),
+            Offer::default(),
+        );
+
+        let signature = request.sign_request(&signer, Address::ZERO, 1).await.unwrap();
         let domain = eip712_domain(Address::ZERO, 1);
         let prover = DefaultProver::new(
             SET_BUILDER_ELF.to_vec(),

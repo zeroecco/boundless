@@ -53,7 +53,7 @@ order-stream = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono"] }
 tempfile = { workspace = true }
 tracing-test = { workspace = true }
-
+test-log = { workspace = true }
 [features]
 # Enables the prove feature on risc0-zkvm to build the prover directly into this CLI.
 prove = ["risc0-zkvm/prove"]
