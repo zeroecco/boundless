@@ -27,7 +27,7 @@ use boundless_povw_guests::{
     BOUNDLESS_POVW_MINT_CALCULATOR_ELF, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-use risc0_steel::ethereum::ANVIL_CHAIN_SPEC;
+use risc0_steel::ethereum::{EthChainSpec, ANVIL_CHAIN_SPEC};
 use risc0_zkvm::{
     default_executor, sha::Digestible, ExecutorEnv, ExitCode, FakeReceipt, InnerReceipt, Receipt,
     ReceiptClaim,
@@ -233,6 +233,14 @@ impl TestCtx {
         &self,
         epochs: &[u32],
     ) -> anyhow::Result<mint_calculator::Input> {
+        self.build_mint_input_for_epochs_with_chain_spec(epochs, &ANVIL_CHAIN_SPEC).await
+    }
+
+    pub async fn build_mint_input_for_epochs_with_chain_spec(
+        &self,
+        epochs: &[u32],
+        chain_spec: &'static EthChainSpec,
+    ) -> anyhow::Result<mint_calculator::Input> {
         // Query for WorkLogUpdated and EpochFinalized events, recording the block numbers that include these events.
         let latest_block = self.provider.get_block_number().await?;
         let epoch_filter_str =
@@ -301,7 +309,7 @@ impl TestCtx {
         let mint_input = mint_calculator::Input::build(
             *self.povw_contract.address(),
             self.provider.clone(),
-            &ANVIL_CHAIN_SPEC,
+            chain_spec,
             sorted_blocks,
         )
         .await?;

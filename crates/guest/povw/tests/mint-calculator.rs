@@ -18,6 +18,7 @@ use boundless_povw_guests::{
 };
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
+use risc0_steel::ethereum::ETH_SEPOLIA_CHAIN_SPEC;
 use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
 mod common;
@@ -319,7 +320,7 @@ async fn reject_invalid_steel_commitment() -> anyhow::Result<()> {
     assert!(result.is_err(), "Should reject invalid Steel commitment");
     let err = result.unwrap_err();
     println!("Contract correctly rejected invalid Steel commitment: {err}");
-    // Check for InvalidSteelCommitment error selector 0x36ce79a0
+    // Check for InvalidSteelCommitment error selector 0xa7e6de3e
     assert!(err.to_string().contains("0xa7e6de3e"));
 
     Ok(())
@@ -511,6 +512,55 @@ async fn reject_mint_with_unfinalized_epoch() -> anyhow::Result<()> {
     println!("Contract correctly rejected unfinalized epoch: {err}");
     // The mint calculator guest should fail because there's no EpochFinalized event
     assert!(err.to_string().contains("no epoch finalized event processed"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_mint_wrong_chain_spec() -> anyhow::Result<()> {
+    // Setup test context
+    let ctx = common::text_ctx().await?;
+
+    // Post a work log update
+    let signer = PrivateKeySigner::random();
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 25, // Work value for this update
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &update, signer.address()).await?;
+
+    // Advance time and finalize epoch
+    ctx.advance_epochs(1).await?;
+    let finalize_event = ctx.finalize_epoch().await?;
+
+    // Build the input using the wrong chain spec, Sepolia when Anvil is expected.
+    let mint_input = ctx.build_mint_input_for_epochs_with_chain_spec(&[finalize_event.epoch.to()], &ETH_SEPOLIA_CHAIN_SPEC).await?;
+
+    // Execute the mint calculator guest
+    let mint_journal = common::execute_mint_calculator_guest(&mint_input)?;
+
+    // Assemble a fake receipt and use it to call the mint function on the PovwMint contract.
+    let mint_receipt: Receipt = FakeReceipt::new(ReceiptClaim::ok(
+        BOUNDLESS_POVW_MINT_CALCULATOR_ID,
+        mint_journal.abi_encode(),
+    ))
+    .try_into()?;
+
+    // This should fail as chain spec is wrong.
+    let result = ctx
+        .mint_contract
+        .mint(mint_journal.abi_encode().into(), common::encode_seal(&mint_receipt)?.into())
+        .send()
+        .await;
+
+    assert!(result.is_err(), "Should reject wrong chain spec");
+    let err = result.unwrap_err();
+    // Check for InvalidSteelCommitment error selector 0xa7e6de3e
+    assert!(err.to_string().contains("0xa7e6de3e"));
 
     Ok(())
 }
