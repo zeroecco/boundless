@@ -771,3 +771,65 @@ async fn multiple_work_logs_same_recipient() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn zero_valued_update() -> anyhow::Result<()> {
+    let ctx = common::text_ctx().await?;
+    let signer = PrivateKeySigner::random();
+
+    let initial_epoch = ctx.povw_contract.currentEpoch().call().await?;
+    println!("Initial epoch: {initial_epoch}");
+
+    // Post a zero-valued work log update
+    let update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: WorkLog::EMPTY.commit(),
+        updated_commit: Digest::new(rand::random()),
+        update_value: 0, // Zero-valued update
+        work_log_id: signer.address().into(),
+    };
+
+    let work_log_event = ctx.post_work_log_update(&signer, &update, signer.address()).await?;
+    println!("Zero-valued work log update posted for epoch {}", work_log_event.epochNumber);
+
+    // Verify the update was accepted with zero value
+    assert_eq!(work_log_event.updateValue, U256::ZERO);
+    assert_eq!(work_log_event.updatedCommit, B256::from(<[u8; 32]>::from(update.updated_commit)));
+
+    // Advance time and finalize epoch
+    ctx.advance_epochs(1).await?;
+    let finalized_event = ctx.finalize_epoch().await?;
+
+    // The epoch should be finalized with zero total work
+    assert_eq!(finalized_event.epoch, U256::from(initial_epoch));
+    assert_eq!(finalized_event.totalWork, U256::ZERO);
+    println!("EpochFinalized event verified: epoch={}, totalWork=0", finalized_event.epoch);
+
+    // Run the mint process - should complete successfully
+    ctx.run_mint_for_epochs(&[finalized_event.epoch.to()]).await?;
+
+    // Verify no tokens were minted (recipient balance should remain zero)
+    let zero_update_balance = ctx.token_contract.balanceOf(signer.address()).call().await?;
+    assert_eq!(zero_update_balance, U256::ZERO, "No tokens should be minted for zero-valued updates");
+
+    // Run a second update starting from the previous one, to ensure that although no tokens were
+    // minted, the work log commit was updated.
+    let second_update = LogBuilderJournal {
+        self_image_id: RISC0_POVW_LOG_BUILDER_ID.into(),
+        initial_commit: update.updated_commit,
+        updated_commit: Digest::new(rand::random()),
+        update_value: 100, // Zero-valued update
+        work_log_id: signer.address().into(),
+    };
+
+    ctx.post_work_log_update(&signer, &second_update, signer.address()).await?;
+    ctx.advance_epochs(1).await?;
+    let finalized_event = ctx.finalize_epoch().await?;
+
+    ctx.run_mint_for_epochs(&[finalized_event.epoch.to()]).await?;
+
+    // Verify tokens were minted this time.
+    let final_balance = ctx.token_contract.balanceOf(signer.address()).call().await?;
+    assert_eq!(final_balance, ctx.mint_contract.EPOCH_REWARD().call().await?);
+    Ok(())
+}

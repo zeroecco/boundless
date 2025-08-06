@@ -90,8 +90,13 @@ fn main() {
             let epoch_total_work = *epochs.get(&epoch_number).unwrap_or_else(|| {
                 panic!("no epoch finalized event processed for epoch number {epoch_number}")
             });
-            *mints.entry(update_event.valueRecipient).or_default() +=
-                FixedPoint::fraction(update_event.updateValue, epoch_total_work);
+            // Update mint value, skipping zero-valued updates.
+            if update_event.updateValue > U256::ZERO {
+                // NOTE: epoch_total_work must be greater than zero at this point, since it at
+                // least contains this update, which has a non-zero value.
+                *mints.entry(update_event.valueRecipient).or_default() +=
+                    FixedPoint::fraction(update_event.updateValue, epoch_total_work);
+            }
         }
     }
 

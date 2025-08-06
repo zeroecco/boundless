@@ -115,7 +115,7 @@ impl FixedPoint {
     /// # Panics
     ///
     /// Panics if the given numerator is too close to U256::MAX, or if the represented fraction
-    /// greater than one (e.g. numerator > denominator).
+    /// greater than one (e.g. numerator > denominator). Also panics if the denominator is zero.
     pub fn fraction(num: U256, dem: U256) -> Self {
         let fraction = num.checked_mul(Self::BASE).unwrap() / dem;
         assert!(fraction <= Self::BASE, "expected fractional value is greater than one");
@@ -163,6 +163,7 @@ pub mod host {
         #[sol(rpc)]
         interface IPovwMint {
             function mint(bytes calldata journalBytes, bytes calldata seal) external;
+            function lastCommit(address) external view returns (bytes32);
             function EPOCH_REWARD() external view returns (uint256);
         }
     }
