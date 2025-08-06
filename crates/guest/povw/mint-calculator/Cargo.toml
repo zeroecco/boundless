@@ -6,6 +6,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
+alloy-chains = { version = "0.2", default-features = false }
 alloy-primitives = { version = "1.0" }
 alloy-sol-types = { version = "1.0" }
 boundless-povw-guests = { path = "..", default-features = false }

@@ -1,14 +1,26 @@
 use std::collections::{btree_map, BTreeMap};
+use std::sync::LazyLock;
 
-use risc0_zkvm::guest::env;
-
-use alloy_primitives::{Address, B256, U256};
+use alloy_chains::NamedChain;
+use alloy_primitives::{Address, ChainId, B256, U256};
 use alloy_sol_types::SolValue;
 use boundless_povw_guests::log_updater::IPovwAccounting;
 use boundless_povw_guests::mint_calculator::{
     FixedPoint, Input, MintCalculatorJournal, MintCalculatorMint, MintCalculatorUpdate,
 };
-use risc0_steel::{ethereum::ANVIL_CHAIN_SPEC, Event};
+use risc0_steel::ethereum::{
+    EthChainSpec, ANVIL_CHAIN_SPEC, ETH_MAINNET_CHAIN_SPEC, ETH_SEPOLIA_CHAIN_SPEC,
+};
+use risc0_steel::Event;
+use risc0_zkvm::guest::env;
+
+static CHAIN_SPECS: LazyLock<BTreeMap<ChainId, EthChainSpec>> = LazyLock::new(|| {
+    BTreeMap::from([
+        (NamedChain::Mainnet as ChainId, ETH_MAINNET_CHAIN_SPEC.clone()),
+        (NamedChain::Sepolia as ChainId, ETH_SEPOLIA_CHAIN_SPEC.clone()),
+        (NamedChain::AnvilHardhat as ChainId, ANVIL_CHAIN_SPEC.clone()),
+    ])
+});
 
 // The mint calculator ensures:
 // * An event was logged by the PoVW accounting contract for each log update and epoch finalization.
@@ -25,8 +37,8 @@ fn main() {
         postcard::from_bytes(&env::read_frame()).expect("failed to deserialize input");
 
     // Converts the input into a `EvmEnv` structs for execution.
-    // TODO(povw): Provide a compile-time option for selecting the chain spec.
-    let envs = input.env.into_env(&ANVIL_CHAIN_SPEC);
+    let chain_spec = &CHAIN_SPECS.get(&input.chain_id).expect("unrecognized chain id in input");
+    let envs = input.env.into_env(chain_spec);
 
     // Construct a mapping with the total work value for each finalized epoch.
     let mut epochs = BTreeMap::<u32, U256>::new();

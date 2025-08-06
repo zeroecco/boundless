@@ -2,32 +2,22 @@
 //
 // All rights reserved.
 
-#![allow(unused_imports)] // DO NOT MERGE
-
-use std::collections::BTreeSet;
 
 use alloy::{
-    network::EthereumWallet,
-    node_bindings::Anvil,
-    primitives::{address, utils::Unit, Address, Bytes, FixedBytes, B256, U256},
-    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WalletProvider},
+    primitives::{B256, U256},
     signers::local::PrivateKeySigner,
-    sol,
 };
 use alloy_sol_types::SolValue;
-use risc0_ethereum_contracts::{encode_seal, selector::Selector};
 
 use boundless_povw_guests::{
-    log_updater::{Input as LogUpdaterInput, LogBuilderJournal, WorkLogUpdate},
+    log_updater::LogBuilderJournal,
     mint_calculator::{
-        FixedPoint, Input as MintCalculatorInput, MintCalculatorJournal, MintCalculatorMint,
+        FixedPoint, MintCalculatorJournal, MintCalculatorMint,
         MintCalculatorUpdate,
-    },
-    BOUNDLESS_POVW_LOG_UPDATER_ID, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
+    }, BOUNDLESS_POVW_MINT_CALCULATOR_ID,
 };
 use risc0_povw::WorkLog;
 use risc0_povw_guests::RISC0_POVW_LOG_BUILDER_ID;
-use risc0_steel::ethereum::ANVIL_CHAIN_SPEC;
 use risc0_zkvm::{Digest, FakeReceipt, Receipt, ReceiptClaim};
 
 mod common;

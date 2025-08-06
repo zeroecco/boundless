@@ -9,7 +9,7 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, ChainId, U256};
 use risc0_steel::{
     ethereum::{EthChainSpec, EthEvmEnv, EthEvmInput},
     Commitment, StateDb, SteelVerifier,
@@ -97,6 +97,11 @@ pub struct Input {
     /// supply the wrong address, the proof will be rejected by the minting contract when it checks
     /// the address written to the journal.
     pub povw_contract_address: Address,
+    /// EIP-155 chain ID for the chain being queried.
+    ///
+    /// This chain ID is used to select the [ChainSpec][risc0_steel::config::ChainSpec] that will
+    /// be used to construct the EVM.
+    pub chain_id: ChainId,
     /// Input for constructing a [MultiblockEthEvmEnv] to query a sequence of blocks.
     pub env: MultiblockEthEvmInput,
 }
@@ -341,6 +346,7 @@ pub mod host {
             }
             Ok(Self {
                 povw_contract_address,
+                chain_id: chain_spec.chain_id,
                 env: envs.into_input().await.context("failed to convert env to input")?,
             })
         }

@@ -1012,6 +1012,7 @@ dependencies = [
 name = "boundless-povw-mint-calculator"
 version = "0.1.0"
 dependencies = [
+ "alloy-chains",
  "alloy-primitives",
  "alloy-sol-types",
  "boundless-povw-guests",
