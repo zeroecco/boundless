@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{borrow::Borrow, collections::HashMap, sync::Arc};
+use std::{borrow::Borrow, collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::config::ProverConf;
+use crate::provers::shrink_bitvm2::prove_and_verify;
 use crate::provers::{ExecutorResp, ProofResult, Prover, ProverError};
 use anyhow::{Context, Result as AnyhowResult};
 use async_trait::async_trait;
-use num_bigint::BigUint;
-use num_traits::Num;
 use risc0_zkvm::{
-    default_executor, default_prover, seal_to_json, ExecutorEnv, Groth16ProofJson, ProveInfo,
-    ProverOpts, Receipt, SessionInfo, VERSION,
+    default_executor, default_prover, ExecutorEnv, ProveInfo, ProverOpts, Receipt, SessionInfo,
+    VERSION,
 };
+use tempfile::tempdir;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -462,163 +462,9 @@ impl Prover for DefaultProver {
     }
 }
 
-use std::path::{Path, PathBuf};
-
-use anyhow::Result;
-
-use risc0_zkvm::{
-    sha::Digestible, Digest, Groth16Receipt, Groth16Seal, Journal, ReceiptClaim, SuccinctReceipt,
-};
-use tempfile::tempdir;
-use tokio::process::Command;
-
-async fn prove_and_verify(
-    proof_id: &str,
-    work_dir: &Path,
-    p254_receipt: SuccinctReceipt<ReceiptClaim>,
-    journal: Journal,
-) -> Result<Receipt, anyhow::Error> {
-    let receipt_claim = p254_receipt.claim.clone().value()?;
-
-    let seal_path = work_dir.join("input.json");
-    let proof_path = work_dir.join("proof.json");
-
-    write_seal(proof_id, &journal.bytes, p254_receipt, &receipt_claim, &seal_path).await?;
-
-    let proof_json = generate_proof(proof_id, work_dir, &proof_path).await?;
-    tracing::info!("{proof_id}: generated shrink groth16 proof");
-
-    let final_receipt = finalize(journal.bytes, receipt_claim, proof_json)?;
-
-    Ok(final_receipt)
-}
-
-fn finalize(
-    journal_bytes: Vec<u8>,
-    receipt_claim: ReceiptClaim,
-    proof_json: Groth16ProofJson,
-) -> Result<Receipt> {
-    let seal: Groth16Seal = proof_json.try_into()?;
-    let groth16_receipt = Groth16Receipt::new(seal.to_vec(), receipt_claim.into(), Digest::ZERO);
-    let receipt = Receipt::new(risc0_zkvm::InnerReceipt::Groth16(groth16_receipt), journal_bytes);
-    Ok(receipt)
-}
-
-async fn write_seal(
-    proof_id: &str,
-    journal_bytes: &[u8],
-    p254_receipt: SuccinctReceipt<ReceiptClaim>,
-    receipt_claim: &ReceiptClaim,
-    seal_path: &Path,
-) -> Result<()> {
-    tracing::info!("{proof_id}: Writing seal");
-
-    let seal_bytes = p254_receipt.get_seal_bytes();
-    let mut seal_json = Vec::new();
-    seal_to_json(seal_bytes.as_slice(), &mut seal_json)?;
-    let mut seal_json: serde_json::Value =
-        serde_json::from_str(std::str::from_utf8(seal_json.as_slice())?)?;
-
-    let mut journal_bits = Vec::new();
-    for byte in journal_bytes {
-        for i in 0..8 {
-            journal_bits.push((byte >> (7 - i)) & 1);
-        }
-    }
-
-    let pre_state_digest_bits: Vec<_> = receipt_claim
-        .pre
-        .digest()
-        .as_bytes()
-        .iter()
-        .flat_map(|&byte| (0..8).rev().map(move |i| ((byte >> i) & 1).to_string()))
-        .collect();
-
-    let post_state_digest_bits: Vec<_> = receipt_claim
-        .post
-        .digest()
-        .as_bytes()
-        .iter()
-        .flat_map(|&byte| (0..8).rev().map(move |i| ((byte >> i) & 1).to_string()))
-        .collect();
-
-    let mut id_bn254_fr_bits: Vec<String> = p254_receipt
-        .control_id
-        .as_bytes()
-        .iter()
-        .flat_map(|&byte| (0..8).rev().map(move |i| ((byte >> i) & 1).to_string()))
-        .collect();
-    id_bn254_fr_bits.remove(248);
-    id_bn254_fr_bits.remove(248);
-
-    let mut succinct_control_root_bytes: [u8; 32] =
-        risc0_zkvm::SuccinctReceiptVerifierParameters::default()
-            .control_root
-            .as_bytes()
-            .try_into()?;
-
-    succinct_control_root_bytes.reverse();
-    let succinct_control_root_hex = hex::encode(succinct_control_root_bytes);
-
-    let a1_str = succinct_control_root_hex[0..32].to_string();
-    let a0_str = succinct_control_root_hex[32..64].to_string();
-    let a0_dec = to_decimal(&a0_str).context("a0_str returned None")?;
-    let a1_dec = to_decimal(&a1_str).context("a1_str returned None")?;
-
-    let control_root = vec![a0_dec, a1_dec];
-
-    seal_json["journal_digest_bits"] = journal_bits.into();
-    seal_json["pre_state_digest_bits"] = pre_state_digest_bits.into();
-    seal_json["post_state_digest_bits"] = post_state_digest_bits.into();
-    seal_json["id_bn254_fr_bits"] = id_bn254_fr_bits.into();
-    seal_json["control_root"] = control_root.into();
-
-    tokio::fs::write(seal_path, serde_json::to_string_pretty(&seal_json)?).await?;
-
-    Ok(())
-}
-
-// #!/bin/bash
-//
-// set -eoux
-//
-// ulimit -s unlimited
-// ./verify_for_guest /mnt/input.json output.wtns
-// rapidsnark verify_for_guest_final.zkey output.wtns /mnt/proof.json /mnt/public.json
-
-async fn generate_proof(
-    job_id: &str,
-    work_dir: &Path,
-    proof_path: &Path,
-) -> Result<Groth16ProofJson> {
-    tracing::info!("{job_id}: docker run ozancw/risc0-to-bitvm2-groth16-prover");
-
-    let volume = format!("{}:/mnt", work_dir.display());
-    let status = Command::new("docker")
-        .args(["run", "--rm", "-v", &volume, "ozancw/risc0-to-bitvm2-groth16-prover"])
-        .status()
-        .await?;
-
-    anyhow::ensure!(
-        status.success(),
-        "{job_id}: ozancw/risc0-to-bitvm2-groth16-prover failed: {:?}",
-        status.code()
-    );
-
-    let proof_content = tokio::fs::read_to_string(proof_path).await?;
-    let proof_json: Groth16ProofJson = serde_json::from_str(&proof_content)?;
-
-    Ok(proof_json)
-}
-
-fn to_decimal(s: &str) -> Option<String> {
-    let int = BigUint::from_str_radix(s, 16).ok();
-    int.map(|n| n.to_str_radix(10))
-}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ff::PrimeField;
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
     use risc0_zkvm::sha::Digest;
     use tokio::test;
@@ -713,52 +559,6 @@ mod tests {
         let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
         let receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
         receipt.verify(image_id).unwrap();
-    }
-
-    fn get_r0_verifying_key() -> risc0_groth16::VerifyingKey {
-        let json_content = std::fs::read_to_string("/home/etu/risc0-to-bitvm2/vkey_guest.json")
-            .expect("Failed to read verification key JSON file");
-        let vk_json: risc0_groth16::VerifyingKeyJson =
-            serde_json::from_str(&json_content).expect("Failed to parse verification key JSON");
-
-        vk_json.verifying_key().unwrap()
-    }
-
-    #[test]
-    async fn test_shrink() {
-        let work_dir = tempdir().expect("Failed to create temp dir");
-        let proof_path = work_dir.path().join("proof.json");
-        let prover = DefaultProver::new();
-
-        // Upload test data
-        let input_data = [0u8; 32].to_vec(); // Example input data
-        let input_id = prover.upload_input(input_data.clone()).await.unwrap();
-        let image_id = Digest::from(ECHO_ID);
-        prover.upload_image(&image_id.to_string(), ECHO_ELF.to_vec()).await.unwrap();
-
-        // Run SNARK proving
-        let ProofResult { id: stark_id, .. } =
-            prover.prove_and_monitor_stark(&image_id.to_string(), &input_id, vec![]).await.unwrap();
-        let snark_id =
-            prover.shrink_bitvm2(&stark_id, Some(work_dir.path().to_path_buf())).await.unwrap();
-
-        // Fetch the compressed receipt
-        let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
-        let receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
-        let public_input_scalar = risc0_groth16::PublicInputsJson {
-            values: vec![ark_bn254::Fr::from_be_bytes_mod_order(&input_data).to_string()],
-        }
-        .to_scalar()
-        .unwrap();
-        println!("R0 Verify Start");
-
-        let proof_content = tokio::fs::read_to_string(proof_path).await.unwrap();
-        let proof_json: Groth16ProofJson = serde_json::from_str(&proof_content).unwrap();
-        let seal = proof_json.try_into().unwrap();
-        let verifying_key = get_r0_verifying_key();
-
-        let v = risc0_groth16::Verifier::new(&seal, &public_input_scalar, &verifying_key).unwrap();
-        println!("R0 Verify result: {:?}", v.verify().is_ok());
     }
 
     #[test]

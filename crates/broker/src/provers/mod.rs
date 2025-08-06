@@ -23,6 +23,7 @@ use thiserror::Error;
 
 mod bonsai;
 mod default;
+pub(crate) mod shrink_bitvm2;
 
 pub use bonsai::Bonsai;
 pub use default::DefaultProver;
