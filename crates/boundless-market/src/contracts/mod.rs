@@ -585,7 +585,8 @@ impl Predicate {
         Self { predicateType: PredicateType::PrefixMatch, data: prefix.into() }
     }
 
-    /// TODO(ec2)
+    /// Returns a predicate to match the claim digest. This ensures that the request's
+    /// fulfillment will contain a claim with the same digest.
     pub fn claim_digest_match(claim_digest: impl Into<Digest>) -> Self {
         Self {
             predicateType: PredicateType::ClaimDigestMatch,
@@ -738,18 +739,10 @@ impl Predicate {
             PredicateType::DigestMatch => self.data.as_ref() == Sha256::digest(journal).as_slice(),
             PredicateType::PrefixMatch => journal.as_ref().starts_with(&self.data),
             PredicateType::ClaimDigestMatch => {
-                let journal_bytes = journal.as_ref().to_vec();
-                let receipt_claim_digest =
-                    ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal_bytes.clone())
+                let claim_digest =
+                    ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal.as_ref().to_vec())
                         .digest();
-                println!(
-                    "Evaluating ClaimDigestMatch\n predicate: {}\n journal: {}\n receipt_claim_digest: {}\n image_id: {:?}",
-                    hex::encode(&self.data),
-                    hex::encode(journal_bytes),
-                    hex::encode(receipt_claim_digest.as_bytes()),
-                    image_id
-                );
-                self.data.as_ref() == receipt_claim_digest.as_bytes()
+                self.data.as_ref() == claim_digest.as_bytes()
             }
             PredicateType::__Invalid => panic!("invalid PredicateType"),
         }

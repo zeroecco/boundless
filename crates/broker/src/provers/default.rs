@@ -16,7 +16,7 @@ use std::{borrow::Borrow, collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::config::ProverConf;
 use crate::provers::{ExecutorResp, ProofResult, Prover, ProverError};
-use anyhow::{Context, Result as AnyhowResult};
+use anyhow::{anyhow, Context, Result as AnyhowResult};
 use async_trait::async_trait;
 use risc0_zkvm::{
     default_executor, default_prover, ExecutorEnv, ProveInfo, ProverOpts, Receipt, SessionInfo,
@@ -409,7 +409,12 @@ impl Prover for DefaultProver {
             .get_receipt(proof_id)
             .await?
             .ok_or_else(|| ProverError::NotFound(format!("no receipt for proof {proof_id}")))?;
-
+        if receipt.journal.bytes.len() != 32 {
+            return Err(ProverError::UnexpectedError(anyhow!(
+                "Shrink BitVM2 requires a journal of 32 bytes, got {}",
+                receipt.journal.bytes.len()
+            )));
+        }
         let proof_id = format!("snark_{}", Uuid::new_v4());
         self.state.proofs.write().await.insert(proof_id.clone(), ProofData::default());
 

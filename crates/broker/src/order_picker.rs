@@ -44,7 +44,7 @@ use alloy::{
 use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{boundless_market::BoundlessMarketService, RequestError, RequestInputType},
-    selector::SupportedSelectors,
+    selector::{is_shrink_bitvm2_selector, SupportedSelectors},
 };
 use moka::future::Cache;
 use thiserror::Error;
@@ -651,6 +651,14 @@ where
                 "Order {order_id} journal larger than set limit ({} > {}), skipping",
                 journal.len(),
                 max_journal_bytes
+            );
+            return Ok(Skip);
+        }
+
+        // If the selector is a shrink bitvm2 selector, ensure the journal is exactly 32 bytes
+        if is_shrink_bitvm2_selector(order.request.requirements.selector) && journal.len() != 32 {
+            tracing::info!(
+                "Order {order_id} journal is not 32 bytes for shrink bitvm2 selector, skipping",
             );
             return Ok(Skip);
         }

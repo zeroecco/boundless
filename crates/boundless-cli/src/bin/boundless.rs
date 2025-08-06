@@ -86,7 +86,7 @@ use boundless_market::{
     },
     input::GuestEnv,
     request_builder::{OfferParams, RequirementParams},
-    selector::ProofType,
+    selector::{is_shrink_bitvm2_selector, ProofType},
     storage::{fetch_url, StorageProvider, StorageProviderConfig},
     Client, Deployment, StandardClient,
 };
@@ -1206,6 +1206,13 @@ where
             request.requirements.predicate.predicateType,
             hex::encode(&request.requirements.predicate.data)
         );
+
+        if is_shrink_bitvm2_selector(request.requirements.selector) && journal.len() != 32 {
+            bail!(
+                "Preflight failed: Journal must be exactly 32 bytes for Shrink Bitvm2, got {} bytes",
+                journal.len()
+            );
+        }
 
         tracing::info!("Preflight check passed");
     } else {

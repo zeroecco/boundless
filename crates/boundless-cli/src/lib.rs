@@ -177,6 +177,12 @@ impl DefaultProver {
     }
 
     pub(crate) async fn shrink_bitvm2(&self, receipt: &Receipt) -> Result<Receipt> {
+        if receipt.journal.bytes.len() != 32 {
+            bail!(
+                "Shrink BitVM2 requires a journal of 32 bytes, got {}",
+                receipt.journal.bytes.len()
+            );
+        }
         if is_dev_mode() {
             return Ok(receipt.clone());
         }
