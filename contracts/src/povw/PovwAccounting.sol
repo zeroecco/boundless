@@ -61,7 +61,9 @@ contract PovwAccounting is EIP712 {
     PendingEpoch public pendingEpoch;
 
     event EpochFinalized(uint256 indexed epoch, uint256 totalWork);
-    // TODO(povw): Compress the data in this event? epochNumber is a simple view function of the block timestamp.
+    // TODO(povw): Compress the data in this event? epochNumber is a simple view function of the
+    // block timestamp and is 32 bits. Update value is 64 bits. At least 32 bytes could be saved
+    // here with compression.
     /// @notice Event emitted when when a work log update is processed.
     /// @param workLogId The work log identifier, which also serves as an authentication public key.
     /// @param epochNumber The number of the epoch in which the update is processed.
