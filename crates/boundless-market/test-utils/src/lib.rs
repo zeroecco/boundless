@@ -35,6 +35,7 @@ use boundless_market::{
     dynamic_gas_filler::DynamicGasFiller,
     nonce_layer::NonceProvider,
 };
+use hex::FromHex;
 use risc0_aggregation::{
     merkle_path, merkle_root, GuestState, SetInclusionReceipt,
     SetInclusionReceiptVerifierParameters,
@@ -92,6 +93,18 @@ pub async fn deploy_groth16_verifier<P: Provider>(
         RiscZeroGroth16Verifier::deploy(deployer_provider, control_root, bn254_control_id)
             .await
             .context("failed to deploy RiscZeroGroth16Verifier")?;
+    Ok(*instance.address())
+}
+
+pub async fn deploy_bitvm2_verifier<P: Provider>(
+    deployer_provider: P,
+    control_root: B256,
+    bn254_control_id: B256,
+) -> Result<Address> {
+    let instance =
+        RiscZeroBitvm2Groth16Verifier::deploy(deployer_provider, control_root, bn254_control_id)
+            .await
+            .context("failed to deploy RiscZeroBitvm2Groth16Verifier")?;
     Ok(*instance.address())
 }
 
@@ -233,8 +246,32 @@ pub async fn deploy_contracts(
             )
         }
     };
+
+    let (bvm2_verifier, bvm2_selector) = match is_dev_mode() {
+        true => (deploy_mock_verifier(&deployer_provider).await?, [0xFFu8; 4]),
+        false => {
+            let control_root = ALLOWED_CONTROL_ROOT;
+            let mut bn254_control_id = BN254_IDENTITY_CONTROL_ID;
+            bn254_control_id.as_mut_bytes().reverse();
+            let verifier_parameters_digest = Digest::from_hex(
+                "b72859b60cfe0bb13cbde70859fbc67ef9dbd5410bbe66bdb7be64a3dcf6814e",
+            )
+            .unwrap();
+            (
+                deploy_bitvm2_verifier(
+                    &deployer_provider,
+                    <[u8; 32]>::from(control_root).into(),
+                    <[u8; 32]>::from(bn254_control_id).into(),
+                )
+                .await?,
+                verifier_parameters_digest.as_bytes()[..4].try_into()?,
+            )
+        }
+    };
+
     let set_verifier =
-        deploy_set_verifier(&deployer_provider, verifier, set_builder_id, set_builder_url).await?;
+        deploy_set_verifier(&deployer_provider, verifier_router, set_builder_id, set_builder_url)
+            .await?;
 
     let router_instance = RiscZeroVerifierRouter::RiscZeroVerifierRouterInstance::new(
         verifier_router,
@@ -243,6 +280,11 @@ pub async fn deploy_contracts(
 
     let call = &router_instance
         .addVerifier(groth16_selector.into(), verifier)
+        .from(deployer_signer.address());
+    let _ = call.send().await?;
+
+    let call = &router_instance
+        .addVerifier(bvm2_selector.into(), bvm2_verifier)
         .from(deployer_signer.address());
     let _ = call.send().await?;
 
