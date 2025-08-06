@@ -39,6 +39,7 @@ reqwest-middleware = "0.4.1"
 reqwest-retry = "0.7"
 risc0-aggregation = { workspace = true }
 risc0-ethereum-contracts = { workspace = true, features = ["unstable"] }
+risc0-groth16 = { version = "2.0.2", features = ["prove"] }
 risc0-zkvm = { workspace = true, features = ["std", "client", "prove"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -71,6 +72,9 @@ serial_test = "3.2"
 temp-env = { version = "0.3", features = ["async_closure"] }
 tokio = { workspace = true, features = ["full"] }
 tracing-test = { workspace = true }
-
+ark-bn254 = "0.5.0"
+ark-ff = "0.5.0"
+ark-serialize = "0.5.0"
+ark-ec = "0.5.0"
 [features]
 test-utils = ["dep:boundless-market-test-utils"]

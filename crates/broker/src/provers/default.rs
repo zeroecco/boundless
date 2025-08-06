@@ -399,7 +399,12 @@ impl Prover for DefaultProver {
         Ok(proof_data.compressed_receipt.as_ref().cloned())
     }
 
-    async fn shrink_bitvm2(&self, proof_id: &str) -> Result<String, ProverError> {
+    async fn shrink_bitvm2(
+        &self,
+        proof_id: &str,
+        work_dir: Option<PathBuf>,
+    ) -> Result<String, ProverError> {
+        let temp_dir = tempdir().context("Failed to crate tmpdir")?;
         tracing::info!("Compressing proof Shrink bitvm2 {proof_id}");
         let receipt = self
             .get_receipt(proof_id)
@@ -416,12 +421,12 @@ impl Prover for DefaultProver {
 
         tracing::info!("Completing identity predicate, {proof_id}");
 
-        let work_dir = tempdir().context("Failed to create tmpdir")?;
+        let work_dir =
+            if let Some(work_dir) = work_dir { work_dir } else { temp_dir.path().to_path_buf() };
 
-        let compress_result =
-            prove_and_verify(&proof_id, work_dir.path(), p254_receipt, receipt.journal)
-                .await
-                .map_err(ProverError::from);
+        let compress_result = prove_and_verify(&proof_id, &work_dir, p254_receipt, receipt.journal)
+            .await
+            .map_err(ProverError::from);
 
         let compressed_bytes = compress_result
             .as_ref()
@@ -457,7 +462,7 @@ impl Prover for DefaultProver {
     }
 }
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -613,6 +618,7 @@ fn to_decimal(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_ff::PrimeField;
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
     use risc0_zkvm::sha::Digest;
     use tokio::test;
@@ -707,6 +713,52 @@ mod tests {
         let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
         let receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
         receipt.verify(image_id).unwrap();
+    }
+
+    fn get_r0_verifying_key() -> risc0_groth16::VerifyingKey {
+        let json_content = std::fs::read_to_string("/home/etu/risc0-to-bitvm2/vkey_guest.json")
+            .expect("Failed to read verification key JSON file");
+        let vk_json: risc0_groth16::VerifyingKeyJson =
+            serde_json::from_str(&json_content).expect("Failed to parse verification key JSON");
+
+        vk_json.verifying_key().unwrap()
+    }
+
+    #[test]
+    async fn test_shrink() {
+        let work_dir = tempdir().expect("Failed to create temp dir");
+        let proof_path = work_dir.path().join("proof.json");
+        let prover = DefaultProver::new();
+
+        // Upload test data
+        let input_data = [0u8; 32].to_vec(); // Example input data
+        let input_id = prover.upload_input(input_data.clone()).await.unwrap();
+        let image_id = Digest::from(ECHO_ID);
+        prover.upload_image(&image_id.to_string(), ECHO_ELF.to_vec()).await.unwrap();
+
+        // Run SNARK proving
+        let ProofResult { id: stark_id, .. } =
+            prover.prove_and_monitor_stark(&image_id.to_string(), &input_id, vec![]).await.unwrap();
+        let snark_id =
+            prover.shrink_bitvm2(&stark_id, Some(work_dir.path().to_path_buf())).await.unwrap();
+
+        // Fetch the compressed receipt
+        let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
+        let receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
+        let public_input_scalar = risc0_groth16::PublicInputsJson {
+            values: vec![ark_bn254::Fr::from_be_bytes_mod_order(&input_data).to_string()],
+        }
+        .to_scalar()
+        .unwrap();
+        println!("R0 Verify Start");
+
+        let proof_content = tokio::fs::read_to_string(proof_path).await.unwrap();
+        let proof_json: Groth16ProofJson = serde_json::from_str(&proof_content).unwrap();
+        let seal = proof_json.try_into().unwrap();
+        let verifying_key = get_r0_verifying_key();
+
+        let v = risc0_groth16::Verifier::new(&seal, &public_input_scalar, &verifying_key).unwrap();
+        println!("R0 Verify result: {:?}", v.verify().is_ok());
     }
 
     #[test]

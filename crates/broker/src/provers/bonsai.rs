@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::future::Future;
+use std::{future::Future, path::PathBuf};
 
 use async_trait::async_trait;
 use bonsai_sdk::{
@@ -564,7 +564,11 @@ impl Prover for Bonsai {
         Ok(Some(receipt_buf))
     }
 
-    async fn shrink_bitvm2(&self, proof_id: &str) -> Result<String, ProverError> {
+    async fn shrink_bitvm2(
+        &self,
+        proof_id: &str,
+        _work_dir: Option<PathBuf>,
+    ) -> Result<String, ProverError> {
         let proof_id = self
             .retry(
                 || async { Ok(self.client.shrink_bitvm2(proof_id.into()).await?) },

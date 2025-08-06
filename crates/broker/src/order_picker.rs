@@ -501,7 +501,7 @@ where
             let prover = self.prover.clone();
             let config = self.config.clone();
             let request = order.request.clone();
-            let order_id_clone = order_id.clone();
+            let order_id_clone: String = order_id.clone();
             let cache_key_clone = cache_key.clone();
 
             let cache_cloned = self.preflight_cache.clone();
@@ -1323,7 +1323,7 @@ fn calculate_max_cycles_for_time(prove_khz: u64, time_seconds: u64) -> u64 {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::time::Duration;
+    use std::{path::PathBuf, time::Duration};
 
     use super::*;
     use crate::{
@@ -2715,7 +2715,11 @@ pub(crate) mod tests {
         ) -> Result<Option<Vec<u8>>, ProverError> {
             self.default_prover.get_compressed_receipt(proof_id).await
         }
-        async fn shrink_bitvm2(&self, _proof_id: &str) -> Result<String, ProverError> {
+        async fn shrink_bitvm2(
+            &self,
+            _proof_id: &str,
+            _work_dir: Option<PathBuf>,
+        ) -> Result<String, ProverError> {
             todo!("Shrink BitVM is not implemented yet");
         }
         async fn get_shrink_bitvm2_receipt(
