@@ -14,7 +14,7 @@ members = [
     "crates/indexer",
     "crates/ops-lambdas/indexer-monitor",
     "crates/order-generator",
-    "crates/order-stream",
+    "crates/order-stream", "crates/shrink_bitvm2",
     "crates/slasher",
     "documentation/doc-test",
 ]
@@ -34,6 +34,7 @@ distributor = { path = "crates/distributor" }
 guest-assessor = { path = "crates/guest/assessor" }
 guest-util = { path = "crates/guest/util" }
 order-stream = { path = "crates/order-stream" }
+shrink_bitvm2 = { path = "crates/shrink_bitvm2" }
 
 async-stream = "0.3"
 alloy = { version = "1.0", default-features = false }

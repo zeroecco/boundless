@@ -15,7 +15,6 @@
 use std::{borrow::Borrow, collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::config::ProverConf;
-use crate::provers::shrink_bitvm2::prove_and_verify;
 use crate::provers::{ExecutorResp, ProofResult, Prover, ProverError};
 use anyhow::{Context, Result as AnyhowResult};
 use async_trait::async_trait;
@@ -424,9 +423,10 @@ impl Prover for DefaultProver {
         let work_dir =
             if let Some(work_dir) = work_dir { work_dir } else { temp_dir.path().to_path_buf() };
 
-        let compress_result = prove_and_verify(&proof_id, &work_dir, p254_receipt, receipt.journal)
-            .await
-            .map_err(ProverError::from);
+        let compress_result =
+            shrink_bitvm2::prove_and_verify(&proof_id, &work_dir, p254_receipt, receipt.journal)
+                .await
+                .map_err(ProverError::from);
 
         let compressed_bytes = compress_result
             .as_ref()
@@ -465,8 +465,10 @@ impl Prover for DefaultProver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_ff::PrimeField;
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
-    use risc0_zkvm::sha::Digest;
+    use risc0_zkvm::{sha::Digest, Groth16Seal};
+    use tempfile::tempdir;
     use tokio::test;
 
     #[test]
@@ -559,6 +561,57 @@ mod tests {
         let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
         let receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
         receipt.verify(image_id).unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_shrink() {
+        let work_dir = tempdir().expect("Failed to create temp dir");
+        let prover = DefaultProver::new();
+
+        // Upload test data
+        let input_data = [255u8; 32].to_vec(); // Example input data
+        let input_id = prover.upload_input(input_data.clone()).await.unwrap();
+        let image_id = Digest::from(ECHO_ID);
+        prover.upload_image(&image_id.to_string(), ECHO_ELF.to_vec()).await.unwrap();
+
+        // Run SNARK proving
+        let ProofResult { id: stark_id, .. } =
+            prover.prove_and_monitor_stark(&image_id.to_string(), &input_id, vec![]).await.unwrap();
+
+        let snark_id =
+            prover.shrink_bitvm2(&stark_id, Some(work_dir.path().to_path_buf())).await.unwrap();
+
+        // Fetch the compressed receipt
+        let compressed_receipt = prover.get_compressed_receipt(&snark_id).await.unwrap().unwrap();
+        let shrink_receipt: Receipt = bincode::deserialize(&compressed_receipt).unwrap();
+
+        let stark_receipt = prover.get_receipt(&stark_id).await.unwrap().unwrap();
+
+        let groth16_receipt = shrink_receipt.inner.groth16().unwrap();
+        let groth16_seal = Groth16Seal::from_vec(&groth16_receipt.seal)
+            .expect("Failed to create Groth16 seal from receipt");
+
+        let final_output_bytes = shrink_bitvm2::compute_output_bytes(
+            &shrink_bitvm2::BN254_IDENTITY_CONTROL_ID,
+            &image_id,
+            &stark_receipt.journal.bytes,
+        );
+        let final_output_trimmed: [u8; 31] = final_output_bytes[..31].try_into().unwrap();
+        let public_input_scalar = ark_bn254::Fr::from_be_bytes_mod_order(&final_output_trimmed);
+
+        let public_input_scalar_str = public_input_scalar.to_string();
+        let public_input_scalar =
+            risc0_groth16::PublicInputsJson { values: vec![public_input_scalar_str] }
+                .to_scalar()
+                .unwrap();
+        println!("R0 Verify Start");
+
+        let verifying_key = shrink_bitvm2::get_r0_verifying_key();
+
+        let v = risc0_groth16::Verifier::new(&groth16_seal, &public_input_scalar, &verifying_key)
+            .unwrap();
+        println!("R0 Verify result: {:?}", v.verify().is_ok());
+        assert!(v.verify().is_ok(), "R0 verification failed");
     }
 
     #[test]
