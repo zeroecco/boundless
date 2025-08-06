@@ -44,6 +44,7 @@ use boundless_market::{
     storage::fetch_url,
     ProofRequest,
 };
+use tempfile::tempdir;
 
 alloy::sol!(
     #[sol(all_derives)]
@@ -175,6 +176,24 @@ impl DefaultProver {
         .await?
     }
 
+    pub(crate) async fn shrink_bitvm2(&self, receipt: &Receipt) -> Result<Receipt> {
+        if is_dev_mode() {
+            return Ok(receipt.clone());
+        }
+        let succinct_receipt = receipt.inner.succinct().unwrap();
+        let p254_receipt = risc0_zkvm::recursion::identity_p254(succinct_receipt)
+            .context("identity predicate failed")?;
+        let temp_dir = tempdir().context("Failed to crate tmpdir")?;
+        let receipt = shrink_bitvm2::prove_and_verify(
+            "boundless_cli",
+            temp_dir.path(),
+            p254_receipt,
+            receipt.journal.clone(),
+        )
+        .await?;
+        Ok(receipt)
+    }
+
     // Finalizes the set builder.
     pub(crate) async fn finalize(
         &self,
@@ -304,12 +323,8 @@ impl DefaultProver {
                 let receipt = self.compress(&receipts[i]).await?;
                 encode_seal(&receipt)?
             } else if is_shrink_bitvm2_selector(req.requirements.selector) {
-                // let receipt = self
-                //     .shrink_bitvm2(&receipts[i].id, None)
-                //     .await
-                //     .context("Failed to shrink BitVM2 receipt")?;
-
-                todo!("Shrink BitVM2 receipt is not implemented yet");
+                let receipt = self.shrink_bitvm2(&receipts[i]).await?;
+                encode_seal(&receipt)?
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
@@ -455,7 +470,6 @@ mod tests {
 
         prover.fulfill(&[(request, signature.as_bytes().into())]).await.unwrap();
     }
-    /// TODO(ec2): implement this test
     #[tokio::test]
     #[test_log::test]
     async fn test_shrink() {

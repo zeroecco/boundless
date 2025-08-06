@@ -21,7 +21,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "process"] }
 
 tracing = { workspace = true }
 

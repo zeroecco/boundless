@@ -28,9 +28,9 @@ pub async fn prove_and_verify(
     let proof_path = work_dir.join("proof.json");
     let public_path = work_dir.join("public.json");
 
-    write_seal(proof_id, &journal.bytes, p254_receipt, &receipt_claim, &seal_path).await?;
+    write_seal(&journal.bytes, p254_receipt, &receipt_claim, &seal_path).await?;
 
-    let proof_json = generate_proof(proof_id, work_dir, &proof_path).await?;
+    let proof_json = generate_proof(work_dir, &proof_path).await?;
     tracing::info!("{proof_id}: generated shrink groth16 proof");
 
     let image_id = receipt_claim.pre.digest();
@@ -117,19 +117,18 @@ pub fn finalize(
     proof_json: Groth16ProofJson,
 ) -> Result<Receipt> {
     let seal: Groth16Seal = proof_json.try_into()?;
-    let groth16_receipt = Groth16Receipt::new(seal.to_vec(), receipt_claim.into(), Digest::ZERO);
+    let groth16_receipt = Groth16Receipt::new(seal.to_vec(), receipt_claim.into(), Digest::ZERO); // TODO(ec2): i dont think this is supposed to be digest zero...
     let receipt = Receipt::new(risc0_zkvm::InnerReceipt::Groth16(groth16_receipt), journal_bytes);
     Ok(receipt)
 }
 
 pub async fn write_seal(
-    proof_id: &str,
     journal_bytes: &[u8],
     p254_receipt: SuccinctReceipt<ReceiptClaim>,
     receipt_claim: &ReceiptClaim,
     seal_path: &Path,
 ) -> Result<()> {
-    tracing::info!("{proof_id}: Writing seal");
+    tracing::info!("Writing seal");
 
     let seal_bytes = p254_receipt.get_seal_bytes();
     let mut seal_json = Vec::new();
@@ -204,12 +203,8 @@ pub async fn write_seal(
 // ./verify_for_guest /mnt/input.json output.wtns
 // rapidsnark verify_for_guest_final.zkey output.wtns /mnt/proof.json /mnt/public.json
 
-pub async fn generate_proof(
-    job_id: &str,
-    work_dir: &Path,
-    proof_path: &Path,
-) -> Result<Groth16ProofJson> {
-    tracing::info!("{job_id}: docker run ozancw/risc0-to-bitvm2-groth16-prover");
+pub async fn generate_proof(work_dir: &Path, proof_path: &Path) -> Result<Groth16ProofJson> {
+    tracing::info!("docker run ozancw/risc0-to-bitvm2-groth16-prover");
 
     let volume = format!("{}:/mnt", work_dir.display());
     let status = Command::new("docker")
@@ -219,7 +214,7 @@ pub async fn generate_proof(
 
     anyhow::ensure!(
         status.success(),
-        "{job_id}: ozancw/risc0-to-bitvm2-groth16-prover failed: {:?}",
+        "ozancw/risc0-to-bitvm2-groth16-prover failed: {:?}",
         status.code()
     );
 
