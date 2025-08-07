@@ -7,7 +7,6 @@
 #![no_std]
 
 extern crate alloc;
-
 use alloc::vec::Vec;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolStruct, SolValue};
@@ -68,7 +67,7 @@ fn main() {
         };
         fill.evaluate_requirements().expect("requirements not met");
         env::verify_integrity(&fill.receipt_claim()).expect("claim integrity check failed");
-        let claim_digest = fill.receipt_claim().digest();
+        let claim_digest = fill.claim_digest();
         let commit = AssessorCommitment {
             index: U256::from(index),
             id: fill.request.id,

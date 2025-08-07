@@ -29,7 +29,7 @@ use risc0_zkvm::{Digest, Journal};
 use url::Url;
 
 use crate::{
-    contracts::{ProofRequest, RequestId, RequestInput},
+    contracts::{Predicate, ProofRequest, RequestId, RequestInput},
     input::GuestEnv,
     storage::{StandardStorageProvider, StorageProvider},
     util::NotProvided,
@@ -298,6 +298,9 @@ pub struct RequestParams {
     /// [RequestId] to use for the proof request.
     pub request_id: Option<RequestId>,
 
+    /// Claim digest that is used to verify the proof.
+    pub claim_digest: Option<Digest>,
+
     /// [OfferParams] for constructing the [Offer][crate::Offer] to send along with the request.
     pub offer: OfferParams,
 
@@ -540,6 +543,11 @@ impl RequestParams {
         Self { requirements: value.into(), ..self }
     }
 
+    /// TODO(ec2): doc
+    pub fn with_claim_digest(self, value: impl Into<Digest>) -> Self {
+        Self { claim_digest: Some(value.into()), ..self }
+    }
+
     /// Request a stand-alone Groth16 proof for this request.
     ///
     /// This is a convinience method to set the selector on the requirements. Note that calling
@@ -563,6 +571,12 @@ impl RequestParams {
             true => Some((Selector::FakeReceipt as u32).into()),
             false => Some((Selector::ShrinkBitvm2V0_1 as u32).into()),
         };
+        // if let Some(ref predicate) = requirements.predicate {
+        //     if predicate.predicateType == crate::contracts::PredicateType::ClaimDigestMatch {
+        //         // If the predicate is a claim digest match, we need to set the image ID.
+        //         requirements.image_id = Some(predicate.data.0.as_ref().try_into().unwrap());
+        //     }
+        // }
         Self { requirements, ..self }
     }
 }

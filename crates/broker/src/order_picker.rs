@@ -668,7 +668,7 @@ where
             .request
             .requirements
             .predicate
-            .eval(order.request.requirements.imageId, journal.clone())
+            .eval(Digest::from(order.request.requirements.imageId.0), journal.clone())
         {
             tracing::info!("Order {order_id} predicate check failed, skipping");
             return Ok(Skip);

@@ -596,13 +596,9 @@ mod tests {
         let groth16_seal = Groth16Seal::from_vec(&groth16_receipt.seal)
             .expect("Failed to create Groth16 seal from receipt");
 
-        let final_output_bytes = shrink_bitvm2::compute_output_bytes(
-            &shrink_bitvm2::BN254_IDENTITY_CONTROL_ID,
-            &image_id,
-            &stark_receipt.journal.bytes,
-        );
-        let final_output_trimmed: [u8; 31] = final_output_bytes[..31].try_into().unwrap();
-        let public_input_scalar = ark_bn254::Fr::from_be_bytes_mod_order(&final_output_trimmed);
+        let final_output_bytes =
+            shrink_bitvm2::blake3_claim_digest(&image_id, &stark_receipt.journal.bytes);
+        let public_input_scalar = ark_bn254::Fr::from_be_bytes_mod_order(&final_output_bytes);
 
         let public_input_scalar_str = public_input_scalar.to_string();
         let public_input_scalar =

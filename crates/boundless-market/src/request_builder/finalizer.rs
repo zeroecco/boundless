@@ -14,12 +14,12 @@
 
 use super::{Adapt, Layer, RequestParams};
 use crate::{
-    contracts::RequestInput,
-    contracts::{Offer, ProofRequest, RequestId, Requirements},
+    contracts::{Offer, PredicateType, ProofRequest, RequestId, RequestInput, Requirements},
     util::now_timestamp,
 };
 use anyhow::{bail, Context};
 use derive_builder::Builder;
+use risc0_zkvm::Digest;
 use url::Url;
 
 #[non_exhaustive]
@@ -129,9 +129,12 @@ impl Adapt<Finalizer> for RequestParams {
         let request_id = self.require_request_id().context("failed to build request")?.clone();
 
         // As an extra consistency check. verify the journal satisfies the required predicate.
-        if let Some(ref journal) = self.journal {
-            if !requirements.predicate.eval(requirements.imageId, journal) {
-                bail!("journal in request builder does not match requirements predicate; check request parameters.\npredicate = {:?}\njournal = 0x{}", requirements.predicate, hex::encode(journal));
+        // TODO(ec2): need to properly eval
+        if requirements.predicate.predicateType != PredicateType::ClaimDigestMatch {
+            if let Some(ref journal) = self.journal {
+                if !requirements.predicate.eval(Digest::from(requirements.imageId.0), journal) {
+                    bail!("journal in request builder does not match requirements predicate; check request parameters.\npredicate = {:?}\njournal = 0x{}", requirements.predicate, hex::encode(journal));
+                }
             }
         }
 

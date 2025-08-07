@@ -37,6 +37,7 @@ pub async fn prove_and_verify(
     let image_id = receipt_claim.pre.digest();
     let final_receipt = finalize(journal.bytes, receipt_claim, proof_json)?;
     let output_bytes = decode_output(&public_path).await?;
+    tracing::info!("bvm2 decoded output byte length: {}", output_bytes.len());
 
     check_output(image_id, &final_receipt, &output_bytes)?;
 
@@ -71,12 +72,9 @@ pub fn calculate_output_prefix(control_id: &Digest, image_id: &[u8]) -> [u8; 32]
 }
 
 pub fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u8]) -> Result<()> {
-    let control_id = BN254_IDENTITY_CONTROL_ID;
+    let expected_output_bytes = blake3_claim_digest(&image_id, &final_receipt.journal.bytes);
 
-    let expected_output_bytes =
-        compute_output_bytes(&control_id, &image_id, &final_receipt.journal.bytes);
-
-    let expected_output_bytes: [u8; 31] = expected_output_bytes[..31].try_into()?;
+    let expected_output_bytes: [u8; 31] = expected_output_bytes[1..=31].try_into()?;
     tracing::info!("check output: computed output: {}", hex::encode(expected_output_bytes));
 
     ensure!(expected_output_bytes == output_bytes, "check output: public output mismatch");
@@ -84,15 +82,16 @@ pub fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u
     Ok(())
 }
 
-pub fn compute_output_bytes(
-    control_id: &Digest,
-    image_id: &Digest,
-    journal_bytes: &[u8],
-) -> [u8; 32] {
+pub fn blake3_claim_digest(image_id: &Digest, journal_bytes: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(&calculate_output_prefix(control_id, image_id.as_bytes()));
+    hasher.update(&calculate_output_prefix(&BN254_IDENTITY_CONTROL_ID, image_id.as_bytes()));
     hasher.update(journal_bytes);
-    hasher.finalize().into()
+    let mut digest_bytes: [u8; 32] = hasher.finalize().into();
+    // trim to 31 bytes
+    digest_bytes[31] = 0;
+    // shift because of endianness
+    digest_bytes.rotate_right(1);
+    digest_bytes
 }
 
 pub async fn decode_output(public_path: &Path) -> Result<Vec<u8>> {

@@ -350,16 +350,11 @@ where
                             .context("Failed to deserialize g16 receipt")?;
 
                         // For Shrink Bitvm2 proofs, we use the blake3 claim digest as the image ID.
-                        image_id_or_claim_digest = shrink_bitvm2::compute_output_bytes(
-                            &shrink_bitvm2::BN254_IDENTITY_CONTROL_ID,
+                        image_id_or_claim_digest = shrink_bitvm2::blake3_claim_digest(
                             &Digest::from(order_img_id.0),
                             &groth16_receipt.journal.bytes,
                         )
                         .into();
-                        // Trim to fit field
-                        image_id_or_claim_digest[31] = 0;
-                        // shift right because big endian
-                        image_id_or_claim_digest.as_mut_slice().rotate_right(1);
                     } else {
                         image_id_or_claim_digest = <[u8; 32]>::from(order_claim_digest).into();
                     }
