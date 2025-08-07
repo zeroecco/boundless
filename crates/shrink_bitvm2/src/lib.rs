@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use hex::FromHex;
 use risc0_zkvm::{
     digest, seal_to_json, sha::Digestible, Digest, Groth16ProofJson, Groth16Receipt, Groth16Seal,
     Journal, Receipt, ReceiptClaim, SuccinctReceipt,
@@ -76,6 +77,7 @@ pub fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u
         compute_output_bytes(&control_id, &image_id, &final_receipt.journal.bytes);
 
     let expected_output_bytes: [u8; 31] = expected_output_bytes[..31].try_into()?;
+    tracing::info!("check output: computed output: {}", hex::encode(expected_output_bytes));
 
     ensure!(expected_output_bytes == output_bytes, "check output: public output mismatch");
 
@@ -117,7 +119,11 @@ pub fn finalize(
     proof_json: Groth16ProofJson,
 ) -> Result<Receipt> {
     let seal: Groth16Seal = proof_json.try_into()?;
-    let groth16_receipt = Groth16Receipt::new(seal.to_vec(), receipt_claim.into(), Digest::ZERO); // TODO(ec2): i dont think this is supposed to be digest zero...
+    let verifier_parameters_digest =
+        Digest::from_hex("b72859b60cfe0bb13cbde70859fbc67ef9dbd5410bbe66bdb7be64a3dcf6814e")
+            .unwrap(); // TODO(ec2): dont hardcode this (actually not sure if this is ever even used, so could be digest zero)
+    let groth16_receipt =
+        Groth16Receipt::new(seal.to_vec(), receipt_claim.into(), verifier_parameters_digest);
     let receipt = Receipt::new(risc0_zkvm::InnerReceipt::Groth16(groth16_receipt), journal_bytes);
     Ok(receipt)
 }
@@ -230,6 +236,7 @@ fn to_decimal(s: &str) -> Option<String> {
 }
 
 pub fn verify_proof(final_receipt: &Receipt, output_bytes: &[u8]) -> Result<()> {
+    tracing::info!("verify_proof output bytes: {}", hex::encode(output_bytes));
     use ark_ff::PrimeField;
 
     let ark_proof = from_seal(&final_receipt.inner.groth16()?.seal);

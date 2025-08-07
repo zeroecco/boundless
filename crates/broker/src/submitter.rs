@@ -26,7 +26,7 @@ use boundless_market::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, MarketError, UnlockedRequest},
         encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, PredicateType,
     },
-    selector::is_groth16_selector,
+    selector::{is_groth16_selector, is_shrink_bitvm2_selector},
 };
 use risc0_aggregation::{SetInclusionReceipt, SetInclusionReceiptVerifierParameters};
 use risc0_ethereum_contracts::set_verifier::SetVerifierService;
@@ -290,7 +290,9 @@ where
                 let order_claim =
                     ReceiptClaim::ok(order_img_id.0, MaybePruned::Pruned(order_journal.digest()));
                 let order_claim_digest = order_claim.digest();
-                let seal = if is_groth16_selector(order_request.requirements.selector) {
+                let seal = if is_groth16_selector(order_request.requirements.selector)
+                    || is_shrink_bitvm2_selector(order_request.requirements.selector)
+                {
                     let compressed_proof_id =
                         self.db.get_order_compressed_proof_id(order_id).await.context(
                             "Failed to get order compressed proof ID from DB for submission",
@@ -332,7 +334,35 @@ where
                 let mut image_id_or_claim_digest = order_img_id;
                 let mut journal = order_journal;
                 if predicate_type == PredicateType::ClaimDigestMatch {
-                    image_id_or_claim_digest = <[u8; 32]>::from(order_claim_digest).into();
+                    if is_shrink_bitvm2_selector(order_request.requirements.selector) {
+                        let compressed_proof_id =
+                            self.db.get_order_compressed_proof_id(order_id).await.context(
+                                "Failed to get order compressed proof ID from DB for submission",
+                            )?;
+                        let groth16_receipt = self
+                            .prover
+                            .get_compressed_receipt(&compressed_proof_id)
+                            .await
+                            .context("Failed to fetch g16 receipt")?
+                            .context("Groth16 receipt missing")?;
+
+                        let groth16_receipt: Receipt = bincode::deserialize(&groth16_receipt)
+                            .context("Failed to deserialize g16 receipt")?;
+
+                        // For Shrink Bitvm2 proofs, we use the blake3 claim digest as the image ID.
+                        image_id_or_claim_digest = shrink_bitvm2::compute_output_bytes(
+                            &shrink_bitvm2::BN254_IDENTITY_CONTROL_ID,
+                            &Digest::from(order_img_id.0),
+                            &groth16_receipt.journal.bytes,
+                        )
+                        .into();
+                        // Trim to fit field
+                        image_id_or_claim_digest[31] = 0;
+                        // shift right because big endian
+                        image_id_or_claim_digest.as_mut_slice().rotate_right(1);
+                    } else {
+                        image_id_or_claim_digest = <[u8; 32]>::from(order_claim_digest).into();
+                    }
                     journal = vec![];
                 };
                 fulfillments.push(Fulfillment {
