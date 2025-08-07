@@ -199,7 +199,7 @@ impl Default for SupportedSelectors {
     fn default() -> Self {
         let mut supported_selectors = Self::new()
             .with_selector(UNSPECIFIED_SELECTOR, ProofType::Any)
-            .with_selector(FixedBytes::from(Selector::Groth16V2_1 as u32), ProofType::Groth16);
+            .with_selector(FixedBytes::from(Selector::groth16_latest() as u32), ProofType::Groth16);
         if is_dev_mode() {
             supported_selectors = supported_selectors
                 .with_selector(FixedBytes::from(Selector::FakeReceipt as u32), ProofType::Any);
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn test_supported_selectors() {
         let mut supported_selectors = SupportedSelectors::new();
-        let selector = FixedBytes::from(Selector::Groth16V2_1 as u32);
+        let selector = FixedBytes::from(Selector::groth16_latest() as u32);
         supported_selectors = supported_selectors.with_selector(selector, ProofType::Groth16);
         assert!(supported_selectors.is_supported(selector));
         supported_selectors.remove(selector);
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_is_groth16_selector() {
-        let selector = FixedBytes::from(Selector::Groth16V2_1 as u32);
+        let selector = FixedBytes::from(Selector::groth16_latest() as u32);
         assert!(is_groth16_selector(selector));
     }
 }
