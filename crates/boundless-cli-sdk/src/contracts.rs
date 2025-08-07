@@ -513,7 +513,7 @@ impl RequestInput {
     /// # Example
     ///
     /// ```
-    /// use boundless_market::contracts::RequestInput;
+    /// use boundless_cli_sdk::contracts::RequestInput;
     ///
     /// let input_vec = RequestInput::builder().write(&[0x41, 0x41, 0x41, 0x41])?.build_vec()?;
     /// let input = RequestInput::inline(input_vec);

@@ -181,7 +181,7 @@ impl GuestEnvBuilder {
     /// # Example
     ///
     /// ```
-    /// use boundless_market::GuestEnv;
+    /// use boundless_cli_sdk::GuestEnv;
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
@@ -209,7 +209,7 @@ impl GuestEnvBuilder {
     /// # Example
     ///
     /// ```
-    /// use boundless_market::GuestEnv;
+    /// use boundless_cli_sdk::GuestEnv;
     ///
     /// let slice1 = [0, 1, 2, 3];
     /// let slice2 = [3, 2, 1, 0];

@@ -228,7 +228,7 @@ impl<S> ClientBuilder<S> {
     /// Modify the [OfferLayer] configuration used in the [StandardRequestBuilder].
     ///
     /// ```rust
-    /// # use boundless_sdk::client::ClientBuilder;
+    /// # use boundless_cli_sdk::client::ClientBuilder;
     /// use alloy_primitives::utils::parse_units;
     ///
     /// ClientBuilder::new().config_offer_layer(|config| config
@@ -249,8 +249,8 @@ impl<S> ClientBuilder<S> {
     /// Modify the [RequestIdLayer] configuration used in the [StandardRequestBuilder].
     ///
     /// ```rust
-    /// # use boundless_sdk::client::ClientBuilder;
-    /// use boundless_sdk::request_builder::RequestIdLayerMode;
+    /// # use boundless_cli_sdk::client::ClientBuilder;
+    /// use boundless_cli_sdk::request_builder::RequestIdLayerMode;
     ///
     /// ClientBuilder::new().config_request_id_layer(|config| config
     ///     .mode(RequestIdLayerMode::Nonce)
@@ -267,7 +267,7 @@ impl<S> ClientBuilder<S> {
     /// Modify the [StorageLayer] configuration used in the [StandardRequestBuilder].
     ///
     /// ```rust
-    /// # use boundless_sdk::client::ClientBuilder;
+    /// # use boundless_cli_sdk::client::ClientBuilder;
     /// ClientBuilder::new().config_storage_layer(|config| config
     ///     .inline_input_max_bytes(10240)
     /// );

@@ -2576,6 +2576,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "boundless-cli-sdk"
+version = "0.14.0"
+dependencies = [
+ "alloy",
+ "alloy-chains",
+ "alloy-primitives 1.2.1",
+ "anyhow",
+ "async-trait",
+ "aws-sdk-s3",
+ "boundless-market",
+ "boundless-market-test-utils",
+ "bytemuck",
+ "clap",
+ "derive_builder",
+ "hex",
+ "httpmock",
+ "order-stream",
+ "rand 0.9.1",
+ "reqwest",
+ "risc0-zkvm",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "serde_yaml 0.9.34+deprecated",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "boundless-distributor"
 version = "0.14.0"
 dependencies = [
@@ -2700,40 +2734,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.19",
  "tracing-test",
- "url",
-]
-
-[[package]]
-name = "boundless-sdk"
-version = "0.14.0"
-dependencies = [
- "alloy",
- "alloy-chains",
- "alloy-primitives 1.2.1",
- "anyhow",
- "async-trait",
- "aws-sdk-s3",
- "boundless-market",
- "boundless-market-test-utils",
- "bytemuck",
- "clap",
- "derive_builder",
- "hex",
- "httpmock",
- "order-stream",
- "rand 0.9.1",
- "reqwest",
- "risc0-zkvm",
- "rmp-serde",
- "serde",
- "serde_json",
- "serde_with",
- "serde_yaml 0.9.34+deprecated",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
  "url",
 ]
 
