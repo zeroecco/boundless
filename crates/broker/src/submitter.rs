@@ -334,30 +334,9 @@ where
                 let mut image_id_or_claim_digest = order_img_id;
                 let mut journal = order_journal;
                 if predicate_type == PredicateType::ClaimDigestMatch {
-                    if is_shrink_bitvm2_selector(order_request.requirements.selector) {
-                        let compressed_proof_id =
-                            self.db.get_order_compressed_proof_id(order_id).await.context(
-                                "Failed to get order compressed proof ID from DB for submission",
-                            )?;
-                        let groth16_receipt = self
-                            .prover
-                            .get_compressed_receipt(&compressed_proof_id)
-                            .await
-                            .context("Failed to fetch g16 receipt")?
-                            .context("Groth16 receipt missing")?;
-
-                        let groth16_receipt: Receipt = bincode::deserialize(&groth16_receipt)
-                            .context("Failed to deserialize g16 receipt")?;
-
-                        // For Shrink Bitvm2 proofs, we use the blake3 claim digest as the image ID.
-                        image_id_or_claim_digest = shrink_bitvm2::blake3_claim_digest(
-                            &Digest::from(order_img_id.0),
-                            &groth16_receipt.journal.bytes,
-                        )
-                        .into();
-                    } else {
-                        image_id_or_claim_digest = <[u8; 32]>::from(order_claim_digest).into();
-                    }
+                    // TODO(ec2): Do we have to recalculate? Or can we get it from the requirements?
+                    image_id_or_claim_digest =
+                        order_request.requirements.predicate.data.0.as_ref().try_into().unwrap();
                     journal = vec![];
                 };
                 fulfillments.push(Fulfillment {
