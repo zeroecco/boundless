@@ -332,7 +332,7 @@ impl Client<NotProvided, NotProvided> {
 }
 
 impl<S, R> Client<S, R> {
-    /// Set the Boundless market service
+    /// Set the Boundless market address
     pub fn with_boundless_market(self, boundless_market: Address) -> Self {
         Self {
             deployment: Deployment {
@@ -343,7 +343,7 @@ impl<S, R> Client<S, R> {
         }
     }
 
-    /// Set the set verifier service
+    /// Set the set verifier address
     pub fn with_set_verifier(self, set_verifier: Address) -> Self {
         Self {
             deployment: Deployment { set_verifier_address: set_verifier, ..self.deployment },
@@ -359,7 +359,7 @@ impl<S, R> Client<S, R> {
         Self { storage_provider: Some(storage_provider), ..self }
     }
 
-    /// Set the offchain client
+    /// Set the order stream url
     pub fn order_stream_url(self, order_stream: String) -> Self {
         Self {
             deployment: Deployment {
@@ -371,7 +371,7 @@ impl<S, R> Client<S, R> {
     }
 
     /// Set the private key to use for signing transactions.
-    /// This is required for submitting onchain requests.
+    /// This is required for submitting requests.
     pub fn with_private_key(self, private_key: String) -> Self {
         Self { private_key: Some(private_key), ..self }
     }
@@ -565,6 +565,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Request submission failed"))
     }
 
+    /// Get the status of a request by its ID.
     pub fn status(
         &self,
         request_id: U256,
@@ -669,6 +670,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Request fulfillment failed"))
     }
 
+    /// Lock a request by its ID.
     pub fn lock_request(&self, request_id: U256) -> Result<(), Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
@@ -714,6 +716,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Request lock failed"))
     }
 
+    /// Fulfill a request by its ID.
     pub fn fulfill(&self, request_id: U256) -> Result<(), Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
@@ -759,6 +762,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Request fulfillment failed"))
     }
 
+    /// Get the balance of an account in the Boundless Market.
     pub fn balance_of(&self, address: Address) -> Result<U256, Error> {
         check_boundless_cli_installed()?;
         let mut boundless = Command::new("boundless");
@@ -796,6 +800,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Account balance check failed"))
     }
 
+    /// Deposit an amount into the Boundless Market account.
     pub fn deposit(&self, amount: U256) -> Result<U256, Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
@@ -838,6 +843,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Account deposit check failed"))
     }
 
+    /// Withdraw an amount from the Boundless Market account.
     pub fn withdraw(&self, amount: U256) -> Result<U256, Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
@@ -880,6 +886,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Account withdrawal check failed"))
     }
 
+    /// Get the stake balance of an account in the Boundless Market.
     pub fn stake_balance_of(&self, address: Address) -> Result<U256, Error> {
         check_boundless_cli_installed()?;
         let mut boundless = Command::new("boundless");
@@ -920,6 +927,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Account stake balance check failed"))
     }
 
+    /// Deposit stake into the Boundless Market account.
     pub fn deposit_stake(&self, amount: String) -> Result<U256, Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
@@ -964,6 +972,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Account stake deposit check failed"))
     }
 
+    /// Withdraw stake from the Boundless Market account.
     pub fn withdraw_stake(&self, amount: String) -> Result<U256, Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
@@ -1008,6 +1017,7 @@ impl<S, R> Client<S, R> {
         Err(Error::msg("Account stake withdrawal check failed"))
     }
 
+    /// Slash a request by its ID.
     pub fn slash(&self, request_id: U256) -> Result<(), Error> {
         check_boundless_cli_installed()?;
         let private_key = self.private_key.as_ref().ok_or_else(|| {
