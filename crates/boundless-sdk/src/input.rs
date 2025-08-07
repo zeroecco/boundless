@@ -15,7 +15,6 @@
 use bytemuck::Pod;
 use risc0_zkvm::serde::to_vec;
 use risc0_zkvm::ExecutorEnv;
-use rmp_serde;
 use serde::{Deserialize, Serialize};
 
 use crate::contracts::RequestInput;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::ops::Not;
+use std::{fmt, ops::Not};
 
 use alloy_primitives::{
     aliases::{U160, U32, U96},
@@ -142,6 +142,13 @@ impl RequestId {
             index: (value & U32::MAX.to::<U256>()).to::<u32>(),
             smart_contract_signed: (value & (U256::from(1) << 192)) != U256::ZERO,
         }
+    }
+}
+
+impl fmt::LowerHex for RequestId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let u256: U256 = self.clone().into();
+        write!(f, "{u256:#x}")
     }
 }
 
