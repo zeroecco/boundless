@@ -24,7 +24,11 @@ use serde_with::DisplayFromStr;
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
-use crate::{input::GuestEnvBuilder, util::now_timestamp};
+use crate::{
+    input::GuestEnvBuilder,
+    selector::Selector,
+    util::{is_dev_mode, now_timestamp},
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -289,12 +293,6 @@ pub enum RequestError {
     DigestMismatch,
 }
 
-// impl From<SignatureError> for RequestError {
-//     fn from(err: alloy_primitives::SignatureError) -> Self {
-//         RequestError::SignatureError(err.into())
-//     }
-// }
-
 impl ProofRequest {
     /// Creates a new proof request with the given parameters.
     ///
@@ -432,17 +430,17 @@ impl Requirements {
         Self { selector, ..self }
     }
 
-    // /// Set the selector for a groth16 proof.
-    // ///
-    // /// This will set the selector to the appropriate value based on the current environment.
-    // /// In dev mode, the selector will be set to `FakeReceipt`, otherwise it will be set
-    // /// to `Groth16V2_1`.
-    // pub fn with_groth16_proof(self) -> Self {
-    //     match risc0_zkvm::is_dev_mode() {
-    //         true => Self { selector: FixedBytes::from(Selector::FakeReceipt as u32), ..self },
-    //         false => Self { selector: FixedBytes::from(Selector::Groth16V2_1 as u32), ..self },
-    //     }
-    // }
+    /// Set the selector for a groth16 proof.
+    ///
+    /// This will set the selector to the appropriate value based on the current environment.
+    /// In dev mode, the selector will be set to `FakeReceipt`, otherwise it will be set
+    /// to the latest groth16 version.
+    pub fn with_groth16_proof(self) -> Self {
+        match is_dev_mode() {
+            true => Self { selector: FixedBytes::from(Selector::FakeReceipt as u32), ..self },
+            false => Self { selector: FixedBytes::from(Selector::groth16_latest() as u32), ..self },
+        }
+    }
 }
 
 impl Predicate {
@@ -611,65 +609,6 @@ pub const UNSPECIFIED_SELECTOR: FixedBytes<4> = FixedBytes::<4>([0; 4]);
 mod tests {
     use super::*;
     use std::str::FromStr;
-
-    // async fn create_order(signer_addr: Address, order_id: u32) -> ProofRequest {
-    //     let request_id = RequestId::new(signer_addr, order_id);
-
-    //     let req = ProofRequest {
-    //         id: request_id,
-    //         requirements: Requirements::new(
-    //             Digest::ZERO,
-    //             Predicate { predicate_type: PredicateType::PrefixMatch, data: Default::default() },
-    //         ),
-    //         image_url: "https://dev.null".to_string(),
-    //         input: RequestInput::builder().build_inline().unwrap(),
-    //         offer: Offer {
-    //             min_price: U256::from(0),
-    //             max_price: U256::from(1),
-    //             bidding_start: 0,
-    //             timeout: 1000,
-    //             ramp_up_period: 1,
-    //             lock_timeout: 1000,
-    //             lock_stake: U256::from(0),
-    //         },
-    //     };
-
-    //     // let client_sig = req.sign_request(signer, contract_addr, chain_id).await.unwrap();
-
-    //     req
-    // }
-
-    // #[tokio::test]
-    // async fn validate_sig() {
-    //     let signer: PrivateKeySigner =
-    //         "6f142508b4eea641e33cb2a0161221105086a84584c74245ca463a49effea30b".parse().unwrap();
-    //     let order_id: u32 = 1;
-    //     let contract_addr = Address::ZERO;
-    //     let chain_id = 1;
-    //     let signer_addr = signer.address();
-
-    //     let (req, client_sig) =
-    //         create_order(&signer, signer_addr, order_id, contract_addr, chain_id).await;
-
-    //     req.verify_signature(&Bytes::from(client_sig), contract_addr, chain_id).unwrap();
-    // }
-
-    // #[tokio::test]
-    // #[should_panic(expected = "SignatureError")]
-    // async fn invalid_sig() {
-    //     let signer: PrivateKeySigner =
-    //         "6f142508b4eea641e33cb2a0161221105086a84584c74245ca463a49effea30b".parse().unwrap();
-    //     let order_id: u32 = 1;
-    //     let contract_addr = Address::ZERO;
-    //     let chain_id = 1;
-    //     let signer_addr = signer.address();
-
-    //     let (req, mut client_sig) =
-    //         create_order(&signer, signer_addr, order_id, contract_addr, chain_id).await;
-
-    //     client_sig[0] = 1;
-    //     req.verify_signature(&Bytes::from(client_sig), contract_addr, chain_id).unwrap();
-    // }
 
     #[test]
     fn test_request_id() {
