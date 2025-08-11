@@ -24,6 +24,7 @@ import {Account} from "./types/Account.sol";
 import {AssessorJournal} from "./types/AssessorJournal.sol";
 import {AssessorCallback} from "./types/AssessorCallback.sol";
 import {AssessorCommitment} from "./types/AssessorCommitment.sol";
+import {CallbackData} from "./types/CallbackData.sol";
 import {Fulfillment} from "./types/Fulfillment.sol";
 import {AssessorReceipt} from "./types/AssessorReceipt.sol";
 import {PredicateType} from "./types/Predicate.sol";
@@ -259,21 +260,15 @@ contract BoundlessMarket is
             Fulfillment calldata fill = fills[i];
             predicateTypes[i] = fill.predicateType;
 
-            bytes32 claimDigest;
-            if (fill.predicateType == PredicateType.ClaimDigestMatch) {
-                claimDigest = fill.imageIdOrClaimDigest;
-            } else {
-                // The requestor requested a journal, so we compute the claim digest from the journal.
-                claimDigest = ReceiptClaimLib.ok(fill.imageIdOrClaimDigest, sha256(fill.journal)).digest();
-            }
-            leaves[i] = AssessorCommitment(i, fill.id, fill.requestDigest, claimDigest).eip712Digest();
+            
+            leaves[i] = AssessorCommitment(i, fill.id, fill.requestDigest, fill.claimDigest).eip712Digest();
 
             // If the requestor did not specify a selector, we verify with DEFAULT_MAX_GAS_FOR_VERIFY gas limit.
             // This ensures that by default, client receive proofs that can be verified cheaply as part of their applications.
             if (!hasSelector[i]) {
-                VERIFIER.verifyIntegrity{gas: DEFAULT_MAX_GAS_FOR_VERIFY}(Receipt(fill.seal, claimDigest));
+                VERIFIER.verifyIntegrity{gas: DEFAULT_MAX_GAS_FOR_VERIFY}(Receipt(fill.seal, fill.claimDigest));
             } else {
-                VERIFIER.verifyIntegrity(Receipt(fill.seal, claimDigest));
+                VERIFIER.verifyIntegrity(Receipt(fill.seal, fill.claimDigest));
             }
         }
 
@@ -343,10 +338,35 @@ contract BoundlessMarket is
             }
 
             uint256 callbackIndexPlusOne = fillToCallbackIndexPlusOne[i];
+            // We do not support callbacks for claim digest matches.
             if ((fill.predicateType != PredicateType.ClaimDigestMatch) && (callbackIndexPlusOne > 0)) {
+                (
+                    bytes32 imageId,
+                    bytes calldata journal
+                ) = _decodeCallbackData(fill.callbackData);
+
                 AssessorCallback calldata callback = assessorReceipt.callbacks[callbackIndexPlusOne - 1];
-                _executeCallback(fill.id, callback.addr, callback.gasLimit, fill.imageIdOrClaimDigest, fill.journal, fill.seal);
+                _executeCallback(fill.id, callback.addr, callback.gasLimit, imageId, journal, fill.seal);
             }
+        }
+    }
+
+    function _decodeCallbackData(bytes calldata data) 
+        internal 
+        pure 
+        returns (bytes32 imageId, bytes calldata journal) 
+    {
+        assembly {
+            // Extract imageId (first 32 bytes after length)
+            imageId := calldataload(add(data.offset, 0x20))
+            
+            // Extract journal offset and create calldata slice
+            let journalOffset := calldataload(add(data.offset, 0x40))
+            let journalPtr := add(data.offset, add(0x20, journalOffset))
+            let journalLength := calldataload(journalPtr)
+            
+            journal.offset := add(journalPtr, 0x20)
+            journal.length := journalLength
         }
     }
 
