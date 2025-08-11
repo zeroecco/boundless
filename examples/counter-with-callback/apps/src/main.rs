@@ -104,7 +104,7 @@ async fn run(args: Args) -> Result<()> {
     // Shrink Bitvm2 proofs require the input to be 32 bytes
     let echo_message = echo_message.as_le_bytes();
 
-    let r0_claim_digest = ReceiptClaim::ok(ECHO_ID, echo_message.to_vec()).digest();
+    // let r0_claim_digest = ReceiptClaim::ok(ECHO_ID, echo_message.to_vec()).digest();
     let blake3_claim_digest =
         shrink_bitvm2::blake3_claim_digest(&Digest::from(ECHO_ID), echo_message.as_ref());
 

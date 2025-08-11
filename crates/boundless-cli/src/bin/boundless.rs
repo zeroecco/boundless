@@ -716,6 +716,7 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             let session_info = execute(&request).await?;
             let journal = session_info.journal.bytes;
 
+            // TODO(ec2): need to calculate the claim digest here.
             if !request.requirements.predicate.eval(request.requirements.imageId, &journal) {
                 tracing::error!("Predicate evaluation failed for request");
                 bail!("Predicate evaluation failed");

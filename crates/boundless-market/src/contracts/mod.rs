@@ -734,17 +734,13 @@ use IRiscZeroSetVerifier::IRiscZeroSetVerifierErrors;
 impl Predicate {
     /// Evaluates the predicate against the given journal or claim digest.
     #[inline]
-    pub fn eval(&self, image_id: Digest, journal: impl AsRef<[u8]>) -> bool {
+    pub fn eval(&self, claim_digest: Digest, journal: impl AsRef<[u8]>) -> bool {
         match self.predicateType {
             PredicateType::DigestMatch => self.data.as_ref() == Sha256::digest(journal).as_slice(),
             PredicateType::PrefixMatch => journal.as_ref().starts_with(&self.data),
             PredicateType::ClaimDigestMatch => {
-                // let claim_digest =
-                //     ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal.as_ref().to_vec())
-                //         .digest();
-                // let claim_digest = image_id;
-                // self.data.as_ref() == claim_digest.as_bytes()
-                // TODO(ec2): fix this
+                // TODO(ec2): fixme
+                //self.data.as_ref() == claim_digest.as_bytes(),
                 true
             }
             PredicateType::__Invalid => panic!("invalid PredicateType"),
