@@ -10,7 +10,10 @@
 use alloy_primitives::{Address, Keccak256, Signature, SignatureError};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use boundless_market::contracts::{EIP712DomainSaltless, ProofRequest, RequestError};
-use risc0_zkvm::{sha::Digest, ReceiptClaim};
+use risc0_zkvm::{
+    sha::{Digest, Digestible},
+    ReceiptClaim,
+};
 use serde::{Deserialize, Serialize};
 
 /// Errors that may occur in the assessor.
@@ -87,10 +90,19 @@ impl Fulfillment {
         }
         Ok(())
     }
-    /// Returns a [ReceiptClaim] for the fulfillment.
-    pub fn receipt_claim(&self) -> ReceiptClaim {
-        let image_id = Digest::from_bytes(self.request.requirements.imageId.0);
-        ReceiptClaim::ok(image_id, self.journal.clone())
+
+    /// Returns the claim digest for the fulfillment.
+    pub fn claim_digest(&self) -> Result<Digest, Error> {
+        match self.request.requirements.predicate.predicateType {
+            // If the predicate is a claim digest match, we use the claim digest.
+            boundless_market::contracts::PredicateType::ClaimDigestMatch => {
+                Ok(Digest::try_from(self.request.requirements.predicate.data.0.as_ref()).unwrap())
+            }
+            _ => {
+                let image_id = Digest::from_bytes(self.request.requirements.imageId.0);
+                Ok(ReceiptClaim::ok(image_id, self.journal.clone()).digest())
+            }
+        }
     }
 }
 
