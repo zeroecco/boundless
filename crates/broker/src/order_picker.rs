@@ -352,7 +352,13 @@ where
 
         if !self.supported_selectors.is_supported(order.request.requirements.selector) {
             tracing::info!(
-                "Removing order {order_id} because it has an unsupported selector requirement"
+                "Removing order {order_id} because it has an unsupported selector requirement. Requested: {:x}. Supported: {:?}",
+                order.request.requirements.selector,
+                self.supported_selectors
+                    .selectors
+                    .iter()
+                    .map(|(k, v)| format!("{k:x} ({v:?})"))
+                    .collect::<Vec<_>>()
             );
 
             return Ok(Skip);
@@ -632,7 +638,7 @@ where
         // If a max_mcycle_limit is configured check if the order is over that limit
         let proof_cycles = proof_res.stats.total_cycles;
         if proof_cycles > prove_limit {
-            tracing::info!("Order {order_id} max_mcycle_limit check failed req: {proof_cycles} | config: {prove_limit}");
+            tracing::info!("Order {order_id} with {proof_cycles} cycles above prove limit from capacity ({prove_limit})");
             return Ok(Skip);
         }
 
@@ -898,7 +904,7 @@ where
             let initial_stake_based_limit =
                 (price.saturating_mul(ONE_MILLION).div_ceil(min_mcycle_price_stake_token))
                     .try_into()
-                    .context("Failed to convert U256 exec limit to u64")?;
+                    .unwrap_or(u64::MAX);
 
             tracing::trace!(
                 "Order {order_id} initial stake based limit: {initial_stake_based_limit}"
@@ -921,7 +927,7 @@ where
                     .saturating_mul(ONE_MILLION)
                     / min_mcycle_price)
                     .try_into()
-                    .context("Failed to convert U256 exec limit to u64")?
+                    .unwrap_or(u64::MAX)
             };
 
             if eth_based_limit > stake_based_limit {
@@ -1437,6 +1443,7 @@ pub(crate) mod tests {
                 boundless_market_address: *boundless_market_address,
                 chain_id,
                 total_cycles: None,
+                cached_id: Default::default(),
             })
         }
 
@@ -1488,6 +1495,7 @@ pub(crate) mod tests {
                 boundless_market_address: *boundless_market_address,
                 chain_id,
                 total_cycles: None,
+                cached_id: Default::default(),
             })
         }
     }
@@ -2419,6 +2427,7 @@ pub(crate) mod tests {
             total_cycles: order1.total_cycles,
             target_timestamp: order1.target_timestamp,
             expire_timestamp: order1.expire_timestamp,
+            cached_id: Default::default(),
         });
 
         assert_eq!(order1.id(), order2.id(), "Both orders should have the same ID");
@@ -2489,12 +2498,9 @@ pub(crate) mod tests {
         ctx.new_order_tx.send(order1).await.unwrap();
 
         // Wait for the order to be processed and check for the "Added" log
-        tokio::time::timeout(
-            MIN_CAPACITY_CHECK_INTERVAL + Duration::from_secs(1),
-            ctx.priced_orders_rx.recv(),
-        )
-        .await
-        .unwrap();
+        tokio::time::timeout(MIN_CAPACITY_CHECK_INTERVAL * 2, ctx.priced_orders_rx.recv())
+            .await
+            .unwrap();
 
         // Check that we logged the task being added
         assert!(logs_contain("Current pricing tasks: ["));
