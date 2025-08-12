@@ -10,7 +10,6 @@ import {Callback, CallbackLibrary} from "./Callback.sol";
 using RequirementsLibrary for Requirements global;
 
 struct Requirements {
-    bytes32 imageId;
     Callback callback;
     Predicate predicate;
     bytes4 selector;
@@ -29,7 +28,6 @@ library RequirementsLibrary {
         return keccak256(
             abi.encode(
                 REQUIREMENTS_TYPEHASH,
-                requirements.imageId,
                 CallbackLibrary.eip712Digest(requirements.callback),
                 PredicateLibrary.eip712Digest(requirements.predicate),
                 requirements.selector

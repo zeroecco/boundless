@@ -82,7 +82,7 @@ use url::Url;
 use boundless_market::{
     contracts::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, UnlockedRequest},
-        Offer, ProofRequest, RequestInputType, Selector,
+        Offer, PredicateType, ProofRequest, RequestInputType, Selector,
     },
     input::GuestEnv,
     request_builder::{OfferParams, RequirementParams},
@@ -716,10 +716,11 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             let session_info = execute(&request).await?;
             let journal = session_info.journal.bytes;
 
-            if !request.requirements.predicate.eval(request.requirements.imageId, &journal) {
-                tracing::error!("Predicate evaluation failed for request");
-                bail!("Predicate evaluation failed");
-            }
+            // TODO(ec2): how do we check this?
+            // if !request.requirements.predicate.eval(request.requirements.imageId, &journal) {
+            //     tracing::error!("Predicate evaluation failed for request");
+            //     bail!("Predicate evaluation failed");
+            // }
 
             tracing::info!("Successfully executed request 0x{:x}", request.id);
             tracing::debug!("Journal: {:?}", journal);
@@ -1187,24 +1188,28 @@ where
 
         // Verify image ID if available
         if let Some(claim) = session_info.receipt_claim {
-            ensure!(
-                claim.pre.digest().as_bytes() == request.requirements.imageId.as_slice(),
-                "Image ID mismatch: requirements ({}) do not match the given program ({})",
-                hex::encode(request.requirements.imageId),
-                hex::encode(claim.pre.digest().as_bytes())
-            );
+            if let Some(image_id) = request.requirements.image_id() {
+                ensure!(
+                    claim.pre.digest() == image_id,
+                    "Image ID mismatch: requirements ({}) do not match the given program ({})",
+                    image_id,
+                    claim.pre.digest(),
+                );
+            }
+            tracing::debug!("Skipping image ID check, no image ID provided");
         } else {
             tracing::debug!("Cannot check image ID; session info doesn't have receipt claim");
         }
 
-        // Verify predicate
-        ensure!(
-            request.requirements.predicate.eval(request.requirements.imageId, &journal),
-            "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
-            hex::encode(&journal),
-            request.requirements.predicate.predicateType,
-            hex::encode(&request.requirements.predicate.data)
-        );
+        // TODO(ec2): how do we check when we have custom claim digests?
+        // // Verify predicate
+        // ensure!(
+        //     request.requirements.predicate.eval(request.requirements.imageId, &journal),
+        //     "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
+        //     hex::encode(&journal),
+        //     request.requirements.predicate.predicateType,
+        //     hex::encode(&request.requirements.predicate.data)
+        // );
 
         tracing::info!("Preflight check passed");
     } else {

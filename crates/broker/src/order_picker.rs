@@ -655,16 +655,17 @@ where
             return Ok(Skip);
         }
 
-        // Validate the predicates:
-        if !order
-            .request
-            .requirements
-            .predicate
-            .eval(order.request.requirements.imageId, journal.clone())
-        {
-            tracing::info!("Order {order_id} predicate check failed, skipping");
-            return Ok(Skip);
-        }
+        // TODO(ec2): how to do?
+        // // Validate the predicates:
+        // if !order
+        //     .request
+        //     .requirements
+        //     .predicate
+        //     .eval(order.request.requirements.imageId, journal.clone())
+        // {
+        //     tracing::info!("Order {order_id} predicate check failed, skipping");
+        //     return Ok(Skip);
+        // }
 
         self.evaluate_order(order, &proof_res, order_gas_cost, lock_expired).await
     }

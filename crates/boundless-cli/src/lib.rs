@@ -37,7 +37,8 @@ use risc0_zkvm::{
 use boundless_market::{
     contracts::{
         boundless_market_contract::CallbackData, AssessorJournal, AssessorReceipt,
-        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, PredicateType, RequestInputType,
+        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, FulfillmentData, PredicateType,
+        RequestInputType,
     },
     input::GuestEnv,
     selector::{is_groth16_selector, SupportedSelectors},
@@ -248,11 +249,14 @@ impl DefaultProver {
             let order_claim = ReceiptClaim::ok(order_image_id, order_journal.clone());
             let order_claim_digest = order_claim.digest();
 
-            let fill = Fulfillment {
-                request: req.clone(),
-                signature: sig.into(),
-                journal: order_journal.clone(),
+            let fulfillment_data = match req.requirements.predicate.predicateType {
+                PredicateType::ClaimDigestMatch => FulfillmentData::from_claim_digest(
+                    req.requirements.predicate.claim_digest().unwrap(),
+                ),
+                _ => FulfillmentData::from_image_id_and_journal(order_image_id, order_journal),
             };
+            let fill =
+                Fulfillment { request: req.clone(), signature: sig.into(), fulfillment_data };
 
             Ok::<_, anyhow::Error>((order_receipt, order_claim, order_claim_digest, fill))
         });
@@ -310,14 +314,15 @@ impl DefaultProver {
 
             let (claim_digest, callback_data) = match predicate_type {
                 PredicateType::ClaimDigestMatch => (
-                    <[u8; 32]>::try_from(req.requirements.predicate.data.as_ref()).unwrap().into(),
+                    <[u8; 32]>::from(fills[i].fulfillment_data.claim_digest().unwrap()).into(),
                     vec![],
                 ),
                 _ => (
                     <[u8; 32]>::from(claims[i].digest()).into(),
                     CallbackData {
-                        imageId: req.requirements.imageId,
-                        journal: fills[i].journal.clone().into(),
+                        imageId: <[u8; 32]>::from(fills[i].fulfillment_data.image_id().unwrap())
+                            .into(),
+                        journal: fills[i].fulfillment_data.journal().unwrap().clone(),
                     }
                     .abi_encode(),
                 ),
@@ -407,7 +412,7 @@ mod tests {
     ) -> (ProofRequest, Signature) {
         let request = ProofRequest::new(
             RequestId::new(signer.address(), 0),
-            Requirements::new(Digest::from(ECHO_ID), Predicate::prefix_match(vec![1]))
+            Requirements::new(Predicate::prefix_match(Digest::from(ECHO_ID), vec![1]))
                 .with_selector(match selector {
                     Some(selector) => FixedBytes::from(selector as u32),
                     None => UNSPECIFIED_SELECTOR,

@@ -446,7 +446,10 @@ pub fn mock_singleton(
         _ => (
             <[u8; 32]>::from(app_claim_digest).into(),
             CallbackData {
-                imageId: request.requirements.imageId,
+                imageId: <[u8; 32]>::from(
+                    request.requirements.image_id().expect("image ID is required"),
+                )
+                .into(),
                 journal: app_journal.bytes.into(),
             }
             .abi_encode(),

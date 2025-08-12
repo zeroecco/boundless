@@ -15,8 +15,12 @@
 use alloy::primitives::{utils, Address};
 use anyhow::{Context, Result};
 use boundless_assessor::{AssessorInput, Fulfillment};
-use boundless_market::{contracts::eip712_domain, input::GuestEnv};
+use boundless_market::{
+    contracts::{eip712_domain, FulfillmentData, Predicate, PredicateType},
+    input::GuestEnv,
+};
 use chrono::Utc;
+use hex::FromHex;
 use risc0_aggregation::GuestState;
 use risc0_zkvm::{
     sha::{Digest, Digestible},
@@ -206,10 +210,20 @@ impl AggregatorService {
                 .with_context(|| format!("Failed to get {proof_id} journal"))?
                 .with_context(|| format!("{proof_id} journal missing"))?;
 
+            let fulfillment_data = match order.request.requirements.predicate.predicateType {
+                PredicateType::ClaimDigestMatch => FulfillmentData::from_claim_digest(
+                    order.request.requirements.predicate.claim_digest().unwrap(),
+                ),
+                _ => FulfillmentData::from_image_id_and_journal(
+                    Digest::from_hex(order.image_id.unwrap()).unwrap(),
+                    journal,
+                ),
+            };
+
             fills.push(Fulfillment {
                 request: order.request.clone(),
                 signature: order.client_sig.clone().to_vec(),
-                journal,
+                fulfillment_data,
             })
         }
 

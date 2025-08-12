@@ -309,7 +309,6 @@ impl IndexerDb for AnyDb {
                 request_digest,
                 request_id, 
                 client_address,
-                image_id,
                 predicate_type,
                 predicate_data,
                 callback_address,
@@ -333,7 +332,7 @@ impl IndexerDb for AnyDb {
         .bind(format!("{request_digest:x}"))
         .bind(format!("{:x}", request.id))
         .bind(format!("{:x}", request.client_address()))
-        .bind(format!("{:x}", request.requirements.imageId))
+        // .bind(format!("{:x}", request.requirements.imageId))
         .bind(predicate_type)
         .bind(format!("{:x}", request.requirements.predicate.data))
         .bind(format!("{:x}", request.requirements.callback.addr))

@@ -665,10 +665,10 @@ mod tests {
         let max_price = 10;
         let proving_request = ProofRequest {
             id: boundless_market.request_id_from_nonce().await.unwrap(),
-            requirements: Requirements::new(
+            requirements: Requirements::new(Predicate::prefix_match(
                 Digest::ZERO,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+                Default::default(),
+            )),
             imageUrl: "test".to_string(),
             input: RequestInput { inputType: RequestInputType::Url, data: Default::default() },
             offer: Offer {
