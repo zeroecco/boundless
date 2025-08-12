@@ -27,6 +27,7 @@ use anyhow::{anyhow, Context, Result};
 use boundless_market::{
     contracts::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, MarketError, UnlockedRequest},
+        boundless_market_contract::CallbackData,
         encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, PredicateType,
     },
     selector::is_groth16_selector,
@@ -332,17 +333,24 @@ where
                 let request_id = order_request.id;
                 fulfillment_to_order_id.insert(request_id, order_id);
                 let predicate_type = order_request.requirements.predicate.predicateType;
-                let mut image_id_or_claim_digest = order_img_id;
-                let mut journal = order_journal;
-                if predicate_type == PredicateType::ClaimDigestMatch {
-                    image_id_or_claim_digest = <[u8; 32]>::from(order_claim_digest).into();
-                    journal = vec![];
+
+                let (claim_digest, callback_data) = match predicate_type {
+                    PredicateType::ClaimDigestMatch => (
+                        order_request.requirements.predicate.data.0.as_ref().try_into().unwrap(),
+                        vec![],
+                    ),
+                    _ => (
+                        order_claim_digest,
+                        CallbackData { imageId: order_img_id, journal: order_journal.into() }
+                            .abi_encode(),
+                    ),
                 };
+
                 fulfillments.push(Fulfillment {
                     id: request_id,
                     requestDigest: request_digest,
-                    imageIdOrClaimDigest: image_id_or_claim_digest,
-                    journal: journal.into(),
+                    callbackData: callback_data.into(),
+                    claimDigest: <[u8; 32]>::from(claim_digest).into(),
                     seal: seal.into(),
                     predicateType: predicate_type,
                 });

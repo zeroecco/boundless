@@ -36,8 +36,8 @@ use risc0_zkvm::{
 
 use boundless_market::{
     contracts::{
-        AssessorJournal, AssessorReceipt, EIP712DomainSaltless,
-        Fulfillment as BoundlessFulfillment, PredicateType, RequestInputType,
+        boundless_market_contract::CallbackData, AssessorJournal, AssessorReceipt,
+        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, PredicateType, RequestInputType,
     },
     input::GuestEnv,
     selector::{is_groth16_selector, SupportedSelectors},
@@ -306,16 +306,25 @@ impl DefaultProver {
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
-            let mut image_id_or_claim_digest = req.requirements.imageId;
-            let mut journal = fills[i].journal.clone();
             let predicate_type = req.requirements.predicate.predicateType;
-            if predicate_type == PredicateType::ClaimDigestMatch {
-                image_id_or_claim_digest = <[u8; 32]>::from(claims[i].digest()).into();
-                journal = vec![];
-            }
+
+            let (claim_digest, callback_data) = match predicate_type {
+                PredicateType::ClaimDigestMatch => (
+                    <[u8; 32]>::try_from(req.requirements.predicate.data.as_ref()).unwrap().into(),
+                    vec![],
+                ),
+                _ => (
+                    <[u8; 32]>::from(claims[i].digest()).into(),
+                    CallbackData {
+                        imageId: req.requirements.imageId,
+                        journal: fills[i].journal.clone().into(),
+                    }
+                    .abi_encode(),
+                ),
+            };
             let fulfillment = BoundlessFulfillment {
-                imageIdOrClaimDigest: image_id_or_claim_digest,
-                journal: journal.into(),
+                claimDigest: claim_digest,
+                callbackData: callback_data.into(),
                 id: req.id,
                 requestDigest: req.eip712_signing_hash(&self.domain.alloy_struct()),
                 seal: order_seal.into(),

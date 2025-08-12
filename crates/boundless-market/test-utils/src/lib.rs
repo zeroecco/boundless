@@ -27,6 +27,7 @@ use anyhow::{Context, Ok, Result};
 use boundless_market::{
     contracts::{
         boundless_market::BoundlessMarketService,
+        boundless_market_contract::CallbackData,
         bytecode::*,
         hit_points::{default_allowance, HitPointsService},
         AssessorCommitment, AssessorJournal, Fulfillment, PredicateType, ProofRequest,
@@ -439,18 +440,23 @@ pub fn mock_singleton(
     .abi_encode_seal()
     .unwrap();
 
-    let mut image_id_or_claim_digest = request.requirements.imageId;
-    let mut journal = app_journal.bytes.into();
     let predicate_type = request.requirements.predicate.predicateType;
-    if predicate_type == PredicateType::ClaimDigestMatch {
-        image_id_or_claim_digest = <[u8; 32]>::from(app_claim_digest).into();
-        journal = vec![].into();
+    let (claim_digest, callback_data) = match predicate_type {
+        PredicateType::ClaimDigestMatch => (<[u8; 32]>::from(app_claim_digest).into(), vec![]),
+        _ => (
+            <[u8; 32]>::from(app_claim_digest).into(),
+            CallbackData {
+                imageId: request.requirements.imageId,
+                journal: app_journal.bytes.into(),
+            }
+            .abi_encode(),
+        ),
     };
     let fulfillment = Fulfillment {
         id: request.id,
         requestDigest: request_digest,
-        imageIdOrClaimDigest: image_id_or_claim_digest,
-        journal,
+        claimDigest: claim_digest,
+        callbackData: callback_data.into(),
         seal: set_inclusion_seal.into(),
         predicateType: predicate_type,
     };
