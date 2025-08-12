@@ -80,7 +80,7 @@ impl Fulfillment {
     }
     /// Evaluates the requirements of the request.
     pub fn evaluate_requirements(&self) -> Result<(), Error> {
-        if !self.request.requirements.predicate.eval(self.claim_digest(), &self.journal) {
+        if !self.request.requirements.predicate.eval(self.claim_digest()?, &self.journal) {
             return Err(Error::PredicateEvaluationError);
         }
         Ok(())
