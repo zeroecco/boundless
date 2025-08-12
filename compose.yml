@@ -209,7 +209,9 @@ services:
       stack: 90000000
 
   rest_api:
-    image: risczero/risc0-bento-rest-api:2.3.1@sha256:71dafe532d4e1ada47989b63cf04b2e2bae6b62eebb5d47973e875e2eddf6c3a
+    build:
+      context: .
+      dockerfile: dockerfiles/rest_api.dockerfile
     restart: always
     depends_on:
       postgres:
