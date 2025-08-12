@@ -11,7 +11,7 @@ x-base-environment: &base-environment
   RUST_BACKTRACE: 1
 
 x-agent-common: &agent-common
-  image: risczero/risc0-bento-agent:2.3.1@sha256:7873f18005efff03fc5399f1bdcb6760cda7ffbd4fdd4d9c39aedee8972e0a0d
+  image: dockerfiles/agent.dockerfile
   restart: always
   depends_on:
     - postgres
@@ -85,9 +85,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-worker}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     expose:
-      - '${POSTGRES_PORT:-5432}'
+      - "${POSTGRES_PORT:-5432}"
     ports:
-      - '${POSTGRES_PORT:-5432}:${POSTGRES_PORT:-5432}'
+      - "${POSTGRES_PORT:-5432}:${POSTGRES_PORT:-5432}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     command: -p ${POSTGRES_PORT:-5432}
@@ -97,8 +97,8 @@ services:
     image: ${MINIO_IMG:-minio/minio:RELEASE.2024-05-28T17-19-04Z}
     restart: always
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio-data:/data
     command: server /data --console-address ":9001"
@@ -116,7 +116,7 @@ services:
     image: ${GRAFANA_IMG:-grafana/grafana:11.0.0}
     restart: unless-stopped
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
@@ -166,7 +166,7 @@ services:
           devices:
             - driver: nvidia
               # TODO: how to scale this with N gpus?
-              device_ids: ['0']
+              device_ids: ["0"]
               capabilities: [gpu]
 
   snark_agent:
@@ -195,7 +195,7 @@ services:
       <<: *base-environment
 
     ports:
-      - '8081:8081'
+      - "8081:8081"
 
     entrypoint: /app/rest_api --bind-addr 0.0.0.0:8081 --snark-timeout ${SNARK_TIMEOUT:-180}
 
