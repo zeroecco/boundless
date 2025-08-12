@@ -339,7 +339,7 @@ impl RequestParams {
 
     /// Sets the [GuestEnv], providing the guest with input.
     ///
-    /// Can be constructed with [GuestEnvBuilder][crate::input::GuestEnvBuilder].
+    /// Can be constructed with [GuestEnvBuilder][crate::GuestEnvBuilder].
     ///
     /// ```rust
     /// # use boundless_market::request_builder::RequestParams;
@@ -353,7 +353,7 @@ impl RequestParams {
     ///         .write_frame(b"goodbye."));
     /// ```
     ///
-    /// See also [Self::with_env] and [GuestEnvBuilder][crate::input::GuestEnvBuilder]
+    /// See also [Self::with_env] and [GuestEnvBuilder][crate::GuestEnvBuilder]
     pub fn with_env(self, value: impl Into<GuestEnv>) -> Self {
         Self { env: Some(value.into()), ..self }
     }
@@ -374,7 +374,7 @@ impl RequestParams {
     ///     .with_stdin(b"hello!");
     /// ```
     ///
-    /// See also [Self::with_env] and [GuestEnvBuilder][crate::input::GuestEnvBuilder]
+    /// See also [Self::with_env] and [GuestEnvBuilder][crate::GuestEnvBuilder]
     pub fn with_stdin(self, value: impl Into<Vec<u8>>) -> Self {
         Self { env: Some(GuestEnv::from_stdin(value)), ..self }
     }
