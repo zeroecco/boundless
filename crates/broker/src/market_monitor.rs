@@ -798,11 +798,11 @@ mod tests {
             .unwrap();
         assert!(ctx.customer_market.is_fulfilled(request_id).await.unwrap());
 
-        // retrieve journal and seal from the fulfilled request
-        let (journal, seal) =
+        // retrieve callback data and seal from the fulfilled request
+        let (callback_data, seal) =
             ctx.customer_market.get_request_fulfillment(request_id).await.unwrap();
 
-        assert_eq!(journal, fulfillment.journal);
+        assert_eq!(callback_data, fulfillment.callbackData);
         assert_eq!(seal, fulfillment.seal);
     }
 
