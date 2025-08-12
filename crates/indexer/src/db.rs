@@ -874,8 +874,8 @@ mod tests {
         let fill = Fulfillment {
             requestDigest: B256::ZERO,
             id: U256::from(1),
-            imageIdOrClaimDigest: B256::ZERO,
-            journal: Bytes::default(),
+            claimDigest: B256::ZERO,
+            callbackData: Bytes::default(),
             seal: Bytes::default(),
             predicateType: PredicateType::PrefixMatch,
         };

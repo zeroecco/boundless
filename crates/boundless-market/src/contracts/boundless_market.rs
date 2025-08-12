@@ -1101,7 +1101,7 @@ impl<P: Provider> BoundlessMarketService<P> {
         Err(MarketError::RequestNotFound(request_id))
     }
 
-    /// Returns journal and seal if the request is fulfilled.
+    /// Returns CallbackData containing the journal and image id (if available) and seal if the request is fulfilled.
     pub async fn get_request_fulfillment(
         &self,
         request_id: U256,
