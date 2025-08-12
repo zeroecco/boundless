@@ -325,7 +325,7 @@ jobs:
           toolchain: ${{ env.RISC0_TOOLCHAIN_VERSION }}
 
       # TODO: Add dry-run publish checks for other crates; difficulty is they all depend on boundless-market being published
-      - run: cargo publish -p boundless-market --dry-run --no-verify
+      - run: cargo publish -p boundless-market --dry-run
 
   examples:
     runs-on: [ self-hosted, Linux, X64, prod, cuda, g6.4xlarge ]
