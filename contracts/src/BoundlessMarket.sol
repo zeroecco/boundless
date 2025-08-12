@@ -260,7 +260,6 @@ contract BoundlessMarket is
             Fulfillment calldata fill = fills[i];
             predicateTypes[i] = fill.predicateType;
 
-            
             leaves[i] = AssessorCommitment(i, fill.id, fill.requestDigest, fill.claimDigest).eip712Digest();
 
             // If the requestor did not specify a selector, we verify with DEFAULT_MAX_GAS_FOR_VERIFY gas limit.
@@ -340,10 +339,7 @@ contract BoundlessMarket is
             uint256 callbackIndexPlusOne = fillToCallbackIndexPlusOne[i];
             // We do not support callbacks for claim digest matches.
             if ((fill.predicateType != PredicateType.ClaimDigestMatch) && (callbackIndexPlusOne > 0)) {
-                (
-                    bytes32 imageId,
-                    bytes calldata journal
-                ) = _decodeCallbackData(fill.callbackData);
+                (bytes32 imageId, bytes calldata journal) = _decodeCallbackData(fill.callbackData);
 
                 AssessorCallback calldata callback = assessorReceipt.callbacks[callbackIndexPlusOne - 1];
                 _executeCallback(fill.id, callback.addr, callback.gasLimit, imageId, journal, fill.seal);
@@ -351,20 +347,16 @@ contract BoundlessMarket is
         }
     }
 
-    function _decodeCallbackData(bytes calldata data) 
-        internal 
-        pure 
-        returns (bytes32 imageId, bytes calldata journal) 
-    {
+    function _decodeCallbackData(bytes calldata data) internal pure returns (bytes32 imageId, bytes calldata journal) {
         assembly {
             // Extract imageId (first 32 bytes after length)
             imageId := calldataload(add(data.offset, 0x20))
-            
+
             // Extract journal offset and create calldata slice
             let journalOffset := calldataload(add(data.offset, 0x40))
             let journalPtr := add(data.offset, add(0x20, journalOffset))
             let journalLength := calldataload(journalPtr)
-            
+
             journal.offset := add(journalPtr, 0x20)
             journal.length := journalLength
         }

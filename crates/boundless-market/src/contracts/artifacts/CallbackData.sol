@@ -10,7 +10,7 @@ using CallbackDataLibrary for CallbackData global;
 /// @notice Represents a callback configuration for proof delivery
 struct CallbackData {
     /// @notice Image ID of the guest that was verifiably executed to satisfy the request.
-    bytes32 imageId; 
+    bytes32 imageId;
     /// @notice Journal committed by the guest program execution.
     /// @dev The journal is checked to satisfy the predicate specified on the request's requirements.
     bytes journal;
