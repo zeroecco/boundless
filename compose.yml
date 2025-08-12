@@ -11,7 +11,9 @@ x-base-environment: &base-environment
   RUST_BACKTRACE: 1
 
 x-agent-common: &agent-common
-  image: dockerfiles/agent.dockerfile
+  build:
+    context: .
+    dockerfile: dockerfiles/agent.dockerfile
   restart: always
   depends_on:
     - postgres
