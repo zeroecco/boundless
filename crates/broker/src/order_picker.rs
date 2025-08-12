@@ -35,6 +35,7 @@ use crate::{
 use alloy::{
     network::Ethereum,
     primitives::{
+        address,
         utils::{format_ether, format_units, parse_ether, parse_units},
         Address, U256,
     },
@@ -525,6 +526,23 @@ where
                             .await
                             .map_err(|e| OrderPickerErr::FetchInputErr(Arc::new(e)))?;
 
+                        // Note: this is skipping the execution for orders from these addresses.
+                        // This can be risky, as it is possible the sender may not send a proof 
+                        // that is provable in time or for a different cycle count. If using this,
+                        // ensure that you trust the sender and that the cycle count for these
+                        // orders is consistent.
+                        if request.client_address() == address!("0x734dF7809c4ef94Da037449C287166D114503198") {
+                            // Proof sizes are very consistent for signal orders at 54B cycles.
+                            tracing::info!("Defaulting signal job cycles for order {order_id_clone}");
+                            return Ok(PreflightCacheValue::Success { exec_session_id: "signal-default".to_string(), cycle_count: 54_000_000_000, image_id, input_id })
+                        }
+                        if request.client_address() == address!("0x3ee7d9175ec8bb9e16e8fd3abdef5a354b247528") {
+                            // Cycle count can be estimated by the stake amount for this specific requestor.
+                            let cycle_count = u64::try_from(request.offer.lockStake).unwrap_or(u64::MAX).saturating_mul(1_000_000).div_ceil(1500);
+                            tracing::info!("Defaulting Kailua cycles ({cycle_count}) for order {order_id_clone}");
+                            return Ok(PreflightCacheValue::Success { exec_session_id: "signal-default".to_string(), cycle_count, image_id, input_id })
+                        }
+
                         // TODO add a future timeout here to put a upper bound on how long to preflight for
                         match prover
                             .preflight(
@@ -634,6 +652,11 @@ where
         if proof_cycles > prove_limit {
             tracing::info!("Order {order_id} with {proof_cycles} cycles above prove limit from capacity ({prove_limit})");
             return Ok(Skip);
+        }
+
+        if proof_res.id == "signal-default" {
+            tracing::debug!("Skipping journal check for signal job");
+            return self.evaluate_order(order, &proof_res, order_gas_cost, lock_expired).await;
         }
 
         let journal = self
