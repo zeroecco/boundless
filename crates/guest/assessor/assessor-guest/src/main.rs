@@ -66,8 +66,7 @@ fn main() {
             fill.verify_signature(&eip_domain_separator).expect("signature does not verify")
         };
         fill.evaluate_requirements().expect("requirements not met");
-        env::verify_integrity(&fill.receipt_claim()).expect("claim integrity check failed");
-        let claim_digest = fill.claim_digest();
+        let claim_digest = fill.claim_digest().expect("failed to get claim digest");
         let commit = AssessorCommitment {
             index: U256::from(index),
             id: fill.request.id,

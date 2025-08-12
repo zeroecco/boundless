@@ -85,24 +85,19 @@ impl Fulfillment {
         }
         Ok(())
     }
+
     /// Returns the claim digest for the fulfillment.
-    pub fn claim_digest(&self) -> Digest {
+    pub fn claim_digest(&self) -> Result<Digest, Error> {
         match self.request.requirements.predicate.predicateType {
             // If the predicate is a claim digest match, we use the claim digest.
             boundless_market::contracts::PredicateType::ClaimDigestMatch => {
-                Digest::try_from(self.request.requirements.predicate.data.0.as_ref()).unwrap()
+                Ok(Digest::try_from(self.request.requirements.predicate.data.0.as_ref()).unwrap())
             }
             _ => {
                 let image_id = Digest::from_bytes(self.request.requirements.imageId.0);
-                ReceiptClaim::ok(image_id, self.journal.clone()).digest()
+                Ok(ReceiptClaim::ok(image_id, self.journal.clone()).digest())
             }
         }
-    }
-
-    /// Returns a [ReceiptClaim] for the fulfillment.
-    pub fn receipt_claim(&self) -> ReceiptClaim {
-        let image_id = Digest::from_bytes(self.request.requirements.imageId.0);
-        ReceiptClaim::ok(image_id, self.journal.clone())
     }
 }
 

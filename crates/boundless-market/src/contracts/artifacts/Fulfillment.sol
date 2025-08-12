@@ -20,14 +20,10 @@ struct Fulfillment {
     /// @dev When the `PredicateType` is `ClaimDigestMatch`, the imageIdOrClaimDigest field is the claim digest,
     /// and otherwise it is the image ID of the guest that was executed.
     PredicateType predicateType;
-    /// @notice Image ID of the guest that was verifiably executed to satisfy the request or claim digest.
-    /// @dev Must match the value in the request's requirements. If the journal and journal digest do not need
-    /// to be delivered to the client, imageId is replaced with claim digest, since it is captured in the
-    /// requirements on the request, checked by the Assessor guest.
-    bytes32 imageIdOrClaimDigest;
-    /// @notice Journal committed by the guest program execution.
-    /// @dev The journal is checked to satisfy the predicate specified on the request's requirements.
-    bytes journal;
+    /// @notice Claim Digest
+    bytes32 claimDigest;
+    /// @notice The callback data, if requested.
+    bytes callbackData;
     /// @notice Cryptographic proof for the validity of the execution results.
     /// @dev This will be sent to the `IRiscZeroVerifier` associated with this contract.
     bytes seal;
