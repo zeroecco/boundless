@@ -24,7 +24,7 @@ import {Fulfillment} from "../../src/types/Fulfillment.sol";
 import {AssessorJournal} from "../../src/types/AssessorJournal.sol";
 import {Offer} from "../../src/types/Offer.sol";
 import {Requirements} from "../../src/types/Requirements.sol";
-import {Predicate, PredicateType} from "../../src/types/Predicate.sol";
+import {PredicateLibrary, PredicateType} from "../../src/types/Predicate.sol";
 import {Input, InputType} from "../../src/types/Input.sol";
 import {IBoundlessMarket} from "../../src/IBoundlessMarket.sol";
 
@@ -78,8 +78,7 @@ abstract contract BaseClient {
 
     function defaultRequirements() public pure returns (Requirements memory) {
         return Requirements({
-            imageId: bytes32(APP_IMAGE_ID),
-            predicate: Predicate({predicateType: PredicateType.DigestMatch, data: abi.encode(sha256(APP_JOURNAL))}),
+            predicate: PredicateLibrary.createDigestMatchPredicate(bytes32(APP_IMAGE_ID), sha256(APP_JOURNAL)),
             selector: bytes4(0),
             callback: Callback({addr: address(0), gasLimit: 0})
         });
