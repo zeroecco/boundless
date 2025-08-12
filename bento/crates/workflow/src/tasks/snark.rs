@@ -1,6 +1,6 @@
 // Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Use of this source code is governed by the Business Source License
 
 use crate::Agent;
 use anyhow::{bail, Context as _, Result};

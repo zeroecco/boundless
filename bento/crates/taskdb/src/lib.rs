@@ -1,6 +1,6 @@
 // Copyright 2025 RISC Zero, Inc.
 //
-// All rights reserved.
+// Use of this source code is governed by the Business Source License
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 pub use sqlx::Error as SqlxError;

@@ -1,0 +1,98 @@
+encryptionsalt: v1:c+qkUDk4J5U=:v1:v2sUQtg3aH/C4Ghk:vqM6TFhW45Y9+FmlBOVZf51DRK9eFQ==
+config:
+  aws:region: us-west-2
+  # Base configuration for kailua-order-generator
+  kailua-order-generator-base:CHAIN_ID: "8453" # Base mainnet
+  kailua-order-generator-base:LOG_LEVEL: "info"
+  kailua-order-generator-base:DOCKER_DIR: "../../"
+  kailua-order-generator-base:DOCKER_TAG: "latest"
+  kailua-order-generator-base:SET_VERIFIER_ADDR: "0x0000000000000000000000000000000000000000" # Placeholder
+  kailua-order-generator-base:BOUNDLESS_MARKET_ADDR: "0x0000000000000000000000000000000000000000" # Placeholder
+  kailua-order-generator-base:IPFS_GATEWAY_URL: "https://gateway.pinata.cloud"
+  kailua-order-generator-base:BASE_STACK: organization/bootstrap/services-dev
+  kailua-order-generator-base:INTERVAL: "30"
+  kailua-order-generator-base:LOCK_STAKE_RAW: "1000000000000000000"
+  kailua-order-generator-base:MIN_PRICE_PER_MCYCLE: "1000000000000000"
+  kailua-order-generator-base:MAX_PRICE_PER_MCYCLE: "10000000000000000"
+  kailua-order-generator-base:TX_TIMEOUT: "1800"
+  # Offchain configuration
+  kailua-order-generator-offchain:AUTO_DEPOSIT: "true"
+  kailua-order-generator-offchain:WARN_BALANCE_BELOW: "0.1"
+  kailua-order-generator-offchain:ERROR_BALANCE_BELOW: "0.01"
+  kailua-order-generator-offchain:INPUT_MAX_MCYCLES: "1000000"
+  kailua-order-generator-offchain:RAMP_UP: "0.2"
+  kailua-order-generator-offchain:LOCK_TIMEOUT: "60"
+  kailua-order-generator-offchain:TIMEOUT: "1800"
+  kailua-order-generator-offchain:SECONDS_PER_MCYCLE: "20"
+  kailua-order-generator-offchain:INTERVAL: "30"
+  # Kailua-specific configuration
+  kailua-order-generator-base:KAILUA_DEVNET_URL:
+    secure: v1:vRqhmJr08pYRh5xs:UyCB20dPgwx/TV6LM36BWNi4Ws17Oy5FSjN6D5YQmU3hVk/XOkmZ3VTnFOns2mLcncnxla/n57EvDsQuNQ8leOwpZLqQYFVADwaKsCMPSSrnpBibvZfQAc5Zx0qNCN7Vadvb
+  kailua-order-generator-base:KAILUA_L1_URL: https://ancient-ultra-pool.quiknode.pro/0f7b97e0e4258b667c3156233dfde6e935ddf343/
+  kailua-order-generator-base:KAILUA_L2_URL: https://evocative-blissful-moon.optimism.quiknode.pro/b52a373470f753a59b129684feecb2973ec8af24/
+  kailua-order-generator-base:KAILUA_DATA_DIR: ".localtestdata/unichain-mainnet"
+  kailua-order-generator-base:KAILUA_RELEASE: "release"
+  # Performance and proving configuration
+  kailua-order-generator-base:NUM_CONCURRENT_PROVERS: "8"
+  kailua-order-generator-base:NUM_CONCURRENT_PROOFS: "4"
+  kailua-order-generator-base:SKIP_AWAIT_PROOF: "true"
+  kailua-order-generator-base:SKIP_DERIVATION_PROOF: "true"
+  kailua-order-generator-base:NTH_PROOF_TO_PROCESS: "2"
+  kailua-order-generator-base:ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT: "true"
+  # Boundless market configuration
+  kailua-order-generator-base:BOUNDLESS_LOOK_BACK: "true"
+  kailua-order-generator-base:BOUNDLESS_ORDER_BID_DELAY_FACTOR: "0.1"
+  kailua-order-generator-base:BOUNDLESS_ORDER_RAMP_UP_FACTOR: "0.2"
+  kailua-order-generator-base:BOUNDLESS_ORDER_LOCK_TIMEOUT_FACTOR: "0.2"
+  kailua-order-generator-base:BOUNDLESS_ORDER_EXPIRY_FACTOR: "1"
+  kailua-order-generator-base:BOUNDLESS_MEGA_CYCLE_STAKE: "1500"
+  kailua-order-generator-base:BOUNDLESS_CYCLE_MAX_WEI: "65000"
+  # Debug and logging configuration
+  kailua-order-generator-base:RUST_BACKTRACE: "full"
+  kailua-order-generator-base:RISC0_INFO: "1"
+  kailua-order-generator-base:PINATA_JWT:
+    secure: v1:FCUOhasPQC9EPWth:uPLxri1PG7fIn+jHrpja+AiLpry8cy520H2dRPYhCl4Ke/t50hB+E06LKeAiOgYYuYofLe8XQP8A2GWxCjJ1Cpp36YOSU+DwCUmlORWkCznhC7IuUc2S2BSW46lw4ln5pCHESnSIvhcJxNjeVyTZa7kDcNCQ481DqSI9cTk91dVFozIrfiABd9FehdtdIoe7S9IB4gGGf0TSPuDfbPU8iZeqNzHWXw19aq7paZrMv9zBa7vUF3oFif87+ex2/clJ4iTIoU62q9uONuPqBw8t+bqjqyrqJokzHb6BPIw92pVeSf/wdcIefaAt68ztgvlc59S8rhRW8WDLR28GvoZKvgZHuDYX9vl6ho1UYCj3IqlN2Rn5iFlCrKYRpjHYG/nfzhq6RkDbrICrZdRjkJcHCAtrd4AV5RZ3k0W4FidbEDpmAXvplBDJC11h+8DTfqnYayQH6MzC6IyYo6FfpJQ/XrlpjC1atalFJRH2UMq3KWiVatlxP6ob7KgubZqTux2tluBwNfrKBImLrh79+Xf50Sv/vVL8EUsGnMbxzua/Wyvf//2/10WHRwb+eV5TtcAIZLWeeL+FC7p+1XVaMRNs1M/WEgBqSSY1uqwxgg6JWcGnCwRxrJDeBj9Jk+/qviOI7rHLNAIZz5P2dQVqtSCmOHA5Hqs/sPaNqaWS0n65nd9mzxNR/+9qFjCDdQGaNGe0Z6xqeQgo/dUwTwSUhXj4HP2IRLBFcWBa7THvr2r6JOOTnsrVfsSMDIv0UpiXMT/EMXMq6nMvKKa0cqFCvImWJzHnjiIcZFg11uLRGk5DstfAPyBBNgP2kK1g+BdrmaqMVqHKKHsi0x2IkitzDtzxdCWPXQnlbHFi41zYs5RhEXFZIR0cy+kIHGby0C5y7hyPwnqCF5eXaZgpgeozPlKQHB7GidYDFZab
+  kailua-order-generator-base:ETH_RPC_URL:
+    secure: v1:tEJqLsPPET6jMpe2:7VeGJXaudzEaoevqx/+IIqjUSaEXHWV3p5fqdDhvmofSilLNE6STcGcsc8xdva1Dm5a+ERNZK74QKQWj/BZfbjn115N/U2ylsQT6hXXdtLPCzs3hZrB+PzFjvCK/Mkx6kN5r
+  kailua-order-generator-base:ORDER_STREAM_URL:
+    secure: v1:+5vunBwnU839BaBK:PGE0Us3lOnxKBgu2D5XJbZZI5UbmaWMRsc+/2dgZ17rXWCoRKfbCiybQ+CpDgNHTE1WoUQ==
+  kailua-order-generator-base:BOUNDLESS_WALLET_KEY:
+    secure: v1:Kh8c/xqKoXIMgyL1:KmUKjUiECe15l7QnJRLHoiRSJLMqHaEJ4raDKXtYiIlo9BgumCml/AueRSr9QndBDx4mZaownCrprId6siF41qk0sXb0R0NNwfGBVsAxEbg=
+  kailua-order-generator-base:BOUNDLESS_RPC_URL:
+    secure: v1:w2QJieeSZkuBN6QI:s4KIh8THcbu5J0BCwZSdIL8WB+oCcGzj4fiE3vpCqY8vVAqCm2a5LYEUhjfPLNl+st+ylTNjRFC7/XE8LS6zOAehOY1e89M2LE6QNrhhDH81gXikZF85SRyK4HWNnra4aePdMb5LKBMmltJM
+  kailua-order-generator-base:BOUNDLESS_ORDER_STREAM_URL:
+    secure: v1:LG4dwPo82zmeTxw2:Le5wjvutgNZrcOsvcxSbVOQH03QATKGz1Bkepcw8lLzGqFQfOa336FgRFh4UdcwRuF6Rqw==
+  kailua-order-generator-base:STORAGE_PROVIDER: pinata
+
+  # Unichain service configuration
+  kailua-order-generator-unichain:KAILUA_L1_URL: https://ancient-ultra-pool.quiknode.pro/0f7b97e0e4258b667c3156233dfde6e935ddf343/
+  kailua-order-generator-unichain:KAILUA_L2_URL: https://warmhearted-long-film.unichain-mainnet.quiknode.pro/62ada45f559c70446d5cc98b7dd2eb8f2e8a0bf1/
+  kailua-order-generator-unichain:KAILUA_DATA_DIR: ".localtestdata/unichain-mainnet"
+  kailua-order-generator-unichain:NTH_PROOF_TO_PROCESS: "2"
+  kailua-order-generator-unichain:NUM_CONCURRENT_PROVERS: "8"
+  kailua-order-generator-unichain:NUM_CONCURRENT_PROOFS: "4"
+  kailua-order-generator-unichain:SKIP_AWAIT_PROOF: "true"
+  kailua-order-generator-unichain:SKIP_DERIVATION_PROOF: "true"
+  kailua-order-generator-unichain:ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT: "true"
+  kailua-order-generator-unichain:STORAGE_PROVIDER: "pinata"
+  kailua-order-generator-unichain:BOUNDLESS_LOOK_BACK: "true"
+  kailua-order-generator-unichain:BOUNDLESS_ORDER_BID_DELAY_FACTOR: "0.1"
+  kailua-order-generator-unichain:BOUNDLESS_ORDER_RAMP_UP_FACTOR: "0.2"
+  kailua-order-generator-unichain:BOUNDLESS_ORDER_LOCK_TIMEOUT_FACTOR: "0.2"
+  kailua-order-generator-unichain:BOUNDLESS_ORDER_EXPIRY_FACTOR: "1"
+  kailua-order-generator-unichain:BOUNDLESS_MEGA_CYCLE_STAKE: "1500"
+  kailua-order-generator-unichain:BOUNDLESS_CYCLE_MAX_WEI: "65000"
+  kailua-order-generator-unichain:RUST_BACKTRACE: "full"
+  kailua-order-generator-unichain:RISC0_INFO: "1"
+  kailua-order-generator-unichain:PINATA_JWT:
+    secure: v1:FCUOhasPQC9EPWth:uPLxri1PG7fIn+jHrpja+AiLpry8cy520H2dRPYhCl4Ke/t50hB+E06LKeAiOgYYuYofLe8XQP8A2GWxCjJ1Cpp36YOSU+DwCUmlORWkCznhC7IuUc2S2BSW46lw4ln5pCHESnSIvhcJxNjeVyTZa7kDcNCQ481DqSI9cTk91dVFozIrfiABd9FehdtdIoe7S9IB4gGGf0TSPuDfbPU8iZeqNzHWXw19aq7paZrMv9zBa7vUF3oFif87+ex2/clJ4iTIoU62q9uONuPqBw8t+bqjqyrqJokzHb6BPIw92pVeSf/wdcIefaAt68ztgvlc59S8rhRW8WDLR28GvoZKvgZHuDYX9vl6ho1UYCj3IqlN2Rn5iFlCrKYRpjHYG/nfzhq6RkDbrICrZdRjkJcHCAtrd4AV5RZ3k0W4FidbEDpmAXvplBDJC11h+8DTfqnYayQH6MzC6IyYo6FfpJQ/XrlpjC1atalFJRH2UMq3KWiVatlxP6ob7KgubZqTux2tluBwNfrKBImLrh79+Xf50Sv/vVL8EUsGnMbxzua/Wyvf//2/10WHRwb+eV5TtcAIZLWeeL+FC7p+1XVaMRNs1M/WEgBqSSY1uqwxgg6JWcGnCwRxrJDeBj9Jk+/qviOI7rHLNAIZz5P2dQVqtSCmOHA5Hqs/sPaNqaWS0n65nd9mzxNR/+9qFjCDdQGaNGe0Z6xqeQgo/dUwTwSUhXj4HP2IRLBFcWBa7THvr2r6JOOTnsrVfsSMDIv0UpiXMT/EMXMq6nMvKKa0cqFCvImWJzHnjiIcZFg11uLRGk5DstfAPyBBNgP2kK1g+BdrmaqMVqHKKHsi0x2IkitzDtzxdCWPXQnlbHFi41zYs5RhEXFZIR0cy+kIHGby0C5y7hyPwnqCF5eXaZgpgeozPlKQHB7GidYDFZab
+  kailua-order-generator-unichain:ETH_RPC_URL:
+    secure: v1:tEJqLsPPET6jMpe2:7VeGJXaudzEaoevqx/+IIqjUSaEXHWV3p5fqdDhvmofSilLNE6STcGcsc8xdva1Dm5a+ERNZK74QKQWj/BZfbjn115N/U2ylsQT6hXXdtLPCzs3hZrB+PzFjvCK/Mkx6kN5r
+  kailua-order-generator-unichain:ORDER_STREAM_URL:
+    secure: v1:+5vunBwnU839BaBK:PGE0Us3lOnxKBgu2D5XJbZZI5UbmaWMRsc+/2dgZ17rXWCoRKfbCiybQ+CpDgNHTE1WoUQ==
+  kailua-order-generator-unichain:BOUNDLESS_WALLET_KEY:
+    secure: v1:Kh8c/xqKoXIMgyL1:KmUKjUiECe15l7QnJRLHoiRSJLMqHaEJ4raDKXtYiIlo9BgumCml/AueRSr9QndBDx4mZaownCrprId6siF41qk0sXb0R0NNwfGBVsAxEbg=
+  kailua-order-generator-unichain:BOUNDLESS_RPC_URL:
+    secure: v1:w2QJieeSZkuBN6QI:s4KIh8THcbu5J0BCwZSdIL8WB+oCcGzj4fiE3vpCqY8vVAqCm2a5LYEUhjfPLNl+st+ylTNjRFC7/XE8LS6zOAehOY1e89M2LE6QNrhhDH81gXikZF85SRyK4HWNnra4aePdMb5LKBMmltJM
+  kailua-order-generator-unichain:BOUNDLESS_ORDER_STREAM_URL:
+    secure: v1:LG4dwPo82zmeTxw2:Le5wjvutgNZrcOsvcxSbVOQH03QATKGz1Bkepcw8lLzGqFQfOa336FgRFh4UdcwRuF6Rqw==
