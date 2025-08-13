@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use chrono::Utc;
 use elsa::sync::FrozenVec;
 use proptest::prelude::*;
@@ -90,10 +90,7 @@ fn generate_test_order(request_id: u32) -> Order {
         target_timestamp: None,
         request: ProofRequest::new(
             RequestId::new(Address::ZERO, request_id),
-            Requirements::new(
-                Digest::ZERO,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(Digest::ZERO, Bytes::default())),
             "test",
             RequestInput { inputType: RequestInputType::Url, data: Default::default() },
             Offer {

@@ -612,7 +612,7 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
-        primitives::{Address, U256},
+        primitives::{Address, Bytes, U256},
         providers::{ext::AnvilApi, ProviderBuilder, WalletProvider},
         signers::local::PrivateKeySigner,
         sol_types::eip712_domain,
@@ -667,7 +667,7 @@ mod tests {
             id: boundless_market.request_id_from_nonce().await.unwrap(),
             requirements: Requirements::new(Predicate::prefix_match(
                 Digest::ZERO,
-                Default::default(),
+                Bytes::default(),
             )),
             imageUrl: "test".to_string(),
             input: RequestInput { inputType: RequestInputType::Url, data: Default::default() },
@@ -809,10 +809,7 @@ mod tests {
     async fn new_request<P: Provider>(idx: u32, ctx: &TestCtx<P>) -> ProofRequest {
         ProofRequest::new(
             RequestId::new(ctx.customer_signer.address(), idx),
-            Requirements::new(
-                Digest::from(ECHO_ID),
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(Digest::from(ECHO_ID), Bytes::default())),
             "http://image_uri.null",
             GuestEnv::builder().build_inline().unwrap(),
             Offer {

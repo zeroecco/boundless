@@ -18,6 +18,7 @@ use alloy::{
     providers::Provider,
     sol_types::eip712_domain,
 };
+use alloy_primitives::Bytes;
 use boundless_market::{
     contracts::{
         boundless_market::{FulfillmentTx, UnlockedRequest},
@@ -41,10 +42,7 @@ fn now_timestamp() -> u64 {
 async fn new_request<P: Provider>(idx: u32, ctx: &TestCtx<P>) -> ProofRequest {
     ProofRequest::new(
         RequestId::new(ctx.customer_signer.address(), idx),
-        Requirements::new(
-            Digest::from(ECHO_ID),
-            Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-        ),
+        Requirements::new(Predicate::prefix_match(Digest::from(ECHO_ID), Bytes::default())),
         "http://image_uri.null",
         GuestEnv::builder().build_inline().unwrap(),
         Offer {

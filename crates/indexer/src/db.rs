@@ -296,6 +296,7 @@ impl IndexerDb for AnyDb {
         let predicate_type = match request.requirements.predicate.predicateType {
             PredicateType::DigestMatch => "DigestMatch",
             PredicateType::PrefixMatch => "PrefixMatch",
+            PredicateType::ClaimDigestMatch => "ClaimDigestMatch",
             _ => return Err(DbError::BadTransaction("Invalid predicate type".to_string())),
         };
         let input_type = match request.input.inputType {
@@ -326,7 +327,7 @@ impl IndexerDb for AnyDb {
                 tx_hash,
                 block_number,
                 block_timestamp
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (request_digest) DO NOTHING",
         )
         .bind(format!("{request_digest:x}"))
@@ -744,10 +745,7 @@ mod tests {
     fn generate_request(id: u32, addr: &Address) -> ProofRequest {
         ProofRequest::new(
             RequestId::new(*addr, id),
-            Requirements::new(
-                Digest::default(),
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(Digest::default(), Bytes::default())),
             "https://image_url.dev",
             RequestInput::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
             Offer {

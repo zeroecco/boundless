@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS proof_requests (
     -- image_id            TEXT      NOT NULL, -- 32-byte image ID (hex encoded)
     predicate_type      TEXT      NOT NULL, -- Type of predicate (e.g., 'DigestMatch', 'PrefixMatch')
     predicate_data      TEXT      NOT NULL, -- Predicate data (hex encoded)
+    -- TODO(ec2): Perhaps flatten the predicate data and have nullable image_id?
     callback_address    TEXT,               -- Optional callback contract address
     callback_gas_limit  TEXT,               -- Optional gas limit for callback
     selector            TEXT      NOT NULL, -- Selector (hex encoded)
@@ -34,8 +35,8 @@ CREATE TABLE IF NOT EXISTS proof_requests (
 -- Add an index on client_address for faster lookups
 CREATE INDEX IF NOT EXISTS idx_proof_requests_client_address ON proof_requests(client_address);
 
--- Add an index on image_id for faster lookups
-CREATE INDEX IF NOT EXISTS idx_proof_requests_image_id ON proof_requests(image_id);
+-- -- Add an index on image_id for faster lookups
+-- CREATE INDEX IF NOT EXISTS idx_proof_requests_image_id ON proof_requests(image_id);
 
 -- Add an index on bidding_end for time-based queries
 CREATE INDEX IF NOT EXISTS idx_proof_requests_expires_at ON proof_requests(expires_at);

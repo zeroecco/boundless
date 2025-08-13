@@ -216,7 +216,7 @@ mod tests {
             signature: signature.as_bytes().to_vec(),
             fulfillment_data: FulfillmentData::ImageIdAndJournal(
                 Digest::from_bytes(B256::ZERO.0),
-                vec![1, 2, 3].into(),
+                vec![1].into(),
             ),
         };
 

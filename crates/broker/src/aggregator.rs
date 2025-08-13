@@ -767,10 +767,7 @@ mod tests {
         // First order
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 0),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -815,10 +812,7 @@ mod tests {
         // Second order
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 1),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -931,10 +925,7 @@ mod tests {
         // First order
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 0),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -994,10 +985,7 @@ mod tests {
         // Second order
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 1),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -1106,10 +1094,7 @@ mod tests {
         let min_price = 200000000000000000u64;
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 0),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -1221,10 +1206,7 @@ mod tests {
         let min_price = 200000000000000000u64;
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 0),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -1344,10 +1326,7 @@ mod tests {
         let min_price = 200000000000000000u64;
         let order_request = ProofRequest::new(
             RequestId::new(customer_signer.address(), 0),
-            Requirements::new(
-                image_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -1466,14 +1445,8 @@ mod tests {
             target_timestamp: None,
             request: ProofRequest::new(
                 RequestId::new(Address::ZERO, 999),
-                Requirements::new(
-                    Digest::ZERO,
-                    Predicate {
-                        predicateType: PredicateType::PrefixMatch,
-                        data: Default::default(),
-                    },
-                ),
-                "http://risczero.com",
+                Requirements::new(Predicate::prefix_match(Digest::ZERO, Bytes::default())),
+                "h/risczero.com",
                 RequestInput { inputType: RequestInputType::Inline, data: "".into() },
                 Offer {
                     minPrice: U256::from(1),
@@ -1508,13 +1481,7 @@ mod tests {
             target_timestamp: None,
             request: ProofRequest::new(
                 RequestId::new(Address::ZERO, 1000),
-                Requirements::new(
-                    Digest::ZERO,
-                    Predicate {
-                        predicateType: PredicateType::PrefixMatch,
-                        data: Default::default(),
-                    },
-                ),
+                Requirements::new(Predicate::prefix_match(Digest::ZERO, Bytes::default())),
                 "http://risczero.com",
                 RequestInput { inputType: RequestInputType::Inline, data: "".into() },
                 Offer {

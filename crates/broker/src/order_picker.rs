@@ -472,21 +472,21 @@ where
         );
 
         // Create cache key based on input type
-        let image_id = Digest::from(order.request.requirements.imageId.0);
+        let predicate_data = order.request.requirements.predicate.data.to_vec();
         let cache_key = match order.request.input.inputType {
             RequestInputType::Url => {
                 let input_url = std::str::from_utf8(&order.request.input.data)
                     .context("input url is not utf8")
                     .map_err(|e| OrderPickerErr::FetchInputErr(Arc::new(e)))?
                     .to_string();
-                PreflightCacheKey { image_id, input: InputCacheKey::Url(input_url) }
+                PreflightCacheKey { predicate_data, input: InputCacheKey::Url(input_url) }
             }
             RequestInputType::Inline => {
                 // For inline inputs, use SHA256 hash of the data
                 let mut hasher = Sha256::new();
                 Sha2Digest::update(&mut hasher, &order.request.input.data);
                 let input_hash: [u8; 32] = hasher.finalize().into();
-                PreflightCacheKey { image_id, input: InputCacheKey::Hash(input_hash) }
+                PreflightCacheKey { predicate_data, input: InputCacheKey::Hash(input_hash) }
             }
             RequestInputType::__Invalid => {
                 return Err(OrderPickerErr::UnexpectedErr(Arc::new(anyhow::anyhow!(
@@ -1025,7 +1025,7 @@ enum InputCacheKey {
 /// Key type for the preflight cache
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 struct PreflightCacheKey {
-    image_id: Digest,
+    predicate_data: Vec<u8>,
     input: InputCacheKey,
 }
 
@@ -1412,13 +1412,7 @@ pub(crate) mod tests {
             Box::new(OrderRequest {
                 request: ProofRequest::new(
                     RequestId::new(self.provider.default_signer_address(), params.order_index),
-                    Requirements::new(
-                        image_id,
-                        Predicate {
-                            predicateType: PredicateType::PrefixMatch,
-                            data: Default::default(),
-                        },
-                    ),
+                    Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
                     image_url,
                     RequestInput::builder()
                         .write_slice(&[0x41, 0x41, 0x41, 0x41])
@@ -1461,13 +1455,7 @@ pub(crate) mod tests {
             Box::new(OrderRequest {
                 request: ProofRequest::new(
                     RequestId::new(self.provider.default_signer_address(), params.order_index),
-                    Requirements::new(
-                        image_id,
-                        Predicate {
-                            predicateType: PredicateType::PrefixMatch,
-                            data: Default::default(),
-                        },
-                    ),
+                    Requirements::new(Predicate::prefix_match(image_id, Bytes::default())),
                     image_url,
                     RequestInput::builder()
                         .write(&cycles)

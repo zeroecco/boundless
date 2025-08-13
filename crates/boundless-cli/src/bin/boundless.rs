@@ -1421,10 +1421,8 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use alloy::primitives::aliases::U96;
-    use boundless_market::contracts::{
-        Predicate, PredicateType, RequestId, RequestInput, Requirements,
-    };
+    use alloy::primitives::{aliases::U96, Bytes};
+    use boundless_market::contracts::{Predicate, RequestId, RequestInput, Requirements};
 
     use super::*;
 
@@ -1450,10 +1448,7 @@ mod tests {
     fn generate_request(id: u32, addr: &Address) -> ProofRequest {
         ProofRequest::new(
             RequestId::new(*addr, id),
-            Requirements::new(
-                Digest::from(ECHO_ID),
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(ECHO_ID, Bytes::default())),
             format!("file://{ECHO_PATH}"),
             RequestInput::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
             Offer {
@@ -2038,7 +2033,7 @@ mod tests {
             config: config.clone(),
             command: Command::Request(Box::new(RequestCommands::VerifyProof {
                 request_id,
-                image_id: request.requirements.imageId,
+                image_id: <[u8; 32]>::from(request.requirements.image_id().unwrap()).into(),
             })),
         })
         .await

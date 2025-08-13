@@ -465,6 +465,11 @@ impl ProofRequest {
 
         Ok(())
     }
+
+    /// TODO(ec2): docs
+    pub fn image_id(&self) -> Option<Digest> {
+        self.requirements.image_id()
+    }
 }
 
 #[cfg(not(target_os = "zkvm"))]
@@ -666,19 +671,33 @@ impl Predicate {
     pub fn eval(&self, fulfillment_data: &FulfillmentData) -> bool {
         match self.predicateType {
             PredicateType::DigestMatch => {
-                self.data.as_ref()
+                let (image_id, journal_digest) = self.data.as_ref().split_at(32);
+                journal_digest
                     == Sha256::digest(
                         fulfillment_data
                             .journal()
                             .expect("fulfillment data doesnt have journal, but is digest match"),
                     )
                     .as_slice()
+                    && image_id
+                        == fulfillment_data
+                            .image_id()
+                            .expect("fulfillment data doesnt have image id, but is digest match")
+                            .as_bytes()
             }
-            PredicateType::PrefixMatch => fulfillment_data
-                .journal()
-                .expect("fulfillment data doesnt have journal, but is prefix match")
-                .as_ref()
-                .starts_with(&self.data),
+            PredicateType::PrefixMatch => {
+                let (image_id, journal) = self.data.as_ref().split_at(32);
+                fulfillment_data
+                    .journal()
+                    .expect("fulfillment data doesnt have journal, but is prefix match")
+                    .as_ref()
+                    .starts_with(journal)
+                    && image_id
+                        == fulfillment_data
+                            .image_id()
+                            .expect("fulfillment data doesnt have image id, but is prefix match")
+                            .as_bytes()
+            }
             PredicateType::ClaimDigestMatch => {
                 // self.data.as_ref()
                 //     == ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal.as_ref().to_vec())
@@ -982,10 +1001,10 @@ mod tests {
 
         let req = ProofRequest {
             id: request_id,
-            requirements: Requirements::new(
+            requirements: Requirements::new(Predicate::prefix_match(
                 Digest::ZERO,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+                Bytes::default(),
+            )),
             imageUrl: "https://dev.null".to_string(),
             input: RequestInput::builder().build_inline().unwrap(),
             offer: Offer {
