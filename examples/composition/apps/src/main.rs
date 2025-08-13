@@ -143,7 +143,7 @@ async fn run(args: Args) -> Result<()> {
 
     // Wait for the request to be fulfilled (check periodically)
     tracing::info!("Waiting for request {:x} to be fulfilled", request_id);
-    let (identity_journal, identity_seal) = client
+    let (identity_callback_data, identity_seal) = client
         .wait_for_request_fulfillment(
             request_id,
             Duration::from_secs(5), // periodic check every 5 seconds
@@ -151,6 +151,8 @@ async fn run(args: Args) -> Result<()> {
         )
         .await?;
     tracing::info!("Request {:x} fulfilled", request_id);
+    let CallbackData { journal: identity_journal, .. } =
+        CallbackData::abi_decode(&identity_callback_data)?;
     debug_assert_eq!(&identity_journal, echo_claim_digest.as_bytes());
 
     // Interact with the Counter contract by calling the increment function.
