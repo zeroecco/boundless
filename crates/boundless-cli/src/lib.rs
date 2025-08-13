@@ -19,11 +19,10 @@
 pub mod client;
 #[cfg(feature = "cli")]
 pub mod prover;
-pub mod request;
-pub use request::RequestInput;
-pub mod request_builder;
+// pub mod request;
+// pub use request::RequestInput;
 pub(crate) mod rpc;
-pub mod selector;
+// pub mod selector;
 pub mod util;
 
 pub use boundless_core::input::{GuestEnv, GuestEnvBuilder};
@@ -44,7 +43,22 @@ use url::Url;
 #[cfg(feature = "cli")]
 use boundless_market::contracts::RequestStatus as BoundlessRequestStatus;
 
-use crate::{request_builder::OfferParams, selector::ProofType};
+// use crate::selector::ProofType;
+
+/// Define the selector types.
+///
+/// This is used to indicate the type of proof that is being requested.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ProofType {
+    /// Any proof type.
+    #[default]
+    Any,
+    /// Groth16 proof type.
+    Groth16,
+    /// Inclusion proof type.
+    Inclusion,
+}
 
 /// Configuration for a deployment of the Boundless Market.
 // NOTE: See https://github.com/clap-rs/clap/issues/5092#issuecomment-1703980717 about clap usage.
@@ -228,6 +242,54 @@ pub struct SubmitOffer {
     #[builder(setter(into, prefix = "with"), default)]
     /// The storage provider configuration to use for the offer.
     storage_config: StorageProviderConfig,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Builder, Serialize, Deserialize)]
+/// A partial [Offer], with all the fields as optional. Used in the [OfferLayer] to override
+/// defaults set in the [OfferLayerConfig].
+pub struct OfferParams {
+    /// Minimum price willing to pay for the proof, in wei.
+    #[builder(setter(strip_option, into), default)]
+    pub min_price: Option<U256>,
+
+    /// Maximum price willing to pay for the proof, in wei.
+    #[builder(setter(strip_option, into), default)]
+    pub max_price: Option<U256>,
+
+    /// Timestamp when bidding will start for this request.
+    #[builder(setter(strip_option), default)]
+    pub bidding_start: Option<u64>,
+
+    /// Duration in seconds for the price to ramp up from min to max.
+    #[builder(setter(strip_option), default)]
+    pub ramp_up_period: Option<u32>,
+
+    /// Time in seconds that a prover has to fulfill a locked request.
+    #[builder(setter(strip_option), default)]
+    pub lock_timeout: Option<u32>,
+
+    /// Maximum time in seconds that a request can remain active.
+    #[builder(setter(strip_option), default)]
+    pub timeout: Option<u32>,
+
+    /// Amount of the stake token that the prover must stake when locking a request.
+    #[builder(setter(strip_option, into), default)]
+    pub lock_stake: Option<U256>,
+}
+
+impl From<OfferParamsBuilder> for OfferParams {
+    fn from(value: OfferParamsBuilder) -> Self {
+        // Builder should be infallible.
+        value.build().expect("implementation error in OfferParams")
+    }
+}
+
+// Allows for a nicer builder pattern in RequestParams.
+impl From<&mut OfferParamsBuilder> for OfferParams {
+    fn from(value: &mut OfferParamsBuilder) -> Self {
+        value.clone().into()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
