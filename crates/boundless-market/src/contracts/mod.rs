@@ -609,7 +609,7 @@ impl FulfillmentData {
         match self {
             Self::ClaimDigest(digest) => Some(*digest),
             Self::ImageIdAndJournal(image_id, journal) => {
-                ReceiptClaim::ok(*image_id, journal.as_ref().to_vec()).digest().try_into().ok()
+                Some(ReceiptClaim::ok(*image_id, journal.as_ref().to_vec()).digest())
             }
         }
     }
