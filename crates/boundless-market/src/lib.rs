@@ -52,7 +52,7 @@ pub mod deployments;
 pub use deployments::Deployment;
 
 #[cfg(not(target_os = "zkvm"))]
-pub use boundless_core::input::{GuestEnv, GuestEnvBuilder};
+pub use boundless_core::input::{self, GuestEnv, GuestEnvBuilder};
 
 /// Order stream client module for submitting requests off-chain.
 #[cfg(not(target_os = "zkvm"))]
@@ -74,7 +74,7 @@ pub mod selector;
 
 #[cfg(not(target_os = "zkvm"))]
 pub use boundless_core::storage::{
-    fetch_url, StandardStorageProvider, StorageProvider, StorageProviderConfig,
+    self, fetch_url, StandardStorageProvider, StorageProvider, StorageProviderConfig,
 };
 
 /// Utility functions and types used elsewhere.
