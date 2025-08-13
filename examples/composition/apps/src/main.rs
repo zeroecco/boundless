@@ -115,13 +115,14 @@ async fn run(args: Args) -> Result<()> {
             expires_at,
         )
         .await?;
-    let cb = CallbackData::abi_decode(&callback_data)?;
+    let CallbackData { imageId: cb_image_id, journal: echo_journal } =
+        CallbackData::abi_decode(&callback_data)?;
     tracing::info!("Request {:x} fulfilled", request_id);
-    assert_eq!(Digest::from(<[u8; 32]>::from(cb.imageId)), Digest::from(ECHO_ID));
+    assert_eq!(Digest::from(<[u8; 32]>::from(cb_image_id)), Digest::from(ECHO_ID));
 
     // Decode the resulting RISC0-ZKVM receipt.
     let Ok(ContractReceipt::Base(echo_receipt)) =
-        risc0_ethereum_contracts::receipt::decode_seal(echo_seal, ECHO_ID, callback_data)
+        risc0_ethereum_contracts::receipt::decode_seal(echo_seal, ECHO_ID, echo_journal)
     else {
         bail!("did not receive requested unaggregated receipt")
     };
