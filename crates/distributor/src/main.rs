@@ -61,9 +61,12 @@ struct MainArgs {
     /// Slasher private key
     #[clap(long, env)]
     slasher_key: PrivateKeySigner,
-    /// If prover ETH balance is above this threshold, transfer 75% of the ETH to distributor
+    /// If prover ETH balance is above this threshold, transfer 80% of the ETH to distributor
     #[clap(long, env, default_value = "1.0")]
     prover_eth_donate_threshold: String,
+    /// If prover stake balance is above this threshold, transfer 60% of the stake to distributor
+    #[clap(long, env, default_value = "100.0")]
+    prover_stake_donate_threshold: String,
     /// If ETH balance is below this threshold, transfer ETH to address
     #[clap(long, env, default_value = "0.1")]
     eth_threshold: String,
@@ -117,6 +120,8 @@ async fn run(args: &MainArgs) -> Result<()> {
     // Parse thresholds
     let prover_eth_donate_threshold = parse_ether(&args.prover_eth_donate_threshold)?;
     let stake_token_decimals = distributor_client.boundless_market.stake_token_decimals().await?;
+    let prover_stake_donate_threshold: U256 =
+        parse_units(&args.prover_stake_donate_threshold, stake_token_decimals)?.into();
     let eth_threshold = parse_ether(&args.eth_threshold)?;
     let stake_threshold: U256 = parse_units(&args.stake_threshold, stake_token_decimals)?.into();
     let eth_top_up_amount = parse_ether(&args.eth_top_up_amount)?;
@@ -175,16 +180,113 @@ async fn run(args: &MainArgs) -> Result<()> {
                 .with_to(distributor_address)
                 .with_value(transfer_amount);
 
-            let pending_tx = prover_provider.send_transaction(tx).await?;
+            let pending_tx = match prover_provider.send_transaction(tx).await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to send ETH transfer transaction from prover {} to distributor: {:?}. Skipping.",
+                        prover_address, e
+                    );
+                    continue;
+                }
+            };
 
             // Wait for the transaction to be confirmed
-            let receipt = pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await?;
+            let receipt = match pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await {
+                Ok(receipt) => receipt,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to watch ETH transfer transaction from prover {} to distributor: {:?}. Skipping.",
+                        prover_address, e
+                    );
+                    continue;
+                }
+            };
 
             tracing::info!(
                 "Transfer completed: {:x} from prover {} for {} ETH to distributor",
                 receipt,
                 prover_address,
                 format_units(transfer_amount, "ether")?
+            );
+        }
+
+        let prover_stake_balance =
+            distributor_client.boundless_market.balance_of_stake(prover_address).await?;
+
+        tracing::info!(
+            "Prover {} has {} stake balance on market. Threshold for donation to distributor is {}.",
+            prover_address,
+            format_units(prover_stake_balance, stake_token_decimals)?,
+            format_units(prover_stake_donate_threshold, stake_token_decimals)?
+        );
+
+        if prover_stake_balance > prover_stake_donate_threshold {
+            // Withdraw 60% of the stake balance to the distributor (leave 40% for future lock stake)
+            let withdraw_amount =
+                prover_stake_balance.saturating_mul(U256::from(6)).div_ceil(U256::from(10));
+
+            tracing::info!(
+                "Withdrawing {} stake from prover {} to distributor",
+                format_units(withdraw_amount, stake_token_decimals)?,
+                prover_address
+            );
+
+            // Create prover client to withdraw stake
+            let prover_client = Client::builder()
+                .with_rpc_url(args.rpc_url.clone())
+                .with_private_key(prover_key.clone())
+                .with_timeout(Some(TX_TIMEOUT))
+                .build()
+                .await?;
+
+            // Withdraw stake from market to prover
+            if let Err(e) = prover_client.boundless_market.withdraw_stake(withdraw_amount).await {
+                tracing::error!(
+                    "Failed to withdraw stake from boundless market for prover {}: {:?}. Skipping.",
+                    prover_address,
+                    e
+                );
+                continue;
+            }
+
+            tracing::info!(
+                "Withdrawn {} stake from market for prover {}. Now transferring to distributor",
+                format_units(withdraw_amount, stake_token_decimals)?,
+                prover_address
+            );
+
+            // Transfer the withdrawn stake to distributor
+            let stake_token = distributor_client.boundless_market.stake_token_address().await?;
+            let stake_token_contract = IERC20::new(stake_token, prover_provider.clone());
+
+            let pending_tx = match stake_token_contract
+                .transfer(distributor_address, withdraw_amount)
+                .send()
+                .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to send stake transfer transaction from prover {} to distributor: {:?}. Skipping.",
+                        prover_address, e
+                    );
+                    continue;
+                }
+            };
+
+            if let Err(e) = pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await {
+                tracing::error!(
+                    "Failed to watch stake transfer transaction from prover {} to distributor: {:?}. Skipping.",
+                    prover_address, e
+                );
+                continue;
+            }
+
+            tracing::info!(
+                "Stake transfer completed from prover {} for {} stake to distributor",
+                prover_address,
+                format_units(withdraw_amount, stake_token_decimals)?
             );
         }
     }
@@ -232,10 +334,31 @@ async fn run(args: &MainArgs) -> Result<()> {
                 format_units(prover_stake_balance_market, stake_token_decimals)?,
                 format_units(prover_stake_balance_contract, stake_token_decimals)?
             );
-            let pending_tx =
-                stake_token_contract.transfer(prover_address, transfer_amount).send().await?;
+            let pending_tx = match stake_token_contract
+                .transfer(prover_address, transfer_amount)
+                .send()
+                .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to send stake transfer transaction from distributor to prover {}: {:?}. Skipping.",
+                        prover_address, e
+                    );
+                    continue;
+                }
+            };
 
-            let receipt = pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await?;
+            let receipt = match pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await {
+                Ok(receipt) => receipt,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to watch stake transfer transaction from distributor to prover {}: {:?}. Skipping.",
+                        prover_address, e
+                    );
+                    continue;
+                }
+            };
 
             tracing::info!("Stake transfer completed: {:x} from distributor to prover {}. About to deposit stake", receipt, prover_address);
 
@@ -250,10 +373,18 @@ async fn run(args: &MainArgs) -> Result<()> {
             prover_stake_balance_contract =
                 stake_token_contract.balanceOf(prover_address).call().await?;
 
-            prover_client
+            if let Err(e) = prover_client
                 .boundless_market
                 .deposit_stake_with_permit(prover_stake_balance_contract, prover_key)
-                .await?;
+                .await
+            {
+                tracing::error!(
+                    "Failed to deposit stake to boundless market for prover {}: {:?}. Skipping.",
+                    prover_address,
+                    e
+                );
+                continue;
+            }
             tracing::info!("Stake deposit completed for prover {}", prover_address);
         }
     }
@@ -301,9 +432,27 @@ async fn run(args: &MainArgs) -> Result<()> {
                 .with_to(address)
                 .with_value(transfer_amount);
 
-            let pending_tx = distributor_client.provider().send_transaction(tx).await?;
+            let pending_tx = match distributor_client.provider().send_transaction(tx).await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to send ETH transfer transaction from distributor to {}: {:?}. Skipping.",
+                        address, e
+                    );
+                    continue;
+                }
+            };
 
-            let receipt = pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await?;
+            let receipt = match pending_tx.with_timeout(Some(TX_TIMEOUT)).watch().await {
+                Ok(receipt) => receipt,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to watch ETH transfer transaction from distributor to {}: {:?}. Skipping.",
+                        address, e
+                    );
+                    continue;
+                }
+            };
 
             tracing::info!(
                 "ETH transfer completed: {:x}. {} ETH from distributor to {}",
@@ -360,6 +509,7 @@ mod tests {
             private_key: distributor_signer.clone(),
             prover_keys: vec![prover_signer_1.clone(), prover_signer_2.clone()],
             prover_eth_donate_threshold: "1.0".to_string(),
+            prover_stake_donate_threshold: "20.0".to_string(),
             eth_threshold: "0.1".to_string(),
             stake_threshold: "0.1".to_string(),
             eth_top_up_amount: "0.5".to_string(),
