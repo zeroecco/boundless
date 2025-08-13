@@ -185,7 +185,7 @@ mod tests {
         providers::{Provider, ProviderBuilder, WalletProvider},
     };
     use boundless_market::{
-        contracts::hit_points::default_allowance, storage::StorageProviderType,
+        contracts::hit_points::default_allowance, StorageProviderType,
     };
     use boundless_market_test_utils::{create_test_ctx, TestCtx};
     use broker::test_utils::BrokerBuilder;
