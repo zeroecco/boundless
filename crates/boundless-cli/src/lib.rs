@@ -494,14 +494,13 @@ mod tests {
     #[test_log::test]
     async fn test_shrink() {
         let input = [255u8; 32].to_vec(); // Example output data
-
+        let blake3_claim_digest =
+            shrink_bitvm2::blake3_claim_digest(&Digest::from(ECHO_ID), &input);
         let signer = PrivateKeySigner::random();
         let request = ProofRequest::new(
             RequestId::new(signer.address(), 0),
-            Requirements::new(Predicate::claim_digest_match(
-                ReceiptClaim::ok(ECHO_ID, input.clone()).digest(),
-            ))
-            .with_selector(FixedBytes::from(Selector::ShrinkBitvm2V0_1 as u32)),
+            Requirements::new(Predicate::claim_digest_match(Digest::from(blake3_claim_digest)))
+                .with_selector(FixedBytes::from(Selector::ShrinkBitvm2V0_1 as u32)),
             format!("file://{ECHO_PATH}"),
             RequestInput::builder().write_slice(&input).build_inline().unwrap(),
             Offer::default(),
