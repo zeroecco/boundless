@@ -187,7 +187,6 @@ impl AggregatorService {
 
     async fn prove_assessor(&self, order_ids: &[String]) -> Result<String> {
         let mut fills = vec![];
-        let mut assumptions = vec![];
 
         for order_id in order_ids {
             let order = self
@@ -200,8 +199,6 @@ impl AggregatorService {
             let proof_id = order
                 .proof_id
                 .with_context(|| format!("Missing proof_id for order: {order_id}"))?;
-
-            assumptions.push(proof_id.clone());
 
             let journal = self
                 .prover
@@ -240,7 +237,7 @@ impl AggregatorService {
 
         let proof_res = self
             .prover
-            .prove_and_monitor_stark(&self.assessor_guest_id.to_string(), &input_id, assumptions)
+            .prove_and_monitor_stark(&self.assessor_guest_id.to_string(), &input_id, vec![])
             .await
             .context("Failed to prove assesor stark")?;
 
