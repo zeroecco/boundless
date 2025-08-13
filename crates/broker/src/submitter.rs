@@ -667,8 +667,8 @@ mod tests {
     use boundless_assessor::{AssessorInput, Fulfillment};
     use boundless_market::{
         contracts::{
-            hit_points::default_allowance, FulfillmentData, Offer, Predicate, PredicateType,
-            ProofRequest, RequestId, RequestInput, RequestInputType, Requirements,
+            hit_points::default_allowance, FulfillmentData, Offer, Predicate, ProofRequest,
+            RequestId, RequestInput, RequestInputType, Requirements,
         },
         input::GuestEnv,
     };

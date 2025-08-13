@@ -171,8 +171,8 @@ mod tests {
         signers::local::PrivateKeySigner,
     };
     use boundless_market::contracts::{
-        eip712_domain, Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput,
-        RequestInputType, Requirements,
+        eip712_domain, Offer, Predicate, ProofRequest, RequestId, RequestInput, RequestInputType,
+        Requirements,
     };
     use guest_assessor::ASSESSOR_GUEST_ELF;
     use guest_util::{ECHO_ELF, ECHO_ID};

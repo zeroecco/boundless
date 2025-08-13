@@ -24,7 +24,7 @@ use alloy::{
 use boundless_cli::OrderFulfilled;
 use boundless_market::contracts::{
     boundless_market::{FulfillmentTx, UnlockedRequest},
-    Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput, Requirements,
+    Offer, Predicate, ProofRequest, RequestId, RequestInput, Requirements,
 };
 use boundless_market_test_utils::create_test_ctx;
 use boundless_market_test_utils::{ASSESSOR_GUEST_ELF, ECHO_ID, ECHO_PATH, SET_BUILDER_ELF};

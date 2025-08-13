@@ -23,8 +23,7 @@ use boundless_market::{
     contracts::{
         boundless_market::{FulfillmentTx, UnlockedRequest},
         hit_points::default_allowance,
-        AssessorReceipt, Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestStatus,
-        Requirements,
+        AssessorReceipt, Offer, Predicate, ProofRequest, RequestId, RequestStatus, Requirements,
     },
     input::GuestEnv,
 };

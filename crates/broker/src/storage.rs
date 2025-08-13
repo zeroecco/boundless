@@ -351,7 +351,7 @@ pub async fn upload_image_uri(
     let image_id_str = request.requirements.image_id().map(|image_id| image_id.to_string());
     // When predicate is ClaimDigestMatch, we do not have the image id, so we must always download and upload the image.
     if let Some(ref image_id_str) = image_id_str {
-        if prover.has_image(&image_id_str).await? {
+        if prover.has_image(image_id_str).await? {
             tracing::debug!(
                 "Skipping program upload for cached image ID: {image_id_str} for request {:x}",
                 request.id

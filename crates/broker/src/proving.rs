@@ -470,7 +470,7 @@ mod tests {
     };
     use alloy::primitives::{Address, Bytes, U256};
     use boundless_market::contracts::{
-        Offer, Predicate, PredicateType, ProofRequest, RequestInput, RequestInputType, Requirements,
+        Offer, Predicate, ProofRequest, RequestInput, RequestInputType, Requirements,
     };
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
     use chrono::Utc;

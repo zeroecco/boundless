@@ -18,11 +18,7 @@ use std::{
 };
 
 use crate::counter::{ICounter, ICounter::ICounterInstance};
-use alloy::{
-    primitives::{Address, B256},
-    signers::local::PrivateKeySigner,
-    sol_types::SolCall,
-};
+use alloy::{primitives::Address, signers::local::PrivateKeySigner, sol_types::SolCall};
 use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{Predicate, PredicateType},

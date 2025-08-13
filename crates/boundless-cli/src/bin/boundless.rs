@@ -1185,7 +1185,7 @@ where
     if opts.preflight {
         tracing::info!("Running request preflight check");
         let session_info = execute(&request).await?;
-        let journal = session_info.journal.bytes;
+        let _journal = session_info.journal.bytes;
 
         // Verify image ID if available
         if let Some(claim) = session_info.receipt_claim {
