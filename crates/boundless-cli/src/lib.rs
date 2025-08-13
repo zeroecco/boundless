@@ -19,10 +19,7 @@
 pub mod client;
 #[cfg(feature = "cli")]
 pub mod prover;
-// pub mod request;
-// pub use request::RequestInput;
 pub(crate) mod rpc;
-// pub mod selector;
 pub mod util;
 
 pub use boundless_core::input::{GuestEnv, GuestEnvBuilder};
@@ -42,8 +39,6 @@ use url::Url;
 
 #[cfg(feature = "cli")]
 use boundless_market::contracts::RequestStatus as BoundlessRequestStatus;
-
-// use crate::selector::ProofType;
 
 /// Define the selector types.
 ///
@@ -70,8 +65,6 @@ pub struct Deployment {
     pub chain_id: Option<u64>,
 
     /// Address of the [BoundlessMarket] contract.
-    ///
-    /// [BoundlessMarket]: crate::contracts::IBoundlessMarket
     #[builder(setter(into))]
     pub boundless_market_address: Address,
 
@@ -98,8 +91,6 @@ pub struct Deployment {
     pub stake_token_address: Option<Address>,
 
     /// URL for the offchain [order stream service].
-    ///
-    /// [order stream service]: crate::order_stream_client
     #[builder(setter(into, strip_option), default)]
     pub order_stream_url: Option<Cow<'static, str>>,
 }
