@@ -33,8 +33,7 @@ use crate::{db::AggregationOrder, AggregationState, Order, OrderStatus};
 use super::{BrokerDb, SqliteDb};
 
 use boundless_market::contracts::{
-    Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput, RequestInputType,
-    Requirements,
+    Offer, Predicate, ProofRequest, RequestId, RequestInput, RequestInputType, Requirements,
 };
 
 // Add new state tracking structure
@@ -211,7 +210,7 @@ proptest! {
                                     ExistingOrderOperation::GetSubmissionOrder => {
                                         let order = db.get_order(id).await.unwrap();
                                         if let Some(order) = order {
-                                            if order.proof_id.is_some() && order.lock_price.is_some() {
+                                            if order.proof_id.is_some() && order.lock_price.is_some() && order.image_id.is_some() {
                                                 db.get_submission_order(id).await.unwrap();
                                             }
                                         }
