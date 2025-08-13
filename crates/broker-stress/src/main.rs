@@ -29,8 +29,8 @@ use anyhow::{Context, Result};
 use axum::{routing::get, Router};
 use boundless_market::{
     contracts::{
-        hit_points::default_allowance, Offer, Predicate, PredicateType, ProofRequest, RequestId,
-        RequestInput, RequestInputType, Requirements,
+        hit_points::default_allowance, Offer, Predicate, ProofRequest, RequestId, RequestInput,
+        RequestInputType, Requirements,
     },
     input::GuestEnv,
 };

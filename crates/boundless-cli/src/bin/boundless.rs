@@ -82,7 +82,7 @@ use url::Url;
 use boundless_market::{
     contracts::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, UnlockedRequest},
-        Offer, PredicateType, ProofRequest, RequestInputType, Selector,
+        Offer, ProofRequest, RequestInputType, Selector,
     },
     input::GuestEnv,
     request_builder::{OfferParams, RequirementParams},

@@ -16,7 +16,7 @@ use alloy::primitives::{utils, Address};
 use anyhow::{Context, Result};
 use boundless_assessor::{AssessorInput, Fulfillment};
 use boundless_market::{
-    contracts::{eip712_domain, FulfillmentData, Predicate, PredicateType},
+    contracts::{eip712_domain, FulfillmentData, PredicateType},
     input::GuestEnv,
 };
 use chrono::Utc;

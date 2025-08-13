@@ -28,7 +28,7 @@ use boundless_market::{
     contracts::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, MarketError, UnlockedRequest},
         boundless_market_contract::CallbackData,
-        encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, Predicate, PredicateType,
+        encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, PredicateType,
     },
     selector::is_groth16_selector,
 };

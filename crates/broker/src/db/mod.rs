@@ -14,7 +14,7 @@
 
 use std::{default::Default, str::FromStr, sync::Arc};
 
-use alloy::primitives::{ruint::ParseError as RuintParseErr, Bytes, B256, U256};
+use alloy::primitives::{ruint::ParseError as RuintParseErr, Bytes, U256};
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{

@@ -26,7 +26,7 @@ use alloy::{
 };
 use alloy_primitives::{
     aliases::{U160, U32, U96},
-    Address, Bytes, FixedBytes, B256, U256,
+    Address, Bytes, FixedBytes, U256,
 };
 use alloy_sol_types::{eip712_domain, Eip712Domain};
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,6 @@ use risc0_zkvm::{
 #[cfg(not(target_os = "zkvm"))]
 pub use risc0_ethereum_contracts::{encode_seal, selector::Selector, IRiscZeroSetVerifier};
 
-use crate::contracts::boundless_market_contract::CallbackData;
 #[cfg(not(target_os = "zkvm"))]
 use crate::{input::GuestEnvBuilder, util::now_timestamp};
 
