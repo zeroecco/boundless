@@ -1937,6 +1937,7 @@ mod tests {
         }
 
         // test the Slash command
+        let command = Command::Ops(Box::new(OpsCommands::Slash { request_id: request.id }));
         run(&config, &command).await.unwrap();
         assert!(logs_contain(&format!(
             "Successfully slashed prover for request 0x{:x}",
