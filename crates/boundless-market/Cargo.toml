@@ -65,4 +65,4 @@ serde_json = { workspace = true }
 
 [features]
 default = []
-test-utils = ["dep:risc0-circuit-recursion"]
+test-utils = ["dep:risc0-circuit-recursion", "boundless-core/test-utils"]
