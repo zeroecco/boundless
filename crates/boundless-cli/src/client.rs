@@ -29,8 +29,8 @@ use url::Url;
 
 use crate::{
     rpc::RpcProvider, util::NotProvided, AccountCommand, Deployment, JsonCommand, JsonConfig,
-    JsonRequest, OpsCommand, Output, ProvingCommand, RequestCommand, RequestStatus, Response,
-    StorageProviderConfig, SubmitOffer,
+    JsonRequest, OpsCommand, Output, ProvingCommand, RequestCommand, RequestParams, RequestStatus,
+    Response, StorageProviderConfig,
 };
 
 /// Builder for the [Client] with standard implementations for the required components.
@@ -283,20 +283,20 @@ where
         Ok(response)
     }
 
-    /// Submit an offer to the Boundless Market.
-    pub async fn submit_offer(&self, offer: &SubmitOffer) -> Result<(U256, u64), Error> {
-        let command = JsonCommand::Request(RequestCommand::SubmitOffer(Box::new(offer.clone())));
+    /// Submit a request to the Boundless Market.
+    pub async fn submit_request(&self, params: &RequestParams) -> Result<(U256, u64), Error> {
+        let command = JsonCommand::Request(RequestCommand::SubmitOffer(Box::new(params.clone())));
         let response = self.run(command)?;
         if !response.success {
             return Err(Error::msg(format!(
-                "Offer submission failed: {}",
+                "Request submission failed: {}",
                 response.error.unwrap_or_else(|| "Unknown error".to_string())
             )));
         }
         if let Some(Output::RequestSubmitted { request_id, expires_at }) = response.data {
             return Ok((request_id, expires_at));
         }
-        Err(Error::msg("Offer submission failed"))
+        Err(Error::msg("Request submission failed"))
     }
 
     /// Get the status of a request by its ID.
@@ -527,7 +527,7 @@ mod tests {
 
     use super::*;
 
-    use crate::{GuestEnv, OfferParamsBuilder, SubmitOfferBuilder};
+    use crate::{GuestEnv, OfferParamsBuilder, RequestParamsBuilder};
     use alloy::{
         node_bindings::{Anvil, AnvilInstance},
         providers::{Provider, WalletProvider},
@@ -622,7 +622,7 @@ mod tests {
     async fn test_slash() {
         let (_ctx, _anvil, client) = setup_test_env(AccountOwner::Customer).await;
 
-        let offer = SubmitOfferBuilder::default()
+        let params = RequestParamsBuilder::default()
             .with_program_url(Url::parse(&format!("file://{ECHO_PATH}")).unwrap())
             .with_stdin(
                 GuestEnv::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_vec().unwrap(),
@@ -636,7 +636,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (request_id, expires_at) = client.submit_offer(&offer).await.unwrap();
+        let (request_id, expires_at) = client.submit_request(&params).await.unwrap();
 
         client.lock_request(request_id).unwrap();
 
@@ -654,10 +654,10 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "Requires RISC0_DEV_MODE=1"]
-    async fn test_e2e_submit_offer() {
+    async fn test_e2e() {
         let (_ctx, _anvil, client) = setup_test_env(AccountOwner::Customer).await;
 
-        let offer = SubmitOfferBuilder::default()
+        let params = RequestParamsBuilder::default()
             .with_program_url(Url::parse(&format!("file://{ECHO_PATH}")).unwrap())
             .with_stdin(
                 GuestEnv::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_vec().unwrap(),
@@ -666,7 +666,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (request_id, expires_at) = client.submit_offer(&offer).await.unwrap();
+        let (request_id, expires_at) = client.submit_request(&params).await.unwrap();
 
         let status = client.status(request_id, Some(expires_at)).unwrap();
         assert_eq!(status, RequestStatus::Unknown);

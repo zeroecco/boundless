@@ -144,7 +144,7 @@ pub(crate) enum RequestCommand {
         no_preflight: bool,
         storage_config: Box<StorageProviderConfig>,
     },
-    SubmitOffer(Box<SubmitOffer>),
+    SubmitOffer(Box<RequestParams>),
     Status {
         request_id: U256,
         expires_at: Option<u64>,
@@ -202,15 +202,15 @@ pub enum RequestStatus {
     Unknown,
 }
 
-/// Parameters for submitting an offer.
+/// Parameters for submitting a request.
 #[derive(Clone, Debug, Default, Builder, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct SubmitOffer {
+pub struct RequestParams {
     #[builder(setter(into, strip_option, prefix = "with"), default)]
-    /// The ID of the offer.
+    /// The ID of the request.
     id: Option<u32>,
     #[builder(setter(into, prefix = "with"), default)]
-    /// The program to use for the offer.
+    /// The program to use for the request.
     program: SubmitOfferProgram,
     #[builder(setter(into, prefix = "with"), default)]
     /// Whether to wait for the request to be fulfilled.
@@ -222,16 +222,16 @@ pub struct SubmitOffer {
     /// Whether to encode the input.
     encode_input: bool,
     #[builder(setter(into, prefix = "with"), default)]
-    /// The input to use for the offer.
+    /// The input to use for the request.
     input: SubmitOfferInput,
     #[builder(setter(into, prefix = "with"), default)]
-    /// The requirements for the offer.
+    /// The requirements for the request.
     requirements: SubmitOfferRequirements,
     #[builder(setter(into, strip_option, prefix = "with"), default)]
-    /// The offer parameters to use for the offer.
+    /// The offer parameters to use for the request.
     offer_params: Option<OfferParams>,
     #[builder(setter(into, prefix = "with"), default)]
-    /// The storage provider configuration to use for the offer.
+    /// The storage provider configuration to use for the request.
     storage_config: StorageProviderConfig,
 }
 
@@ -315,7 +315,7 @@ struct SubmitOfferInput {
     input_file: Option<PathBuf>,
 }
 
-impl SubmitOfferBuilder {
+impl RequestParamsBuilder {
     /// Seth the program for the offer using a local path.
     pub fn with_program_path<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
         self.program = Some(SubmitOfferProgram { path: Some(path.into()), url: None });
