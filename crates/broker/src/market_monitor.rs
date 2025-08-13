@@ -631,8 +631,8 @@ mod tests {
         contracts::{
             boundless_market::{BoundlessMarketService, FulfillmentTx},
             hit_points::default_allowance,
-            AssessorReceipt, Offer, Predicate, PredicateType, ProofRequest, RequestInput,
-            RequestInputType, Requirements,
+            AssessorReceipt, Offer, Predicate, ProofRequest, RequestInput, RequestInputType,
+            Requirements,
         },
         input::GuestEnv,
     };

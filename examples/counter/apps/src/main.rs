@@ -18,11 +18,7 @@ use std::{
 };
 
 use crate::counter::{ICounter, ICounter::ICounterInstance};
-use alloy::{
-    primitives::{Address, B256},
-    signers::local::PrivateKeySigner,
-    sol_types::SolCall,
-};
+use alloy::{primitives::Address, signers::local::PrivateKeySigner, sol_types::SolCall};
 use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{Predicate, PredicateType},
@@ -31,10 +27,7 @@ use boundless_market::{
 };
 use clap::Parser;
 use guest_util::{ECHO_ELF, ECHO_ID};
-use risc0_zkvm::{
-    sha::{Digest, Digestible},
-    ReceiptClaim,
-};
+use risc0_zkvm::{sha::Digestible, ReceiptClaim};
 use tracing_subscriber::{filter::LevelFilter, prelude::*, EnvFilter};
 use url::Url;
 

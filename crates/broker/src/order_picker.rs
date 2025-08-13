@@ -1358,14 +1358,13 @@ pub(crate) mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::{Anvil, AnvilInstance},
-        primitives::{address, aliases::U96, utils::parse_units, Address, Bytes, FixedBytes, B256},
+        primitives::{address, aliases::U96, utils::parse_units, Address, Bytes, FixedBytes},
         providers::{ext::AnvilApi, ProviderBuilder},
         signers::local::PrivateKeySigner,
     };
     use async_trait::async_trait;
     use boundless_market::contracts::{
-        Callback, Offer, Predicate, PredicateType, ProofRequest, RequestId, RequestInput,
-        Requirements,
+        Callback, Offer, Predicate, ProofRequest, RequestId, RequestInput, Requirements,
     };
     use boundless_market::storage::{MockStorageProvider, StorageProvider};
     use boundless_market_test_utils::{

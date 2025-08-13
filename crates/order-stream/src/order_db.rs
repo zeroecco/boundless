@@ -275,8 +275,7 @@ mod tests {
         sol_types::SolStruct,
     };
     use boundless_market::contracts::{
-        eip712_domain, Offer, Predicate, PredicateType, ProofRequest, RequestInput,
-        RequestInputType, Requirements,
+        eip712_domain, Offer, Predicate, ProofRequest, RequestInput, RequestInputType, Requirements,
     };
     use futures_util::StreamExt;
     use risc0_zkvm::sha::Digest;

@@ -1062,7 +1062,7 @@ mod tests {
     use crate::ProofRequest;
     use alloy::primitives::{Address, Bytes, U256};
     use boundless_market::contracts::{
-        Offer, Predicate, PredicateType, RequestId, RequestInput, RequestInputType, Requirements,
+        Offer, Predicate, RequestId, RequestInput, RequestInputType, Requirements,
     };
     use risc0_aggregation::GuestState;
     use risc0_zkvm::sha::Digest;
