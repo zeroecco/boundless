@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use hex::FromHex;
 use risc0_zkvm::sha::Digest;
 use sha2::{Digest as Sha2Digest, Sha256};
 use std::collections::BTreeMap;
@@ -43,7 +44,10 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use boundless_market::{
-    contracts::{boundless_market::BoundlessMarketService, RequestError, RequestInputType},
+    contracts::{
+        boundless_market::BoundlessMarketService, FulfillmentData, PredicateType, RequestError,
+        RequestInputType,
+    },
     selector::SupportedSelectors,
 };
 use moka::future::Cache;
@@ -502,7 +506,7 @@ where
             let config = self.config.clone();
             let request = order.request.clone();
             let order_id_clone = order_id.clone();
-            let cache_key_clone = cache_key.clone();
+            let cache_key_clone: PreflightCacheKey = cache_key.clone();
 
             let cache_cloned = self.preflight_cache.clone();
             let result = tokio::task::spawn(async move {
@@ -655,17 +659,29 @@ where
             return Ok(Skip);
         }
 
-        // TODO(ec2): how to do?
-        // // Validate the predicates:
-        // if !order
-        //     .request
-        //     .requirements
-        //     .predicate
-        //     .eval(order.request.requirements.imageId, journal.clone())
-        // {
-        //     tracing::info!("Order {order_id} predicate check failed, skipping");
-        //     return Ok(Skip);
-        // }
+        // Validate the predicates:
+        match order.request.requirements.predicate.predicateType {
+            PredicateType::ClaimDigestMatch => {
+                tracing::info!("Skip order {order_id} predicate match: ClaimDigestMatch");
+            }
+            _ => {
+                if !order.request.requirements.predicate.eval(
+                    &FulfillmentData::from_image_id_and_journal(
+                        Digest::from_hex(
+                            order
+                                .image_id
+                                .as_ref()
+                                .expect("image id should be populated because we preflighted"),
+                        )
+                        .unwrap(),
+                        journal,
+                    ),
+                ) {
+                    tracing::info!("Order {order_id} predicate check failed, skipping");
+                    return Ok(Skip);
+                }
+            }
+        }
 
         self.evaluate_order(order, &proof_res, order_gas_cost, lock_expired).await
     }
@@ -1634,7 +1650,7 @@ pub(crate) mod tests {
         let mut order = ctx.generate_next_order(Default::default()).await;
         // set a bad predicate
         order.request.requirements.predicate =
-            Predicate { predicateType: PredicateType::DigestMatch, data: B256::ZERO.into() };
+            Predicate::digest_match(Digest::from(ECHO_ID), Digest::ZERO);
 
         let order_id = order.id();
         let _request_id =
