@@ -140,7 +140,7 @@ mod tests {
         providers::{Provider, ProviderBuilder, WalletProvider},
     };
     use boundless_market::contracts::hit_points::default_allowance;
-    use boundless_market::StorageProviderType;
+    use boundless_market::storage::StorageProviderType;
     use boundless_market_test_utils::{create_test_ctx, TestCtx, ECHO_ID};
     use broker::test_utils::BrokerBuilder;
     use risc0_zkvm::Digest;

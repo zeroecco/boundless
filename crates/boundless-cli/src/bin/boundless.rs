@@ -44,7 +44,7 @@ this version. Full signer support is available in the SDK."#;
 use std::{
     borrow::Cow,
     fs::File,
-    io::BufReader,
+    io::{self, BufReader, Write},
     num::ParseIntError,
     ops::Deref,
     path::{Path, PathBuf},
@@ -342,7 +342,7 @@ struct SubmitOfferArgs {
     requirements: SubmitOfferRequirements,
 
     #[clap(flatten, next_help_heading = "Offer")]
-    offer_params: OfferParams,
+    offer_params: Option<OfferParams>,
 
     /// Configuration for the StorageProvider to use for uploading programs and inputs.
     #[clap(flatten, next_help_heading = "Storage Provider")]
@@ -495,16 +495,17 @@ async fn main() {
 
     // JSON-in mode: read and fully replace args with the JSON payload
     let config = args.config;
-    if !config.json {
-        tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(
-                EnvFilter::builder()
-                    .with_default_directive(config.log_level.into())
-                    .from_env_lossy(),
-            )
-            .init();
-    }
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(move || -> Box<dyn Write + Send> {
+            if config.json {
+                Box::new(io::stderr()) // Redirect logs to stderr in JSON mode
+            } else {
+                Box::new(io::stdout())
+            }
+        }))
+        .with(EnvFilter::builder().with_default_directive(config.log_level.into()).from_env_lossy())
+        .init();
 
     match run(&config, &args.command).await {
         Ok(output) => {
@@ -1164,6 +1165,13 @@ async fn submit_offer(client: StandardClient, args: &SubmitOfferArgs) -> Result<
         ty => bail!("unsupported proof type provided in proof-type flag: {:?}", ty),
     };
     let request = request.with_requirements(requirements);
+
+    let request = if let Some(offer_params) = &args.offer_params {
+        request.with_offer(offer_params.clone())
+    } else {
+        tracing::warn!("No offer parameters provided");
+        request
+    };
 
     let request = client.build_request(request).await.context("failed to build proof request")?;
     tracing::debug!("Request details: {}", serde_yaml::to_string(&request)?);
@@ -1840,7 +1848,7 @@ mod tests {
                     callback_gas_limit: None,
                     proof_type: ProofType::Any,
                 },
-                offer_params: OfferParams::default(),
+                offer_params: None,
             }))));
         run(&config, &command).await.unwrap();
         assert!(logs_contain("Submitting request onchain"));

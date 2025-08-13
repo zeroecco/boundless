@@ -37,6 +37,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::path::PathBuf;
 use tracing::level_filters::LevelFilter;
 use url::Url;
 
@@ -138,21 +139,7 @@ pub(crate) enum RequestCommand {
         no_preflight: bool,
         storage_config: Box<StorageProviderConfig>,
     },
-    SubmitOffer {
-        id: Option<u32>,
-        program_path: Option<String>,
-        program_url: Option<Url>,
-        wait: bool,
-        offchain: bool,
-        encode_input: bool,
-        input: Option<String>,
-        input_file: Option<String>,
-        callback_address: Option<Address>,
-        callback_gas_limit: Option<u64>,
-        proof_type: ProofType,
-        offer: Box<OfferParams>,
-        storage_config: Box<StorageProviderConfig>,
-    },
+    SubmitOffer(Box<SubmitOffer>),
     Status {
         request_id: U256,
         expires_at: Option<u64>,
@@ -208,6 +195,118 @@ pub enum RequestStatus {
     /// open for bidding or it may not exist.
     #[default]
     Unknown,
+}
+
+/// Parameters for submitting an offer.
+#[derive(Clone, Debug, Default, Builder, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SubmitOffer {
+    #[builder(setter(into, strip_option, prefix = "with"), default)]
+    /// The ID of the offer.
+    id: Option<u32>,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// The program to use for the offer.
+    program: SubmitOfferProgram,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// Whether to wait for the request to be fulfilled.
+    wait: bool,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// Whether to submit the request offchain.
+    offchain: bool,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// Whether to encode the input.
+    encode_input: bool,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// The input to use for the offer.
+    input: SubmitOfferInput,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// The requirements for the offer.
+    requirements: SubmitOfferRequirements,
+    #[builder(setter(into, strip_option, prefix = "with"), default)]
+    /// The offer parameters to use for the offer.
+    offer_params: Option<OfferParams>,
+    #[builder(setter(into, prefix = "with"), default)]
+    /// The storage provider configuration to use for the offer.
+    storage_config: StorageProviderConfig,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct SubmitOfferProgram {
+    /// Program binary to use as the guest image, given as a path.
+    ///
+    /// The program will be uploaded to a public URL using the configured storage provider before
+    /// the proof request is sent.
+    path: Option<PathBuf>,
+    /// Program binary to use as a guest image, given as a public URL.
+    ///
+    /// This option accepts a pre-uploaded program. If also using small inputs, a storage provider
+    /// is not required when using a pre-uploaded program.
+    url: Option<Url>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct SubmitOfferRequirements {
+    /// Address of the callback to use in the requirements.
+    callback_address: Option<Address>,
+    /// Gas limit of the callback to use in the requirements.
+    callback_gas_limit: Option<u64>,
+    /// Request a groth16 proof (i.e., a Groth16).
+    proof_type: ProofType,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct SubmitOfferInput {
+    /// The input data for the offer.
+    input: Option<String>,
+    /// The input file for the offer.
+    input_file: Option<PathBuf>,
+}
+
+impl SubmitOfferBuilder {
+    /// Seth the program for the offer using a local path.
+    pub fn with_program_path<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
+        self.program = Some(SubmitOfferProgram { path: Some(path.into()), url: None });
+        self
+    }
+
+    /// Sets the program for the offer using a public URL.
+    pub fn with_program_url<U: Into<Url>>(&mut self, url: U) -> &mut Self {
+        self.program = Some(SubmitOfferProgram { path: None, url: Some(url.into()) });
+        self
+    }
+
+    /// Sets the callback address and gas limit for the offer.
+    pub fn with_callback(&mut self, address: Address, gas_limit: u64) -> &mut Self {
+        self.requirements = Some(SubmitOfferRequirements {
+            callback_address: Some(address),
+            callback_gas_limit: Some(gas_limit),
+            proof_type: ProofType::Groth16,
+        });
+        self
+    }
+
+    /// Sets the proof type for the offer.
+    pub fn with_proof_type(&mut self, proof_type: ProofType) -> &mut Self {
+        if let Some(requirements) = &mut self.requirements {
+            requirements.proof_type = proof_type;
+        } else {
+            self.requirements = Some(SubmitOfferRequirements {
+                callback_address: None,
+                callback_gas_limit: None,
+                proof_type,
+            });
+        }
+        self
+    }
+
+    /// Sets the input for the offer.
+    ///
+    /// The data must be already encoded.
+    pub fn with_stdin(&mut self, data: impl Into<Vec<u8>>) -> &mut Self {
+        self.input =
+            Some(SubmitOfferInput { input: Some(hex::encode(data.into())), input_file: None });
+        self
+    }
 }
 
 #[cfg(feature = "cli")]

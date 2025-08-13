@@ -39,7 +39,7 @@ use crate::{
     rpc::RpcProvider,
     util::NotProvided,
     AccountCommand, Deployment, JsonCommand, JsonConfig, JsonRequest, OpsCommand, Output,
-    ProvingCommand, RequestCommand, RequestStatus, Response, StorageProviderConfig,
+    ProvingCommand, RequestCommand, RequestStatus, Response, StorageProviderConfig, SubmitOffer,
 };
 
 /// Builder for the [Client] with standard implementations for the required components.
@@ -520,6 +520,22 @@ where
         Err(Error::msg("Request submission failed"))
     }
 
+    /// Submit an offer to the Boundless Market.
+    pub async fn submit_offer(&self, offer: &SubmitOffer) -> Result<(U256, u64), Error> {
+        let command = JsonCommand::Request(RequestCommand::SubmitOffer(Box::new(offer.clone())));
+        let response = self.run(command)?;
+        if !response.success {
+            return Err(Error::msg(format!(
+                "Offer submission failed: {}",
+                response.error.unwrap_or_else(|| "Unknown error".to_string())
+            )));
+        }
+        if let Some(Output::RequestSubmitted { request_id, expires_at }) = response.data {
+            return Ok((request_id, expires_at));
+        }
+        Err(Error::msg("Offer submission failed"))
+    }
+
     /// Get the status of a request by its ID.
     pub fn status(
         &self,
@@ -760,8 +776,8 @@ mod tests {
 
     use super::*;
 
-    use crate::request_builder::OfferParamsBuilder;
     use crate::GuestEnv;
+    use crate::{request_builder::OfferParamsBuilder, SubmitOfferBuilder};
     use alloy::{
         node_bindings::{Anvil, AnvilInstance},
         providers::{Provider, WalletProvider},
@@ -903,6 +919,36 @@ mod tests {
 
         let (request_id, expires_at) = client.submit_request_onchain(&request).await.unwrap();
         assert_eq!(request_id, request.id.into());
+
+        let status = client.status(request_id, Some(expires_at)).unwrap();
+        assert_eq!(status, RequestStatus::Unknown);
+        client.lock_request(request_id).unwrap();
+        let status = client.status(request_id, Some(expires_at)).unwrap();
+        assert_eq!(status, RequestStatus::Locked);
+        client.fulfill(request_id).unwrap();
+        let (_journal, _seal) = client
+            .wait_for_request_fulfillment(request_id, std::time::Duration::from_secs(1), expires_at)
+            .await
+            .unwrap();
+        let status = client.status(request_id, Some(expires_at)).unwrap();
+        assert_eq!(status, RequestStatus::Fulfilled);
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires RISC0_DEV_MODE=1"]
+    async fn test_e2e_submit_offer() {
+        let (_ctx, _anvil, client) = setup_test_env(AccountOwner::Customer).await;
+
+        let offer = SubmitOfferBuilder::default()
+            .with_program_url(Url::parse(&format!("file://{ECHO_PATH}")).unwrap())
+            .with_stdin(
+                GuestEnv::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_vec().unwrap(),
+            )
+            .with_offer_params(OfferParamsBuilder::default().lock_stake(U256::from(0)))
+            .build()
+            .unwrap();
+
+        let (request_id, expires_at) = client.submit_offer(&offer).await.unwrap();
 
         let status = client.status(request_id, Some(expires_at)).unwrap();
         assert_eq!(status, RequestStatus::Unknown);
