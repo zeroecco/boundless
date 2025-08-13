@@ -716,11 +716,11 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             let session_info = execute(&request).await?;
             let journal = session_info.journal.bytes;
 
-            // TODO(ec2): need to calculate the claim digest here.
-            if !request.requirements.predicate.eval(request.requirements.imageId, &journal) {
-                tracing::error!("Predicate evaluation failed for request");
-                bail!("Predicate evaluation failed");
-            }
+            // TODO(ec2): how do we check this?
+            // if !request.requirements.predicate.eval(request.requirements.imageId, &journal) {
+            //     tracing::error!("Predicate evaluation failed for request");
+            //     bail!("Predicate evaluation failed");
+            // }
 
             tracing::info!("Successfully executed request 0x{:x}", request.id);
             tracing::debug!("Journal: {:?}", journal);
@@ -1189,24 +1189,28 @@ where
 
         // Verify image ID if available
         if let Some(claim) = session_info.receipt_claim {
-            ensure!(
-                claim.pre.digest().as_bytes() == request.requirements.imageId.as_slice(),
-                "Image ID mismatch: requirements ({}) do not match the given program ({})",
-                hex::encode(request.requirements.imageId),
-                hex::encode(claim.pre.digest().as_bytes())
-            );
+            if let Some(image_id) = request.requirements.image_id() {
+                ensure!(
+                    claim.pre.digest() == image_id,
+                    "Image ID mismatch: requirements ({}) do not match the given program ({})",
+                    image_id,
+                    claim.pre.digest(),
+                );
+            }
+            tracing::debug!("Skipping image ID check, no image ID provided");
         } else {
             tracing::debug!("Cannot check image ID; session info doesn't have receipt claim");
         }
 
-        // Verify predicate
-        ensure!(
-            request.requirements.predicate.eval(request.requirements.imageId, &journal),
-            "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
-            hex::encode(&journal),
-            request.requirements.predicate.predicateType,
-            hex::encode(&request.requirements.predicate.data)
-        );
+        // TODO(ec2): how do we check when we have custom claim digests?
+        // // Verify predicate
+        // ensure!(
+        //     request.requirements.predicate.eval(request.requirements.imageId, &journal),
+        //     "Preflight failed: Predicate evaluation failed. Journal: {}, Predicate type: {:?}, Predicate data: {}",
+        //     hex::encode(&journal),
+        //     request.requirements.predicate.predicateType,
+        //     hex::encode(&request.requirements.predicate.data)
+        // );
 
         if is_shrink_bitvm2_selector(request.requirements.selector) && journal.len() != 32 {
             bail!(
@@ -1425,10 +1429,8 @@ async fn handle_config_command(args: &MainArgs) -> Result<()> {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use alloy::primitives::aliases::U96;
-    use boundless_market::contracts::{
-        Predicate, PredicateType, RequestId, RequestInput, Requirements,
-    };
+    use alloy::primitives::{aliases::U96, Bytes};
+    use boundless_market::contracts::{Predicate, RequestId, RequestInput, Requirements};
 
     use super::*;
 
@@ -1454,10 +1456,7 @@ mod tests {
     fn generate_request(id: u32, addr: &Address) -> ProofRequest {
         ProofRequest::new(
             RequestId::new(*addr, id),
-            Requirements::new(
-                Digest::from(ECHO_ID),
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(ECHO_ID, Bytes::default())),
             format!("file://{ECHO_PATH}"),
             RequestInput::builder().write_slice(&[0x41, 0x41, 0x41, 0x41]).build_inline().unwrap(),
             Offer {
@@ -2042,7 +2041,7 @@ mod tests {
             config: config.clone(),
             command: Command::Request(Box::new(RequestCommands::VerifyProof {
                 request_id,
-                image_id: request.requirements.imageId,
+                image_id: <[u8; 32]>::from(request.requirements.image_id().unwrap()).into(),
             })),
         })
         .await

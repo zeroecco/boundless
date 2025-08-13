@@ -70,11 +70,7 @@ contract ProofRequestTest is Test {
         defaultProofRequest = ProofRequest({
             id: RequestIdLibrary.from(wallet, idx),
             requirements: Requirements({
-                imageId: APP_IMAGE_ID,
-                predicate: Predicate({
-                    predicateType: PredicateType.DigestMatch,
-                    data: abi.encode(sha256(bytes("GUEST JOURNAL")))
-                }),
+                predicate: PredicateLibrary.createDigestMatchPredicate(APP_IMAGE_ID, sha256(bytes("GUEST JOURNAL"))),
                 callback: Callback({gasLimit: 0, addr: address(0)}),
                 selector: bytes4(0)
             }),

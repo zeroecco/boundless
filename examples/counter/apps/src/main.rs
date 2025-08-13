@@ -125,10 +125,7 @@ async fn run(args: Args) -> Result<()> {
             .with_stdin(echo_message)
             .with_requirements(
                 RequirementParams::builder()
-                    .predicate(Predicate {
-                        predicateType: PredicateType::ClaimDigestMatch,
-                        data: blake3_claim_digest.to_vec().into(),
-                    })
+                    .predicate(Predicate::claim_digest_match(blake3_claim_digest))
                     .build()
                     .unwrap(),
             )
@@ -147,10 +144,7 @@ async fn run(args: Args) -> Result<()> {
             .with_stdin(echo_message)
             .with_requirements(
                 RequirementParams::builder()
-                    .predicate(Predicate {
-                        predicateType: PredicateType::ClaimDigestMatch,
-                        data: blake3_claim_digest.to_vec().into(),
-                    })
+                    .predicate(Predicate::claim_digest_match(blake3_claim_digest))
                     .build()
                     .unwrap(),
             )

@@ -32,6 +32,7 @@ use boundless_market::{
     },
     selector::{is_groth16_selector, is_shrink_bitvm2_selector},
 };
+use hex::FromHex;
 use risc0_aggregation::{SetInclusionReceipt, SetInclusionReceiptVerifierParameters};
 use risc0_ethereum_contracts::set_verifier::SetVerifierService;
 use risc0_zkvm::{
@@ -73,7 +74,7 @@ pub enum SubmitterErr {
     #[error("{code} Market error: {0}", code = self.code())]
     MarketError(#[from] MarketError),
 
-    #[error("{code} Unexpected error: {0:?}", code = self.code())]
+    #[error("{code} Unexpected error: {0:#}", code = self.code())]
     UnexpectedErr(#[from] anyhow::Error),
 }
 
@@ -275,6 +276,8 @@ where
                         "Failed to get order from DB for submission, order NOT finalized",
                     )?;
 
+                let order_img_id =
+                    Digest::from_hex(order_img_id).context("Failed to decode order image ID")?;
                 let mut stake_reward = U256::ZERO;
                 if fulfillment_type == FulfillmentType::FulfillAfterLockExpire {
                     requests_to_price
@@ -290,9 +293,10 @@ where
                     .await
                     .context("Failed to get order journal from prover")?
                     .context("Order proof Journal missing")?;
+
                 // NOTE: We assume here that the order execution ended with exit code 0.
                 let order_claim =
-                    ReceiptClaim::ok(order_img_id.0, MaybePruned::Pruned(order_journal.digest()));
+                    ReceiptClaim::ok(order_img_id, MaybePruned::Pruned(order_journal.digest()));
                 let order_claim_digest = order_claim.digest();
                 let seal = if is_groth16_selector(order_request.requirements.selector)
                     || is_shrink_bitvm2_selector(order_request.requirements.selector)
@@ -343,8 +347,11 @@ where
                     ),
                     _ => (
                         order_claim_digest,
-                        CallbackData { imageId: order_img_id, journal: order_journal.into() }
-                            .abi_encode(),
+                        CallbackData {
+                            imageId: <[u8; 32]>::from(order_img_id).into(),
+                            journal: order_journal.into(),
+                        }
+                        .abi_encode(),
                     ),
                 };
 
@@ -653,15 +660,15 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         node_bindings::{Anvil, AnvilInstance},
-        primitives::U256,
+        primitives::{Bytes, U256},
         providers::ProviderBuilder,
         signers::local::PrivateKeySigner,
     };
     use boundless_assessor::{AssessorInput, Fulfillment};
     use boundless_market::{
         contracts::{
-            hit_points::default_allowance, Offer, Predicate, PredicateType, ProofRequest,
-            RequestId, RequestInput, RequestInputType, Requirements,
+            hit_points::default_allowance, FulfillmentData, Offer, Predicate, PredicateType,
+            ProofRequest, RequestId, RequestInput, RequestInputType, Requirements,
         },
         input::GuestEnv,
     };
@@ -756,10 +763,7 @@ mod tests {
 
         let order_request = ProofRequest::new(
             RequestId::new(customer_addr, market_customer.index_from_nonce().await.unwrap()),
-            Requirements::new(
-                echo_id,
-                Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-            ),
+            Requirements::new(Predicate::prefix_match(echo_id, Bytes::default())),
             "http://risczero.com/image",
             RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
             Offer {
@@ -785,7 +789,10 @@ mod tests {
             fills: vec![Fulfillment {
                 request: order_request.clone(),
                 signature: client_sig.into(),
-                journal: echo_receipt.journal.bytes.clone(),
+                fulfillment_data: FulfillmentData::from_image_id_and_journal(
+                    echo_id,
+                    echo_receipt.journal.bytes.clone(),
+                ),
             }],
             prover_address: prover_addr,
         };

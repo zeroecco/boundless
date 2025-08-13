@@ -30,15 +30,19 @@ library PredicateLibrary {
     /// @notice Creates a digest match predicate.
     /// @param hash The hash to match.
     /// @return A Predicate struct with type DigestMatch and the provided hash.
-    function createDigestMatchPredicate(bytes32 hash) internal pure returns (Predicate memory) {
-        return Predicate({predicateType: PredicateType.DigestMatch, data: abi.encode(hash)});
+    function createDigestMatchPredicate(bytes32 imageId, bytes32 hash) internal pure returns (Predicate memory) {
+        return Predicate({predicateType: PredicateType.DigestMatch, data: abi.encodePacked(imageId, hash)});
     }
 
     /// @notice Creates a prefix match predicate.
     /// @param prefix The prefix to match.
     /// @return A Predicate struct with type PrefixMatch and the provided prefix.
-    function createPrefixMatchPredicate(bytes memory prefix) internal pure returns (Predicate memory) {
-        return Predicate({predicateType: PredicateType.PrefixMatch, data: prefix});
+    function createPrefixMatchPredicate(bytes32 imageId, bytes memory prefix)
+        internal
+        pure
+        returns (Predicate memory)
+    {
+        return Predicate({predicateType: PredicateType.PrefixMatch, data: abi.encodePacked(imageId, prefix)});
     }
 
     /// @notice Creates a claim digest match predicate.
@@ -59,14 +63,30 @@ library PredicateLibrary {
         returns (bool)
     {
         if (predicate.predicateType == PredicateType.DigestMatch) {
-            return bytes32(predicate.data) == journalDigest;
+            bytes memory dataJournal = sliceToEnd(predicate.data, 32);
+            return bytes32(dataJournal) == journalDigest;
         } else if (predicate.predicateType == PredicateType.PrefixMatch) {
-            return startsWith(journal, predicate.data);
+            bytes memory dataJournal = sliceToEnd(predicate.data, 32);
+            return startsWith(journal, dataJournal);
         } else if (predicate.predicateType == PredicateType.ClaimDigestMatch) {
             return bytes32(predicate.data) == ReceiptClaimLib.ok(imageId, journalDigest).digest();
         } else {
             revert("Unreachable code");
         }
+    }
+
+    /// Taken from openzepplin util Bytes.sol
+    function sliceToEnd(bytes memory buffer, uint256 start) internal pure returns (bytes memory) {
+        // sanitize
+        uint256 end = buffer.length;
+
+        // allocate and copy
+        bytes memory result = new bytes(end - start);
+        assembly ("memory-safe") {
+            mcopy(add(result, 0x20), add(buffer, add(start, 0x20)), sub(end, start))
+        }
+
+        return result;
     }
 
     /// @notice Checks if the journal starts with the given prefix.

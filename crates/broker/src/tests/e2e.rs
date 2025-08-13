@@ -17,7 +17,11 @@ use std::{future::Future, path::PathBuf};
 use crate::{config::Config, now_timestamp, Args, Broker};
 use alloy::{
     node_bindings::Anvil,
-    primitives::{aliases::U96, utils, utils::parse_ether, Address, FixedBytes, U256},
+    primitives::{
+        aliases::U96,
+        utils::{self, parse_ether},
+        Address, Bytes, FixedBytes, U256,
+    },
     providers::{Provider, WalletProvider},
     signers::local::PrivateKeySigner,
 };
@@ -56,10 +60,9 @@ fn generate_request(
     callback: Option<Callback>,
     offer: Option<Offer>,
 ) -> ProofRequest {
-    let mut requirements = Requirements::new(
-        Digest::from(ECHO_ID),
-        Predicate { predicateType: PredicateType::PrefixMatch, data: Default::default() },
-    );
+    let mut requirements =
+        Requirements::new(Predicate::prefix_match(Digest::from(ECHO_ID), Bytes::default()));
+
     if proof_type == ProofType::Groth16 {
         requirements = requirements.with_groth16_proof();
     }

@@ -50,7 +50,7 @@ import {AssessorReceipt} from "../src/types/AssessorReceipt.sol";
 import {AssessorJournal} from "../src/types/AssessorJournal.sol";
 import {Offer} from "../src/types/Offer.sol";
 import {Requirements} from "../src/types/Requirements.sol";
-import {Predicate, PredicateType} from "../src/types/Predicate.sol";
+import {Predicate, PredicateLibrary, PredicateType} from "../src/types/Predicate.sol";
 import {Input, InputType} from "../src/types/Input.sol";
 import {IBoundlessMarket} from "../src/IBoundlessMarket.sol";
 
@@ -382,9 +382,10 @@ contract BoundlessMarketTest is Test {
             bytes memory callbackData;
             bytes memory journal = journals[i];
             PredicateType predicateType = requests[i].requirements.predicate.predicateType;
+            bytes32 imageId = bytesToBytes32(requests[i].requirements.predicate.data);
             if (predicateType != PredicateType.ClaimDigestMatch) {
-                claimDigest = ReceiptClaimLib.ok(requests[i].requirements.imageId, sha256(journal)).digest();
-                callbackData = abi.encode(CallbackData({imageId: requests[i].requirements.imageId, journal: journal}));
+                claimDigest = ReceiptClaimLib.ok(imageId, sha256(journal)).digest();
+                callbackData = abi.encode(CallbackData({imageId: imageId, journal: journal}));
             } else {
                 claimDigest = bytesToBytes32(requests[i].requirements.predicate.data);
             }
@@ -865,7 +866,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         // the way it is hashed for signatures. Find a good way to avoid this.
         vm.expectRevert(
             abi.encodeWithSelector(
-                IBoundlessMarket.InsufficientBalance.selector, address(0x72C929E83beDC7370921131d8BF11B50d656aCE5)
+                IBoundlessMarket.InsufficientBalance.selector, address(0xc62E3b806D3750d2C89fF568e3c9A9D8E6D2619A)
             )
         );
         boundlessMarket.lockRequestWithSignature(request, clientSignature, badProverSignature);
@@ -889,7 +890,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         // the way it is hashed for signatures. Find a good way to avoid this.
         vm.expectRevert(
             abi.encodeWithSelector(
-                IBoundlessMarket.InsufficientBalance.selector, address(0x73F8229890F1F0120B8786926fb44F0656b9416D)
+                IBoundlessMarket.InsufficientBalance.selector, address(0x2342A914306E62d082692F86bc79DcFf8729fa99)
             )
         );
         boundlessMarket.lockRequestWithSignature(request, clientSignature, badProverSignature);
@@ -2503,9 +2504,11 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
             for (uint256 j = 0; j < batch[i]; j++) {
                 ProofRequest memory request = client.request(uint32(j));
+                bytes32 imageId = bytesToBytes32(request.requirements.predicate.data);
+
                 request.requirements.predicate = Predicate({
                     predicateType: PredicateType.ClaimDigestMatch,
-                    data: abi.encode(ReceiptClaimLib.ok(request.requirements.imageId, sha256(APP_JOURNAL)).digest())
+                    data: abi.encode(ReceiptClaimLib.ok(imageId, sha256(APP_JOURNAL)).digest())
                 });
 
                 // TODO: This is a fragile part of this test. It should be improved.
@@ -2601,9 +2604,9 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         // Second request
         client = getClient(1);
         request = client.request(uint32(1));
+
         request.requirements = Requirements({
-            imageId: bytes32(APP_IMAGE_ID_2),
-            predicate: Predicate({predicateType: PredicateType.DigestMatch, data: abi.encode(sha256(APP_JOURNAL_2))}),
+            predicate: PredicateLibrary.createDigestMatchPredicate(bytes32(APP_IMAGE_ID_2), sha256(APP_JOURNAL_2)),
             selector: bytes4(0),
             callback: Callback({addr: address(0), gasLimit: 0})
         });
@@ -3526,7 +3529,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         vm.expectEmit(true, true, true, true);
         emit IBoundlessMarket.ProofDelivered(request.id, testProverAddress, fill);
         vm.expectEmit(true, true, true, false);
-        emit MockCallback.MockCallbackCalled(request.requirements.imageId, APP_JOURNAL, fill.seal);
+        bytes32 imageId = bytesToBytes32(request.requirements.predicate.data);
+        emit MockCallback.MockCallbackCalled(imageId, APP_JOURNAL, fill.seal);
         boundlessMarket.fulfill(fills, assessorReceipt);
 
         // Verify callback was called exactly once
@@ -3608,7 +3612,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         vm.expectEmit(true, true, true, false);
         emit IBoundlessMarket.ProofDelivered(request.id, otherProverAddress, fill);
         vm.expectEmit(true, true, true, true);
-        emit MockCallback.MockCallbackCalled(request.requirements.imageId, APP_JOURNAL, fill.seal);
+        bytes32 imageId = bytesToBytes32(request.requirements.predicate.data);
+        emit MockCallback.MockCallbackCalled(imageId, APP_JOURNAL, fill.seal);
 
         vm.prank(otherProverAddress);
         boundlessMarket.fulfill(fills, assessorReceipt);
@@ -3654,7 +3659,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         vm.expectEmit(true, true, true, false);
         emit IBoundlessMarket.ProofDelivered(request.id, otherProverAddress, fill);
         vm.expectEmit(true, true, true, true);
-        emit MockCallback.MockCallbackCalled(request.requirements.imageId, APP_JOURNAL, fill.seal);
+        bytes32 imageId = bytesToBytes32(request.requirements.predicate.data);
+        emit MockCallback.MockCallbackCalled(imageId, APP_JOURNAL, fill.seal);
         boundlessMarket.fulfill(fills, assessorReceipt);
 
         // Verify callback was called exactly once
@@ -3725,7 +3731,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         vm.expectEmit(true, true, true, false);
         emit IBoundlessMarket.ProofDelivered(request.id, otherProver.addr(), fill);
         vm.expectEmit(true, true, true, true);
-        emit MockCallback.MockCallbackCalled(request.requirements.imageId, APP_JOURNAL, fill.seal);
+        bytes32 imageId = bytesToBytes32(request.requirements.predicate.data);
+        emit MockCallback.MockCallbackCalled(imageId, APP_JOURNAL, fill.seal);
         boundlessMarket.priceAndFulfill(requests, clientSignatures, fills, assessorReceipt);
 
         // Verify callback was called exactly once
@@ -3800,7 +3807,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         vm.expectEmit(true, true, true, false);
         emit IBoundlessMarket.ProofDelivered(requestB.id, testProverAddress, fill);
         vm.expectEmit(true, true, true, true);
-        emit MockCallback.MockCallbackCalled(requestB.requirements.imageId, APP_JOURNAL, fill.seal);
+        bytes32 imageId = bytesToBytes32(requestB.requirements.predicate.data);
+        emit MockCallback.MockCallbackCalled(imageId, APP_JOURNAL, fill.seal);
         boundlessMarket.priceAndFulfill(requests, clientSignatures, fills, assessorReceipt);
 
         // Verify only the second request's callback was called

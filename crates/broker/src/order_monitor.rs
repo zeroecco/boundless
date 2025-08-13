@@ -963,6 +963,7 @@ pub(crate) mod tests {
     use crate::OrderStatus;
     use crate::{db::SqliteDb, now_timestamp, FulfillmentType};
     use alloy::node_bindings::AnvilInstance;
+    use alloy::primitives::Bytes;
     use alloy::{
         network::EthereumWallet,
         node_bindings::Anvil,
@@ -1027,13 +1028,7 @@ pub(crate) mod tests {
 
             let request = ProofRequest::new(
                 RequestId::new(self.signer.address(), request_id),
-                Requirements::new(
-                    Digest::ZERO,
-                    Predicate {
-                        predicateType: PredicateType::PrefixMatch,
-                        data: Default::default(),
-                    },
-                ),
+                Requirements::new(Predicate::prefix_match(Digest::ZERO, Bytes::default())),
                 "http://risczero.com/image",
                 RequestInput { inputType: RequestInputType::Inline, data: Default::default() },
                 Offer {

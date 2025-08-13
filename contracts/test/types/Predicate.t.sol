@@ -16,7 +16,7 @@ contract PredicateTest is Test {
 
     function testEvalDigestMatch() public pure {
         bytes32 hash = keccak256("test");
-        Predicate memory predicate = PredicateLibrary.createDigestMatchPredicate(hash);
+        Predicate memory predicate = PredicateLibrary.createDigestMatchPredicate(IMAGE_ID, hash);
         assertEq(
             uint8(predicate.predicateType), uint8(PredicateType.DigestMatch), "Predicate type should be DigestMatch"
         );
@@ -30,7 +30,7 @@ contract PredicateTest is Test {
 
     function testEvalDigestMatchFail() public pure {
         bytes32 hash = keccak256("test");
-        Predicate memory predicate = PredicateLibrary.createDigestMatchPredicate(hash);
+        Predicate memory predicate = PredicateLibrary.createDigestMatchPredicate(IMAGE_ID, hash);
         assertEq(
             uint8(predicate.predicateType), uint8(PredicateType.DigestMatch), "Predicate type should be DigestMatch"
         );
@@ -44,7 +44,7 @@ contract PredicateTest is Test {
 
     function testEvalPrefixMatch() public pure {
         bytes memory prefix = "prefix";
-        Predicate memory predicate = PredicateLibrary.createPrefixMatchPredicate(prefix);
+        Predicate memory predicate = PredicateLibrary.createPrefixMatchPredicate(IMAGE_ID, prefix);
         bytes memory journal = "prefix and more";
 
         bool result = predicate.eval(IMAGE_ID, journal, keccak256(journal));
@@ -53,7 +53,7 @@ contract PredicateTest is Test {
 
     function testEvalPrefixMatchFail() public pure {
         bytes memory prefix = "prefix";
-        Predicate memory predicate = PredicateLibrary.createPrefixMatchPredicate(prefix);
+        Predicate memory predicate = PredicateLibrary.createPrefixMatchPredicate(IMAGE_ID, prefix);
         bytes memory journal = "different prefix";
 
         bool result = predicate.eval(IMAGE_ID, journal, keccak256(journal));

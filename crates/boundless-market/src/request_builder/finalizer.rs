@@ -14,7 +14,7 @@
 
 use super::{Adapt, Layer, RequestParams};
 use crate::{
-    contracts::{Offer, PredicateType, ProofRequest, RequestId, RequestInput, Requirements},
+    contracts::{FulfillmentData, Offer, ProofRequest, RequestId, RequestInput, Requirements},
     util::now_timestamp,
 };
 use anyhow::{bail, Context};
@@ -129,10 +129,12 @@ impl Adapt<Finalizer> for RequestParams {
         let request_id = self.require_request_id().context("failed to build request")?.clone();
 
         // As an extra consistency check. verify the journal satisfies the required predicate.
-        // TODO(ec2): need to properly eval
-        if requirements.predicate.predicateType != PredicateType::ClaimDigestMatch {
-            if let Some(ref journal) = self.journal {
-                if !requirements.predicate.eval(Digest::from(requirements.imageId.0), journal) {
+        if let Some(ref journal) = self.journal {
+            if let Some(image_id) = self.image_id {
+                let fulfillment_data =
+                    FulfillmentData::from_image_id_and_journal(image_id, journal.bytes.clone());
+                // TODO(ec2): fixme
+                if !requirements.predicate.eval(&fulfillment_data) {
                     bail!("journal in request builder does not match requirements predicate; check request parameters.\npredicate = {:?}\njournal = 0x{}", requirements.predicate, hex::encode(journal));
                 }
             }

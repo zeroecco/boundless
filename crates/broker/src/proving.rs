@@ -32,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Error)]
 pub enum ProvingErr {
-    #[error("{code} Proving failed after retries: {0:?}", code = self.code())]
+    #[error("{code} Proving failed after retries: {0:#}", code = self.code())]
     ProvingFailed(anyhow::Error),
 
     #[error("{code} Request fulfilled by another prover", code = self.code())]
@@ -41,7 +41,7 @@ pub enum ProvingErr {
     #[error("{code} Proving timed out", code = self.code())]
     ProvingTimedOut,
 
-    #[error("{code} Unexpected error: {0:?}", code = self.code())]
+    #[error("{code} Unexpected error: {0:#}", code = self.code())]
     UnexpectedError(#[from] anyhow::Error),
 }
 
@@ -492,13 +492,11 @@ mod tests {
             target_timestamp: Some(0),
             request: ProofRequest {
                 id: request_id,
-                requirements: Requirements::new(
+                requirements: Requirements::new(Predicate::prefix_match(
                     Digest::ZERO,
-                    Predicate {
-                        predicateType: PredicateType::PrefixMatch,
-                        data: Default::default(),
-                    },
-                ),
+                    Bytes::default(),
+                )),
+
                 imageUrl: "http://risczero.com/image".into(),
                 input: RequestInput {
                     inputType: RequestInputType::Inline,
@@ -646,13 +644,11 @@ mod tests {
             target_timestamp: Some(0),
             request: ProofRequest {
                 id: order_id,
-                requirements: Requirements::new(
+                requirements: Requirements::new(Predicate::prefix_match(
                     Digest::ZERO,
-                    Predicate {
-                        predicateType: PredicateType::PrefixMatch,
-                        data: Default::default(),
-                    },
-                ),
+                    Bytes::default(),
+                )),
+
                 imageUrl: "http://risczero.com/image".into(),
                 input: RequestInput {
                     inputType: RequestInputType::Inline,

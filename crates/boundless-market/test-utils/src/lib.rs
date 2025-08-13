@@ -229,7 +229,7 @@ pub async fn deploy_contracts(
 
     // Deploy contracts
     let verifier_router = deploy_verifier_router(&deployer_provider, deployer_address).await?;
-    let (verifier, groth16_selector) = match is_dev_mode() {
+    let (groth16_verifier, groth16_selector) = match is_dev_mode() {
         true => (deploy_mock_verifier(&deployer_provider).await?, [0xFFu8; 4]),
         false => {
             let control_root = ALLOWED_CONTROL_ROOT;
@@ -284,7 +284,7 @@ pub async fn deploy_contracts(
         }
     }
     let call = &router_instance
-        .addVerifier(groth16_selector.into(), verifier)
+        .addVerifier(groth16_selector.into(), groth16_verifier)
         .from(deployer_signer.address());
     let _ = call.send().await?;
 
@@ -487,7 +487,10 @@ pub fn mock_singleton(
         _ => (
             <[u8; 32]>::from(app_claim_digest).into(),
             CallbackData {
-                imageId: request.requirements.imageId,
+                imageId: <[u8; 32]>::from(
+                    request.requirements.image_id().expect("image ID is required"),
+                )
+                .into(),
                 journal: app_journal.bytes.into(),
             }
             .abi_encode(),
