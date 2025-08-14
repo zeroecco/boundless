@@ -45,8 +45,8 @@ use alloy::{
 use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{
-        boundless_market::BoundlessMarketService, FulfillmentClaimData, PredicateType, RequestError,
-        RequestInputType,
+        boundless_market::BoundlessMarketService, FulfillmentClaimData, PredicateType,
+        RequestError, RequestInputType,
     },
     selector::SupportedSelectors,
 };
@@ -1357,7 +1357,8 @@ pub(crate) mod tests {
     };
     use async_trait::async_trait;
     use boundless_market::contracts::{
-        Callback, Offer, Predicate, ProofRequest, RequestId, RequestInput, Requirements,
+        Callback, CallbackType, Offer, Predicate, ProofRequest, RequestId, RequestInput,
+        Requirements,
     };
     use boundless_market::storage::{MockStorageProvider, StorageProvider};
     use boundless_market_test_utils::{
@@ -1822,6 +1823,7 @@ pub(crate) mod tests {
         order.request.requirements.callback = Callback {
             addr: address!("0x00000000000000000000000000000000ca11bac2"),
             gasLimit: U96::from(200_000),
+            callbackType: CallbackType::JournalRequired,
         };
 
         let _request_id =

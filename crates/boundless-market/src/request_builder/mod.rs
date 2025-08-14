@@ -659,8 +659,8 @@ mod tests {
 
     use crate::{
         contracts::{
-            boundless_market::BoundlessMarketService, FulfillmentClaimData, Predicate, RequestInput,
-            RequestInputType, Requirements,
+            boundless_market::BoundlessMarketService, FulfillmentClaimData, Predicate,
+            RequestInput, RequestInputType, Requirements,
         },
         input::GuestEnv,
         storage::{fetch_url, MockStorageProvider, StorageProvider},

@@ -37,8 +37,8 @@ use risc0_zkvm::{
 use boundless_market::{
     contracts::{
         boundless_market_contract::CallbackData, AssessorJournal, AssessorReceipt,
-        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, FulfillmentClaimData, PredicateType,
-        RequestInputType,
+        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, FulfillmentClaimData,
+        PredicateType, RequestInputType,
     },
     input::GuestEnv,
     selector::{is_groth16_selector, SupportedSelectors},
