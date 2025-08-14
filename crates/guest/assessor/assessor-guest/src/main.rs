@@ -13,8 +13,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolStruct, SolValue};
 use boundless_assessor::{process_tree, AssessorInput};
 use boundless_market::contracts::{
-    AssessorCallback, AssessorCommitment, AssessorJournal, AssessorSelector, RequestId,
-    UNSPECIFIED_SELECTOR,
+    AssessorCallback, AssessorCommitment, AssessorJournal, AssessorSelector, CallbackType,
+    RequestId, UNSPECIFIED_SELECTOR,
 };
 use risc0_zkvm::{guest::env, sha::Digest};
 
@@ -73,13 +73,26 @@ fn main() {
         }
         .eip712_hash_struct();
         leaves.push(Digest::from_bytes(*commit));
-        if fill.request.requirements.callback.addr != Address::ZERO {
-            callbacks.push(AssessorCallback {
-                index: index.try_into().expect("callback index overflow"),
-                addr: fill.request.requirements.callback.addr,
-                gasLimit: fill.request.requirements.callback.gasLimit,
-            });
+
+        let callback = &fill.request.requirements.callback;
+
+        match callback.callbackType {
+            CallbackType::JournalRequired => {
+                assert!(
+                    callback.addr != Address::ZERO,
+                    "requested callback, but address is zero..."
+                );
+                callbacks.push(AssessorCallback {
+                    index: index.try_into().expect("callback index overflow"),
+                    addr: callback.addr,
+                    gasLimit: callback.gasLimit,
+                    callbackType: callback.callbackType,
+                });
+            }
+            CallbackType::None => {}
+            _ => panic!("invalid callback type"),
         }
+
         if fill.request.requirements.selector != UNSPECIFIED_SELECTOR {
             selectors.push(AssessorSelector {
                 index: index.try_into().expect("selector index overflow"),

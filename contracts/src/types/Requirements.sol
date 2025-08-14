@@ -6,6 +6,7 @@ pragma solidity ^0.8.24;
 
 import {Predicate, PredicateLibrary} from "./Predicate.sol";
 import {Callback, CallbackLibrary} from "./Callback.sol";
+import {CallbackType} from "./CallbackType.sol";
 
 using RequirementsLibrary for Requirements global;
 

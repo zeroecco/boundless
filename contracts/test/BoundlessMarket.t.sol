@@ -35,6 +35,7 @@ import {HitPoints} from "../src/HitPoints.sol";
 import {BoundlessMarket} from "../src/BoundlessMarket.sol";
 import {Callback} from "../src/types/Callback.sol";
 import {CallbackData} from "../src/types/CallbackData.sol";
+import {CallbackType} from "../src/types/CallbackType.sol";
 import {RequestId, RequestIdLibrary} from "../src/types/RequestId.sol";
 import {AssessorJournal} from "../src/types/AssessorJournal.sol";
 import {AssessorCallback} from "../src/types/AssessorCallback.sol";
@@ -408,7 +409,8 @@ contract BoundlessMarketTest is Test {
                     AssessorCallback({
                         index: i,
                         gasLimit: requests[i].requirements.callback.gasLimit,
-                        addr: requests[i].requirements.callback.addr
+                        addr: requests[i].requirements.callback.addr,
+                        callbackType: requests[i].requirements.callback.callbackType
                     })
                 );
             }
@@ -2608,7 +2610,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         request.requirements = Requirements({
             predicate: PredicateLibrary.createDigestMatchPredicate(bytes32(APP_IMAGE_ID_2), sha256(APP_JOURNAL_2)),
             selector: bytes4(0),
-            callback: Callback({addr: address(0), gasLimit: 0})
+            callback: Callback({addr: address(0), gasLimit: 0, callbackType: CallbackType.JournalRequired})
         });
         boundlessMarket.lockRequestWithSignature(
             request, client.sign(request), testProver.signLockRequest(LockRequest({request: request}))
@@ -3501,7 +3503,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
         // Create request with low gas callback
         ProofRequest memory request = client.request(1);
-        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 500_000});
+        request.requirements.callback =
+            Callback({addr: address(mockCallback), gasLimit: 500_000, callbackType: CallbackType.JournalRequired});
 
         bytes memory clientSignature = client.sign(request);
         client.snapshotBalance();
@@ -3540,7 +3543,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
         // Create request with high gas callback that will exceed limit
         ProofRequest memory request = client.request(1);
-        request.requirements.callback = Callback({addr: address(mockHighGasCallback), gasLimit: 10_000});
+        request.requirements.callback =
+            Callback({addr: address(mockHighGasCallback), gasLimit: 10_000, callbackType: CallbackType.JournalRequired});
 
         bytes memory clientSignature = client.sign(request);
         client.snapshotBalance();
@@ -3578,7 +3582,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
         // Create request with low gas callback
         ProofRequest memory request = client.request(1);
-        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 100_000});
+        request.requirements.callback =
+            Callback({addr: address(mockCallback), gasLimit: 100_000, callbackType: CallbackType.JournalRequired});
 
         bytes memory clientSignature = client.sign(request);
 
@@ -3625,7 +3630,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         Client client = getClient(1);
 
         ProofRequest memory request = client.request(1);
-        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 100_000});
+        request.requirements.callback =
+            Callback({addr: address(mockCallback), gasLimit: 100_000, callbackType: CallbackType.JournalRequired});
 
         bytes memory clientSignature = client.sign(request);
 
@@ -3690,7 +3696,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
                 lockStake: 1 ether
             })
         );
-        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 100_000});
+        request.requirements.callback =
+            Callback({addr: address(mockCallback), gasLimit: 100_000, callbackType: CallbackType.JournalRequired});
         ProofRequest[] memory requests = new ProofRequest[](1);
         requests[0] = request;
 
@@ -3753,7 +3760,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
             lockStake: 1 ether
         });
         ProofRequest memory requestA = client.request(1, offerA);
-        requestA.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 10_000});
+        requestA.requirements.callback =
+            Callback({addr: address(mockCallback), gasLimit: 10_000, callbackType: CallbackType.JournalRequired});
         bytes memory clientSignatureA = client.sign(requestA);
 
         // Create second request with same ID but different callback
@@ -3767,7 +3775,11 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
             lockStake: offerA.lockStake
         });
         ProofRequest memory requestB = client.request(1, offerB);
-        requestB.requirements.callback = Callback({addr: address(mockHighGasCallback), gasLimit: 300_000});
+        requestB.requirements.callback = Callback({
+            addr: address(mockHighGasCallback),
+            gasLimit: 300_000,
+            callbackType: CallbackType.JournalRequired
+        });
         ProofRequest[] memory requests = new ProofRequest[](1);
         requests[0] = requestB;
         bytes memory clientSignatureB = client.sign(requestB);

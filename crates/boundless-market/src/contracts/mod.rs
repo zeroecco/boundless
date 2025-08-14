@@ -61,7 +61,7 @@ const TXN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
 include!(concat!(env!("OUT_DIR"), "/boundless_market_generated.rs"));
 pub use boundless_market_contract::{
     AssessorCallback, AssessorCommitment, AssessorJournal, AssessorJournalCallback,
-    AssessorReceipt, Callback, Fulfillment, FulfillmentContext, IBoundlessMarket,
+    AssessorReceipt, Callback, CallbackType, Fulfillment, FulfillmentContext, IBoundlessMarket,
     Input as RequestInput, InputType as RequestInputType, LockRequest, Offer, Predicate,
     PredicateType, ProofRequest, RequestLock, Requirements, Selector as AssessorSelector,
 };
@@ -711,9 +711,16 @@ impl Predicate {
     }
 }
 
+impl Default for CallbackType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl Callback {
     /// Constant representing a none callback (i.e. no call will be made).
-    pub const NONE: Self = Self { addr: Address::ZERO, gasLimit: U96::ZERO };
+    pub const NONE: Self =
+        Self { addr: Address::ZERO, gasLimit: U96::ZERO, callbackType: CallbackType::None };
 
     /// Sets the address of the callback.
     pub fn with_addr(self, addr: impl Into<Address>) -> Self {
@@ -729,7 +736,7 @@ impl Callback {
     ///
     /// NOTE: A callback is considered none if the address is zero, regardless of the gas limit.
     pub fn is_none(&self) -> bool {
-        self.addr == Address::ZERO
+        self.addr == Address::ZERO || self.callbackType == CallbackType::None
     }
 
     /// Convert to an option representation, mapping a none callback to `None`.
@@ -745,6 +752,12 @@ impl Callback {
     /// Convert from an option representation, mapping `None` to [Self::NONE].
     pub fn from_option(opt: Option<Self>) -> Self {
         opt.unwrap_or(Self::NONE)
+    }
+}
+
+impl Default for Callback {
+    fn default() -> Self {
+        Self::NONE
     }
 }
 

@@ -16,6 +16,7 @@ import {BoundlessMarketLib} from "../../src/libraries/BoundlessMarketLib.sol";
 import {MerkleProofish} from "../../src/libraries/MerkleProofish.sol";
 import {RequestId} from "../../src/types/RequestId.sol";
 import {Callback} from "../../src/types/Callback.sol";
+import {CallbackType} from "../../src/types/CallbackType.sol";
 import {ProofRequest} from "../../src/types/ProofRequest.sol";
 import {Account} from "../../src/types/Account.sol";
 import {RequestLock} from "../../src/types/RequestLock.sol";
@@ -80,7 +81,7 @@ abstract contract BaseClient {
         return Requirements({
             predicate: PredicateLibrary.createDigestMatchPredicate(bytes32(APP_IMAGE_ID), sha256(APP_JOURNAL)),
             selector: bytes4(0),
-            callback: Callback({addr: address(0), gasLimit: 0})
+            callback: Callback({addr: address(0), gasLimit: 0, callbackType: CallbackType.JournalRequired})
         });
     }
 
