@@ -868,7 +868,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         // the way it is hashed for signatures. Find a good way to avoid this.
         vm.expectRevert(
             abi.encodeWithSelector(
-                IBoundlessMarket.InsufficientBalance.selector, address(0xc62E3b806D3750d2C89fF568e3c9A9D8E6D2619A)
+                IBoundlessMarket.InsufficientBalance.selector, address(0x03ACaf40482882feD244b288699C66Cc2B2e1489)
             )
         );
         boundlessMarket.lockRequestWithSignature(request, clientSignature, badProverSignature);
@@ -892,7 +892,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         // the way it is hashed for signatures. Find a good way to avoid this.
         vm.expectRevert(
             abi.encodeWithSelector(
-                IBoundlessMarket.InsufficientBalance.selector, address(0x2342A914306E62d082692F86bc79DcFf8729fa99)
+                IBoundlessMarket.InsufficientBalance.selector, address(0x96f1A0216373E86A42508A7b479539DE34111Cc7)
             )
         );
         boundlessMarket.lockRequestWithSignature(request, clientSignature, badProverSignature);
