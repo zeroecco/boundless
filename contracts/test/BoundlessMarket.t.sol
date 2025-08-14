@@ -2619,14 +2619,6 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         (Fulfillment[] memory fills, AssessorReceipt memory assessorReceipt) =
             createFillsAndSubmitRoot(requests, journals, testProverAddress);
 
-        // bytes32 imageId0 = fills[0].imageIdOrClaimDigest;
-        // bytes memory journal0 = fills[0].journal;
-
-        // fills[0].imageIdOrClaimDigest = fills[1].imageIdOrClaimDigest;
-        // fills[1].imageIdOrClaimDigest = imageId0;
-
-        // fills[0].journal = fills[1].journal;
-        // fills[1].journal = journal0;
         bytes memory callbackData0 = fills[0].callbackData;
         bytes32 claimDigest0 = fills[0].claimDigest;
 

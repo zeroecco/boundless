@@ -12,6 +12,10 @@ using ReceiptClaimLib for ReceiptClaim;
 
 /// @title Predicate Struct and Library
 /// @notice Represents a predicate and provides functions to create and evaluate predicates.
+/// Data field is used to store the specific data associated with the predicate.
+/// - DigestMatch: (bytes32, bytes32) -> abi.encodePacked(imageId, journalHash)
+/// - PrefixMatch: (bytes32, bytes) -> abi.encodePacked(imageId, prefix)
+/// - ClaimDigestMatch: (bytes32) -> abi.encode(claimDigest)
 struct Predicate {
     PredicateType predicateType;
     bytes data;

@@ -698,10 +698,6 @@ impl Predicate {
                             .as_bytes()
             }
             PredicateType::ClaimDigestMatch => {
-                // self.data.as_ref()
-                //     == ReceiptClaim::ok(Digest::from_bytes(image_id.0), journal.as_ref().to_vec())
-                //         .digest()
-                //         .as_bytes()
                 self.data.as_ref()
                     == fulfillment_data
                         .claim_digest()

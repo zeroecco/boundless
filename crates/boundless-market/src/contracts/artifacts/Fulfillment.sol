@@ -17,8 +17,7 @@ struct Fulfillment {
     /// @notice EIP-712 digest of request struct.
     bytes32 requestDigest;
     /// @notice The `PredicateType` of the request that is being fulfilled.
-    /// @dev When the `PredicateType` is `ClaimDigestMatch`, the imageIdOrClaimDigest field is the claim digest,
-    /// and otherwise it is the image ID of the guest that was executed.
+    /// @dev When the `PredicateType` is `ClaimDigestMatch`, there callbacks are not supported
     PredicateType predicateType;
     /// @notice Claim Digest
     bytes32 claimDigest;
