@@ -337,12 +337,20 @@ contract BoundlessMarket is
             }
 
             uint256 callbackIndexPlusOne = fillToCallbackIndexPlusOne[i];
-            // We do not support callbacks for claim digest matches.
-            if ((fill.predicateType != PredicateType.ClaimDigestMatch) && (callbackIndexPlusOne > 0)) {
-                (bytes32 imageId, bytes calldata journal) = _decodeCallbackData(fill.callbackData);
 
-                AssessorCallback calldata callback = assessorReceipt.callbacks[callbackIndexPlusOne - 1];
-                _executeCallback(fill.id, callback.addr, callback.gasLimit, imageId, journal, fill.seal);
+            // We do not support callbacks for claim digest matches because we cant authenticate the journal.
+            if (fill.predicateType != PredicateType.ClaimDigestMatch) {
+                // In the case this is a not a claim digest match, we need to authenticate the journal, since we actually have it
+                (bytes32 imageId, bytes calldata journal) = _decodeCallbackData(fill.callbackData);
+                bytes32 calculatedClaimDigest = ReceiptClaimLib.ok(imageId, sha256(journal)).digest();
+                if (fill.claimDigest != calculatedClaimDigest) {
+                    revert ClaimDigestMismatch(fill.claimDigest, calculatedClaimDigest);
+                }
+
+                if (callbackIndexPlusOne > 0) {
+                    AssessorCallback calldata callback = assessorReceipt.callbacks[callbackIndexPlusOne - 1];
+                    _executeCallback(fill.id, callback.addr, callback.gasLimit, imageId, journal, fill.seal);
+                }
             }
         }
     }

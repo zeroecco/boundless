@@ -44,9 +44,9 @@ fn main() {
     // For each fill we
     // - verify the request's signature
     // - evaluate the request's requirements
-    // - verify the integrity of its claim
     // - record the callback if it exists
     // - record the selector if it is present
+    // NOTE: We no longer verify integrity of the claim. That is done on chain.
     // We additionally collect the request and claim digests.
     for (index, fill) in input.fills.iter().enumerate() {
         // Attempt to decode the request ID. If this fails, there may be flags that are not handled
