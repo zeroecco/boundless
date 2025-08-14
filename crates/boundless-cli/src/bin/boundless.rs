@@ -751,7 +751,15 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             tracing::debug!("Journal: {:?}", journal);
             Ok(())
         }
-        ProvingCommands::Fulfill { request_ids, request_digests, tx_hashes, withdraw, bonsai_api_url, bonsai_api_key, use_default_prover } => {
+        ProvingCommands::Fulfill {
+            request_ids,
+            request_digests,
+            tx_hashes,
+            withdraw,
+            bonsai_api_url,
+            bonsai_api_key,
+            use_default_prover,
+        } => {
             if request_digests.is_some()
                 && request_ids.len() != request_digests.as_ref().unwrap().len()
             {
@@ -875,16 +883,28 @@ async fn handle_proving_command(cmd: &ProvingCommands, client: StandardClient) -
             tracing::info!("Successfully locked request 0x{:x}", request_id);
             Ok(())
         }
-        ProvingCommands::Benchmark { request_ids, bonsai_api_url, bonsai_api_key, use_default_prover } => {
-            benchmark(client, request_ids, bonsai_api_url, bonsai_api_key, *use_default_prover).await
+        ProvingCommands::Benchmark {
+            request_ids,
+            bonsai_api_url,
+            bonsai_api_key,
+            use_default_prover,
+        } => {
+            benchmark(client, request_ids, bonsai_api_url, bonsai_api_key, *use_default_prover)
+                .await
         }
     }
 }
 
 /// Configure proving backend to default to Bento unless Bonsai is explicitly specified or default prover is requested
-fn configure_proving_backend(bonsai_api_url: &Option<String>, bonsai_api_key: &Option<String>, use_default_prover: bool) {
+fn configure_proving_backend(
+    bonsai_api_url: &Option<String>,
+    bonsai_api_key: &Option<String>,
+    use_default_prover: bool,
+) {
     if use_default_prover {
-        tracing::info!("Using default prover behavior (respects RISC0_PROVER, RISC0_DEV_MODE, etc.)");
+        tracing::info!(
+            "Using default prover behavior (respects RISC0_PROVER, RISC0_DEV_MODE, etc.)"
+        );
         return;
     }
 
