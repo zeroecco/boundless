@@ -37,7 +37,7 @@ use risc0_zkvm::{
 use boundless_market::{
     contracts::{
         boundless_market_contract::CallbackData, AssessorJournal, AssessorReceipt,
-        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, FulfillmentData, PredicateType,
+        EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, FulfillmentClaimData, PredicateType,
         RequestInputType,
     },
     input::GuestEnv,
@@ -250,10 +250,10 @@ impl DefaultProver {
             let order_claim_digest = order_claim.digest();
 
             let fulfillment_data = match req.requirements.predicate.predicateType {
-                PredicateType::ClaimDigestMatch => FulfillmentData::from_claim_digest(
+                PredicateType::ClaimDigestMatch => FulfillmentClaimData::from_claim_digest(
                     req.requirements.predicate.claim_digest().unwrap(),
                 ),
-                _ => FulfillmentData::from_image_id_and_journal(order_image_id, order_journal),
+                _ => FulfillmentClaimData::from_image_id_and_journal(order_image_id, order_journal),
             };
             let fill =
                 Fulfillment { request: req.clone(), signature: sig.into(), fulfillment_data };

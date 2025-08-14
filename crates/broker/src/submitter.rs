@@ -665,7 +665,7 @@ mod tests {
     use boundless_assessor::{AssessorInput, Fulfillment};
     use boundless_market::{
         contracts::{
-            hit_points::default_allowance, FulfillmentData, Offer, Predicate, ProofRequest,
+            hit_points::default_allowance, FulfillmentClaimData, Offer, Predicate, ProofRequest,
             RequestId, RequestInput, RequestInputType, Requirements,
         },
         input::GuestEnv,
@@ -787,7 +787,7 @@ mod tests {
             fills: vec![Fulfillment {
                 request: order_request.clone(),
                 signature: client_sig.into(),
-                fulfillment_data: FulfillmentData::from_image_id_and_journal(
+                fulfillment_data: FulfillmentClaimData::from_image_id_and_journal(
                     echo_id,
                     echo_receipt.journal.bytes.clone(),
                 ),

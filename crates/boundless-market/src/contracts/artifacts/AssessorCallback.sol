@@ -12,3 +12,5 @@ struct AssessorCallback {
     /// @notice Maximum gas to use for the callback
     uint96 gasLimit;
 }
+/// @notice The type of callback
+// CallbackType callbackType;

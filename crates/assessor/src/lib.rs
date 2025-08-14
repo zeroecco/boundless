@@ -10,7 +10,7 @@
 use alloy_primitives::{Address, Keccak256, Signature, SignatureError};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use boundless_market::contracts::{
-    EIP712DomainSaltless, FulfillmentData, ProofRequest, RequestError,
+    EIP712DomainSaltless, FulfillmentClaimData, ProofRequest, RequestError,
 };
 use risc0_zkvm::{
     sha::{Digest, Digestible},
@@ -58,7 +58,7 @@ pub struct Fulfillment {
     /// The EIP-712 signature over the request.
     pub signature: Vec<u8>,
     /// The fulfillment data of the request.
-    pub fulfillment_data: FulfillmentData,
+    pub fulfillment_data: FulfillmentClaimData,
 }
 
 impl Fulfillment {
@@ -91,8 +91,8 @@ impl Fulfillment {
     /// Returns the claim digest for the fulfillment.
     pub fn claim_digest(&self) -> Result<Digest, Error> {
         match self.fulfillment_data {
-            FulfillmentData::ClaimDigest(digest) => Ok(digest),
-            FulfillmentData::ImageIdAndJournal(image_id, ref journal) => {
+            FulfillmentClaimData::ClaimDigest(digest) => Ok(digest),
+            FulfillmentClaimData::ImageIdAndJournal(image_id, ref journal) => {
                 Ok(ReceiptClaim::ok(image_id, <Vec<u8>>::from(journal.clone())).digest())
             }
         }
@@ -214,7 +214,7 @@ mod tests {
         let claim = Fulfillment {
             request: proving_request,
             signature: signature.as_bytes().to_vec(),
-            fulfillment_data: FulfillmentData::ImageIdAndJournal(
+            fulfillment_data: FulfillmentClaimData::ImageIdAndJournal(
                 Digest::from_bytes(B256::ZERO.0),
                 vec![1].into(),
             ),
@@ -289,7 +289,7 @@ mod tests {
         let claims = vec![Fulfillment {
             request,
             signature,
-            fulfillment_data: FulfillmentData::from_image_id_and_journal(*image_id, journal),
+            fulfillment_data: FulfillmentClaimData::from_image_id_and_journal(*image_id, journal),
         }];
         assessor(claims, vec![application_receipt]);
     }
@@ -307,7 +307,7 @@ mod tests {
         let claim = Fulfillment {
             request,
             signature,
-            fulfillment_data: FulfillmentData::from_image_id_and_journal(*image_id, journal),
+            fulfillment_data: FulfillmentClaimData::from_image_id_and_journal(*image_id, journal),
         };
 
         // 3. Prove the Assessor reusing the same leaf twice

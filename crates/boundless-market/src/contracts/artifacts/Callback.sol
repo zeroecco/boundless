@@ -6,6 +6,10 @@ pragma solidity ^0.8.24;
 
 using CallbackLibrary for Callback global;
 
+enum CallbackType {
+    JournalRequired
+}
+
 /// @title Callback Struct and Library
 /// @notice Represents a callback configuration for proof delivery
 struct Callback {

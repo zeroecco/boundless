@@ -560,14 +560,14 @@ impl Requirements {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 /// TODO(ec2): doc
-pub enum FulfillmentData {
+pub enum FulfillmentClaimData {
     /// TODO(ec2): doc
     ClaimDigest(Digest),
     /// TODO(ec2): doc
     ImageIdAndJournal(Digest, Bytes),
 }
 
-impl FulfillmentData {
+impl FulfillmentClaimData {
     /// TODO(ec2): doc
     pub fn from_claim_digest(claim_digest: impl Into<Digest>) -> Self {
         Self::ClaimDigest(claim_digest.into())
@@ -667,7 +667,7 @@ impl Predicate {
 
     #[inline]
     /// TODO(ec2): doc
-    pub fn eval(&self, fulfillment_data: &FulfillmentData) -> bool {
+    pub fn eval(&self, fulfillment_data: &FulfillmentClaimData) -> bool {
         match self.predicateType {
             PredicateType::DigestMatch => {
                 let (image_id, journal_digest) = self.data.as_ref().split_at(32);

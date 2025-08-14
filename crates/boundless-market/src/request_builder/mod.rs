@@ -659,7 +659,7 @@ mod tests {
 
     use crate::{
         contracts::{
-            boundless_market::BoundlessMarketService, FulfillmentData, Predicate, RequestInput,
+            boundless_market::BoundlessMarketService, FulfillmentClaimData, Predicate, RequestInput,
             RequestInputType, Requirements,
         },
         input::GuestEnv,
@@ -851,7 +851,7 @@ mod tests {
         let bytes = b"journal_data".to_vec();
         let journal = Journal::new(bytes.clone());
         let req = layer.process((program, &journal, &Default::default())).await?;
-        let fulfillment_data = FulfillmentData::from_image_id_and_journal(
+        let fulfillment_data = FulfillmentClaimData::from_image_id_and_journal(
             req.image_id().unwrap(),
             journal.bytes.clone(),
         );
@@ -859,7 +859,7 @@ mod tests {
         assert!(req.predicate.eval(&fulfillment_data));
         // And should not match different data
         let other = Journal::new(b"other_data".to_vec());
-        let fulfillment_data = FulfillmentData::from_image_id_and_journal(
+        let fulfillment_data = FulfillmentClaimData::from_image_id_and_journal(
             req.image_id().unwrap(),
             other.bytes.clone(),
         );

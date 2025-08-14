@@ -45,7 +45,7 @@ use alloy::{
 use anyhow::{Context, Result};
 use boundless_market::{
     contracts::{
-        boundless_market::BoundlessMarketService, FulfillmentData, PredicateType, RequestError,
+        boundless_market::BoundlessMarketService, FulfillmentClaimData, PredicateType, RequestError,
         RequestInputType,
     },
     selector::SupportedSelectors,
@@ -665,7 +665,7 @@ where
             }
             _ => {
                 if !order.request.requirements.predicate.eval(
-                    &FulfillmentData::from_image_id_and_journal(
+                    &FulfillmentClaimData::from_image_id_and_journal(
                         Digest::from_hex(
                             order
                                 .image_id
