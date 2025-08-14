@@ -433,6 +433,7 @@ mod tests {
     };
     use boundless_market_test_utils::{ASSESSOR_GUEST_ELF, ECHO_ID, ECHO_PATH, SET_BUILDER_ELF};
     use risc0_ethereum_contracts::selector::Selector;
+    use shrink_bitvm2::ShrinkBitvm2ReceiptClaim;
 
     async fn setup_proving_request_and_signature(
         signer: &PrivateKeySigner,
@@ -495,11 +496,11 @@ mod tests {
     async fn test_shrink() {
         let input = [255u8; 32].to_vec(); // Example output data
         let blake3_claim_digest =
-            shrink_bitvm2::blake3_claim_digest(&Digest::from(ECHO_ID), &input);
+            ShrinkBitvm2ReceiptClaim::ok(Digest::from(ECHO_ID), input.clone()).digest();
         let signer = PrivateKeySigner::random();
         let request = ProofRequest::new(
             RequestId::new(signer.address(), 0),
-            Requirements::new(Predicate::claim_digest_match(Digest::from(blake3_claim_digest)))
+            Requirements::new(Predicate::claim_digest_match(blake3_claim_digest))
                 .with_selector(FixedBytes::from(Selector::ShrinkBitvm2V0_1 as u32)),
             format!("file://{ECHO_PATH}"),
             RequestInput::builder().write_slice(&input).build_inline().unwrap(),

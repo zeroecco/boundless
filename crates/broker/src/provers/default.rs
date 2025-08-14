@@ -473,6 +473,7 @@ mod tests {
     use ark_ff::PrimeField;
     use boundless_market_test_utils::{ECHO_ELF, ECHO_ID};
     use risc0_zkvm::{sha::Digest, Groth16Seal};
+    use shrink_bitvm2::ShrinkBitvm2ReceiptClaim;
     use tempfile::tempdir;
     use tokio::test;
 
@@ -597,7 +598,7 @@ mod tests {
             .expect("Failed to create Groth16 seal from receipt");
 
         let final_output_bytes =
-            shrink_bitvm2::blake3_claim_digest(&image_id, &stark_receipt.journal.bytes);
+            ShrinkBitvm2ReceiptClaim::ok(image_id, stark_receipt.journal.bytes).digest().into();
         let public_input_scalar = ark_bn254::Fr::from_be_bytes_mod_order(&final_output_bytes);
 
         let public_input_scalar_str = public_input_scalar.to_string();

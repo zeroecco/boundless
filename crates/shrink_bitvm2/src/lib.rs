@@ -3,19 +3,77 @@ use std::path::Path;
 use hex::FromHex;
 use risc0_zkvm::{
     digest, seal_to_json, sha::Digestible, Digest, Groth16ProofJson, Groth16Receipt, Groth16Seal,
-    Journal, Receipt, ReceiptClaim, SuccinctReceipt,
+    Journal, MaybePruned, Receipt, ReceiptClaim, SuccinctReceipt, SystemState,
 };
 
 use anyhow::{ensure, Context, Result};
 use num_bigint::BigUint;
 use num_traits::Num;
 
+use serde::Serialize;
 use tokio::process::Command;
 pub const ALLOWED_CONTROL_ROOT: Digest =
     digest!("ce52bf56033842021af3cf6db8a50d1b7535c125a34f1a22c6fdcf002c5a1529");
 
 pub const BN254_IDENTITY_CONTROL_ID: Digest =
     digest!("c07a65145c3cb48b6101962ea607a4dd93c753bb26975cb47feb00d3666e4404");
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ShrinkBitvm2ReceiptClaim {
+    control_root: Digest,
+    pre: MaybePruned<SystemState>,
+    post: MaybePruned<SystemState>,
+    control_id: Digest,
+    // Note: This journal has to be exactly 32 bytes
+    journal: Vec<u8>,
+}
+
+impl ShrinkBitvm2ReceiptClaim {
+    pub fn ok(
+        image_id: impl Into<Digest>,
+        journal: impl Into<Vec<u8>>,
+    ) -> ShrinkBitvm2ReceiptClaim {
+        let verifier_params = risc0_zkvm::SuccinctReceiptVerifierParameters::default();
+        let control_root = verifier_params.control_root;
+        Self {
+            control_root,
+            pre: MaybePruned::Pruned(image_id.into()),
+            post: MaybePruned::Value(SystemState { pc: 0, merkle_root: Digest::ZERO }),
+            control_id: BN254_IDENTITY_CONTROL_ID,
+            journal: journal.into(),
+        }
+    }
+}
+
+impl Digestible for ShrinkBitvm2ReceiptClaim {
+    fn digest(&self) -> Digest {
+        use sha2::{Digest as _, Sha256};
+
+        let mut control_root_bytes: [u8; 32] = self.control_root.as_bytes().try_into().unwrap();
+        for byte in &mut control_root_bytes {
+            *byte = byte.reverse_bits();
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(control_root_bytes);
+        hasher.update(self.pre.digest());
+        hasher.update(self.post.digest());
+        hasher.update(self.control_id.as_bytes());
+
+        let output_prefix = hasher.finalize();
+
+        // final blake3 hash
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&output_prefix);
+        hasher.update(&self.journal);
+
+        let mut digest_bytes: [u8; 32] = hasher.finalize().into();
+        // trim to 31 bytes
+        digest_bytes[31] = 0;
+        // shift because of endianness
+        digest_bytes.rotate_right(1);
+        digest_bytes.into()
+    }
+}
 
 pub async fn prove_and_verify(
     proof_id: &str,
@@ -46,33 +104,9 @@ pub async fn prove_and_verify(
     Ok(final_receipt)
 }
 
-pub fn calculate_output_prefix(control_id: &Digest, image_id: &[u8]) -> [u8; 32] {
-    use sha2::{Digest as _, Sha256};
-
-    let verifier_params = risc0_zkvm::SuccinctReceiptVerifierParameters::default();
-    let control_root = verifier_params.control_root;
-    let mut control_root_bytes: [u8; 32] = control_root.as_bytes().try_into().unwrap();
-    for byte in &mut control_root_bytes {
-        *byte = byte.reverse_bits();
-    }
-    let pre_state_bytes = image_id.to_vec();
-    let control_id_bytes = control_id.as_bytes();
-
-    // Expected post state for an execution that halted successfully
-    let post_state = risc0_zkvm::SystemState { pc: 0, merkle_root: Digest::default() };
-    let post_state_bytes: [u8; 32] = post_state.digest().into();
-
-    let mut hasher = Sha256::new();
-    hasher.update(control_root_bytes);
-    hasher.update(&pre_state_bytes);
-    hasher.update(post_state_bytes);
-    hasher.update(control_id_bytes);
-
-    hasher.finalize().into()
-}
-
-pub fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u8]) -> Result<()> {
-    let expected_output_bytes = blake3_claim_digest(&image_id, &final_receipt.journal.bytes);
+fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u8]) -> Result<()> {
+    let expected_output_bytes: [u8; 32] =
+        ShrinkBitvm2ReceiptClaim::ok(image_id, final_receipt.journal.bytes.clone()).digest().into();
 
     let expected_output_bytes: [u8; 31] = expected_output_bytes[1..=31].try_into()?;
     tracing::info!("check output: computed output: {}", hex::encode(expected_output_bytes));
@@ -82,19 +116,7 @@ pub fn check_output(image_id: Digest, final_receipt: &Receipt, output_bytes: &[u
     Ok(())
 }
 
-pub fn blake3_claim_digest(image_id: &Digest, journal_bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&calculate_output_prefix(&BN254_IDENTITY_CONTROL_ID, image_id.as_bytes()));
-    hasher.update(journal_bytes);
-    let mut digest_bytes: [u8; 32] = hasher.finalize().into();
-    // trim to 31 bytes
-    digest_bytes[31] = 0;
-    // shift because of endianness
-    digest_bytes.rotate_right(1);
-    digest_bytes
-}
-
-pub async fn decode_output(public_path: &Path) -> Result<Vec<u8>> {
+async fn decode_output(public_path: &Path) -> Result<Vec<u8>> {
     let output_content_dec = tokio::fs::read_to_string(public_path).await?;
 
     // Convert output_content_dec from decimal to hex
@@ -112,7 +134,7 @@ pub async fn decode_output(public_path: &Path) -> Result<Vec<u8>> {
     Ok(hex::decode(&output_content_hex)?)
 }
 
-pub fn finalize(
+fn finalize(
     journal_bytes: Vec<u8>,
     receipt_claim: ReceiptClaim,
     proof_json: Groth16ProofJson,
@@ -127,7 +149,7 @@ pub fn finalize(
     Ok(receipt)
 }
 
-pub async fn write_seal(
+async fn write_seal(
     journal_bytes: &[u8],
     p254_receipt: SuccinctReceipt<ReceiptClaim>,
     receipt_claim: &ReceiptClaim,
