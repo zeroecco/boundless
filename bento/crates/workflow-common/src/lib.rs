@@ -80,6 +80,8 @@ pub struct ExecutorResp {
 pub struct ProveReq {
     /// Segment index
     pub index: usize,
+    /// Segment data (serialized)
+    pub data: Vec<u8>,
 }
 
 /// Join Request

@@ -52,6 +52,7 @@ async fn process_task(
     assumptions: &[String],
     compress_type: CompressType,
     keccak_req: Option<KeccakReq>,
+    segment_data: Option<Vec<u8>>,
 ) -> Result<()> {
     match tree_task.command {
         TaskCmd::Keccak => {
@@ -75,6 +76,7 @@ async fn process_task(
             .expect("create_task failure during keccak task creation");
         }
         TaskCmd::Segment => {
+            let segment_data = segment_data.context("INVALID STATE: segment task without segment data")?;
             let task_def = serde_json::to_value(TaskType::Prove(ProveReq {
                 // Use segment index here instead of task_id to prevent overlapping
                 // because the planner is running after we are flushing segments we have to track
@@ -85,6 +87,7 @@ async fn process_task(
                 // planners internal index counter.
                 index: segment_index.context("INVALID STATE: segment task without segment index")?
                     as usize,
+                data: segment_data,
             }))
             .context("Failed to serialize prove task-type")?;
 
@@ -269,7 +272,7 @@ impl CoprocessorCallback for Coprocessor {
 }
 
 enum SenderType {
-    Segment(u32),
+    Segment((u32, Vec<u8>)), // (index, serialized_segment_data)
     Keccak(ProveKeccakRequest),
     Fault,
 }
@@ -372,29 +375,18 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
     let (task_tx, mut task_rx) = tokio::sync::mpsc::channel::<SenderType>(TASK_QUEUE_SIZE);
     let task_tx_clone = task_tx.clone();
 
-    let mut writer_conn = agent.redis_pool.get().await?;
-    let segments_prefix_clone = segments_prefix.clone();
-    let redis_ttl = agent.args.redis_ttl;
-
     let mut writer_tasks = JoinSet::new();
     writer_tasks.spawn(async move {
         while let Some(segment) = segment_rx.recv().await {
             let index = segment.index;
             tracing::debug!("Starting write of index: {index}");
-            let segment_key = format!("{segments_prefix_clone}:{index}");
-            let segment_vec = serialize_obj(&segment).expect("Failed to serialize the segment");
-            redis::set_key_with_expiry(
-                &mut writer_conn,
-                &segment_key,
-                segment_vec,
-                Some(redis_ttl),
-            )
-            .await
-            .expect("Failed to set key with expiry");
-            tracing::debug!("Completed write of {index}");
 
+            // Serialize segment data for task definition
+            let segment_vec = serialize_obj(&segment).expect("Failed to serialize the segment");
+
+            // Send segment data along with index for task creation
             task_tx
-                .send(SenderType::Segment(index))
+                .send(SenderType::Segment((index, segment_vec)))
                 .await
                 .expect("failed to push task into task_tx");
         }
@@ -463,7 +455,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
             }
 
             match task_type {
-                SenderType::Segment(segment_index) => {
+                SenderType::Segment((segment_index, segment_data)) => {
                     planner.enqueue_segment().expect("Failed to enqueue segment");
                     while let Some(tree_task) = planner.next_task() {
                         process_task(
@@ -479,6 +471,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                             &assumptions,
                             compress_type,
                             None,
+                            Some(segment_data),
                         )
                         .await
                         .expect("Failed to process task and insert into taskdb");
@@ -546,6 +539,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                     None,
                     &assumptions,
                     compress_type,
+                    None,
                     None,
                 )
                 .await

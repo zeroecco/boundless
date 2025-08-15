@@ -4,8 +4,8 @@
 // as found in the LICENSE-BSL file.
 
 use crate::{
-    redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH, SEGMENTS_PATH},
+    redis,
+    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
@@ -15,17 +15,11 @@ use workflow_common::ProveReq;
 /// Run a prove request
 pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &ProveReq) -> Result<()> {
     let index = request.index;
-    let mut conn = agent.redis_pool.get().await?;
-    let job_prefix = format!("job:{job_id}");
-    let segment_key = format!("{job_prefix}:{SEGMENTS_PATH}:{index}");
 
     tracing::debug!("Starting proof of idx: {job_id} - {index}");
-    let segment_vec: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&segment_key)
-        .await
-        .with_context(|| format!("segment data not found for segment key: {segment_key}"))?;
-    let segment =
-        deserialize_obj(&segment_vec).context("Failed to deserialize segment data from redis")?;
+
+    // Use segment data from task definition instead of Redis
+    let segment = deserialize_obj(&request.data).context("Failed to deserialize segment data from task definition")?;
 
     let segment_receipt = agent
         .prover
@@ -46,7 +40,8 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
 
     tracing::debug!("lifting complete {job_id} - {index}");
 
-    let output_key = format!("{job_prefix}:{RECUR_RECEIPT_PATH}:{task_id}");
+    let mut conn = agent.redis_pool.get().await?;
+    let output_key = format!("job:{job_id}:{RECUR_RECEIPT_PATH}:{task_id}");
     // Write out lifted receipt
     let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
     redis::set_key_with_expiry(
