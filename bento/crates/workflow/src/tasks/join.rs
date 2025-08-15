@@ -5,7 +5,7 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH},
+    tasks::{deserialize_obj, serialize_obj_compressed, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
@@ -48,7 +48,7 @@ pub async fn join(agent: &Agent, job_id: &Uuid, request: &JoinReq) -> Result<()>
         .as_ref()
         .context("Missing prover from join task")?
         .join(&left_receipt, &right_receipt)?;
-    let join_result = serialize_obj(&joined).expect("Failed to serialize the segment");
+    let join_result = serialize_obj_compressed(&joined).expect("Failed to serialize the segment");
     let output_key = format!("{recur_receipts_prefix}:{}", request.idx);
     redis::set_key_with_expiry(
         &mut conn,

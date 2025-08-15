@@ -5,7 +5,7 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj, RECEIPT_PATH, RECUR_RECEIPT_PATH},
+    tasks::{deserialize_obj, serialize_obj_compressed, RECEIPT_PATH, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
@@ -121,7 +121,7 @@ pub async fn resolver(agent: &Agent, job_id: &Uuid, request: &ResolveReq) -> Res
     // Write out the resolved receipt
     tracing::debug!("Serializing resolved receipt");
     let serialized_asset =
-        serialize_obj(&conditional_receipt).context("Failed to serialize resolved receipt")?;
+        serialize_obj_compressed(&conditional_receipt).context("Failed to serialize resolved receipt")?;
 
     tracing::debug!("Writing resolved receipt to Redis key: {root_receipt_key}");
     redis::set_key_with_expiry(

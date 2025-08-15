@@ -5,7 +5,7 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, serialize_obj},
+    tasks::{deserialize_obj, serialize_obj_compressed},
     Agent,
 };
 use anyhow::{Context, Result};
@@ -52,7 +52,7 @@ pub async fn union(agent: &Agent, job_id: &Uuid, request: &UnionReq) -> Result<(
         .into_unknown();
 
     // send result to redis
-    let union_result = serialize_obj(&unioned).context("Failed to serialize union receipt")?;
+    let union_result = serialize_obj_compressed(&unioned).context("Failed to serialize union receipt")?;
     let output_key = format!("{keccak_receipts_prefix}:{}", request.idx);
     redis::set_key_with_expiry(
         &mut conn,

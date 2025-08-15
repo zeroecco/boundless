@@ -5,7 +5,7 @@
 
 use crate::{
     redis::{self, AsyncCommands},
-    tasks::{deserialize_obj, read_image_id, RECUR_RECEIPT_PATH},
+    tasks::{deserialize_obj, deserialize_obj_smart, read_image_id, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{bail, Context, Result};
@@ -41,7 +41,7 @@ pub async fn finalize(agent: &Agent, job_id: &Uuid, request: &FinalizeReq) -> Re
         .await
         .with_context(|| format!("Journal data not found for key ID: {journal_key}"))?;
 
-    let journal = deserialize_obj(&journal).context("could not deseriailize the journal");
+    let journal = deserialize_obj_smart(&journal).context("could not deseriailize the journal");
     let rollup_receipt = Receipt::new(InnerReceipt::Succinct(root_receipt), journal?);
 
     // build the image ID for pulling the image from redis

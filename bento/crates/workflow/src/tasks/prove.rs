@@ -5,7 +5,7 @@
 
 use crate::{
     redis,
-    tasks::{deserialize_obj, serialize_obj, RECUR_RECEIPT_PATH},
+    tasks::{deserialize_obj_smart, serialize_obj_compressed, RECUR_RECEIPT_PATH},
     Agent,
 };
 use anyhow::{Context, Result};
@@ -19,7 +19,7 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
     tracing::debug!("Starting proof of idx: {job_id} - {index}");
 
     // Use segment data from task definition instead of Redis
-    let segment = deserialize_obj(&request.data).context("Failed to deserialize segment data from task definition")?;
+    let segment = deserialize_obj_smart(&request.data).context("Failed to deserialize segment data from task definition")?;
 
     let segment_receipt = agent
         .prover
@@ -43,7 +43,7 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
     let mut conn = agent.redis_pool.get().await?;
     let output_key = format!("job:{job_id}:{RECUR_RECEIPT_PATH}:{task_id}");
     // Write out lifted receipt
-    let lift_asset = serialize_obj(&lift_receipt).expect("Failed to serialize the segment");
+    let lift_asset = serialize_obj_compressed(&lift_receipt).expect("Failed to serialize the segment");
     redis::set_key_with_expiry(
         &mut conn,
         &output_key,

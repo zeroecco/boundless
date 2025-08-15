@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{
     redis::{self},
-    tasks::{read_image_id, serialize_obj, RECEIPT_PATH},
+    tasks::{read_image_id, serialize_obj_compressed, RECEIPT_PATH},
     Agent, Args, TaskType,
 };
 use anyhow::{bail, Context, Result};
@@ -23,8 +23,7 @@ use taskdb::planner::{
 use tempfile::NamedTempFile;
 use workflow_common::{
     s3::{
-        ELF_BUCKET_DIR, EXEC_LOGS_BUCKET_DIR, INPUT_BUCKET_DIR, PREFLIGHT_JOURNALS_BUCKET_DIR,
-        RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
+        ELF_BUCKET_DIR, EXEC_LOGS_BUCKET_DIR, INPUT_BUCKET_DIR, RECEIPT_BUCKET_DIR, STARK_BUCKET_DIR,
     },
     CompressType, ExecutorReq, ExecutorResp, FinalizeReq, JoinReq, KeccakReq, ProveReq, ResolveReq,
     SnarkReq, UnionReq, AUX_WORK_TYPE, COPROC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
@@ -339,7 +338,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
             _ => bail!("Invalid assumption receipt, not succinct"),
         };
         let succinct_receipt = succinct_receipt.into_unknown();
-        let succinct_receipt_bytes = serialize_obj(&succinct_receipt)
+        let succinct_receipt_bytes = serialize_obj_compressed(&succinct_receipt)
             .context("Failed to serialize succinct assumption receipt")?;
 
         let assumption_key = format!("{receipts_key}:{assumption_claim}");
@@ -379,7 +378,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
             tracing::debug!("Starting write of index: {index}");
 
             // Serialize segment data for task definition
-            let segment_vec = serialize_obj(&segment).expect("Failed to serialize the segment");
+            let segment_vec = serialize_obj_compressed(&segment).expect("Failed to serialize the segment");
 
             // Send segment data along with index for task creation
             task_tx
@@ -617,29 +616,20 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
 
     if let Some(journal) = session.journal {
         if exec_only {
-            agent
-                .s3_client
-                .write_buf_to_s3(
-                    &format!("{PREFLIGHT_JOURNALS_BUCKET_DIR}/{job_id}.bin"),
-                    journal.bytes,
-                )
-                .await
-                .context("Failed to write journal to obj store")?;
+            // For exec-only jobs, we don't need to store the journal in Redis
+            // since there are no downstream tasks that need it
+            tracing::debug!("Exec-only job, skipping journal storage");
         } else {
-            let serialized_journal =
-                serialize_obj(&journal).context("Failed to serialize journal")?;
-
+            let journal_bytes = serialize_obj_compressed(&journal).context("Failed to serialize journal")?;
             redis::set_key_with_expiry(
                 &mut conn,
                 &journal_key,
-                serialized_journal,
+                journal_bytes,
                 Some(agent.args.redis_ttl),
             )
-            .await?;
+            .await
+            .context("Failed to write journal to redis")?;
         }
-    } else {
-        // Optionally handle the case where there is no journal
-        tracing::warn!("No journal to update.");
     }
 
     // First join all tasks and collect results

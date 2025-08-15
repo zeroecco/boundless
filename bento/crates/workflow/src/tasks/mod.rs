@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use hex::FromHex;
 use risc0_zkvm::sha::Digest;
 use serde::{Deserialize, Serialize};
+use lz4::block::{compress, decompress};
 
 pub(crate) mod executor;
 pub(crate) mod finalize;
@@ -33,8 +34,43 @@ pub(crate) fn serialize_obj<T: Serialize>(item: &T) -> Result<Vec<u8>> {
     bincode::serialize(item).map_err(anyhow::Error::new)
 }
 
-/// Deserializes a an encoded function
+/// Serializes and compresses an object using LZ4 for efficient storage.
+/// This is much faster than gzip and provides good compression for binary data.
+pub(crate) fn serialize_obj_compressed<T: Serialize>(item: &T) -> Result<Vec<u8>> {
+    let serialized = bincode::serialize(item)?;
+    let compressed = compress(&serialized, None, true)?;
+
+    // Log compression ratio for monitoring
+    let compression_ratio = compressed.len() as f64 / serialized.len() as f64;
+    if serialized.len() > 1024 { // Only log for data larger than 1KB
+        tracing::debug!(
+            "Compression: {} -> {} bytes ({:.1}% of original size)",
+            serialized.len(),
+            compressed.len(),
+            compression_ratio * 100.0
+        );
+    }
+
+    Ok(compressed)
+}
+
+/// Deserializes an encoded function
 pub(crate) fn deserialize_obj<T: for<'de> Deserialize<'de>>(encoded: &[u8]) -> Result<T> {
+    let decoded = bincode::deserialize(encoded)?;
+    Ok(decoded)
+}
+
+/// Smart deserialization that automatically detects if data is compressed.
+/// This provides backward compatibility with both compressed and uncompressed data.
+pub(crate) fn deserialize_obj_smart<T: for<'de> Deserialize<'de>>(encoded: &[u8]) -> Result<T> {
+    // Try to decompress first (LZ4 compressed data)
+    if let Ok(decompressed) = decompress(encoded, None) {
+        // If decompression succeeds, deserialize the decompressed data
+        let decoded = bincode::deserialize(&decompressed)?;
+        return Ok(decoded);
+    }
+
+    // If decompression fails, try to deserialize directly (uncompressed data)
     let decoded = bincode::deserialize(encoded)?;
     Ok(decoded)
 }

@@ -1,0 +1,200 @@
+name: Build and Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  RUST_VERSION: '1.75'
+  RISC0_VERSION: 'v2024-05-17.1'
+
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev clang git
+
+      - name: Setup RISC0
+        run: |
+          curl -L https://github.com/risc0/risc0/releases/download/${{ env.RISC0_VERSION }}/risc0-install.sh | sh
+          echo "$HOME/.risc0/bin" >> $GITHUB_PATH
+
+      - name: Install rzup
+        run: |
+          curl -L https://github.com/risc0/risc0/releases/download/${{ env.RISC0_VERSION }}/rzup-x86_64-unknown-linux-gnu -o rzup
+          chmod +x rzup
+          sudo mv rzup /usr/local/bin/
+
+      - name: Install Groth16 prover
+        run: rzup install risc0-groth16
+
+      - name: Build workflow binary
+        run: |
+          cd crates/workflow
+          cargo build --release --target ${{ matrix.target }}
+          mkdir -p ../../binaries/${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/agent ../../binaries/${{ matrix.target }}/agent
+
+      - name: Build broker binary
+        run: |
+          cd crates/broker
+          cargo build --release --target ${{ matrix.target }}
+          mkdir -p ../../binaries/${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/broker ../../binaries/${{ matrix.target }}/broker
+
+      - name: Build CLI binary
+        run: |
+          cd crates/boundless-cli
+          cargo build --release --target ${{ matrix.target }}
+          mkdir -p ../../binaries/${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/boundless-cli ../../binaries/${{ matrix.target }}/boundless-cli
+
+      - name: Build REST API binary
+        run: |
+          cd crates/workflow
+          cargo build --release --target ${{ matrix.target }} --bin rest_api
+          mkdir -p ../../binaries/${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/rest_api ../../binaries/${{ matrix.target }}/rest_api
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: binaries/${{ matrix.target }}/
+          retention-days: 30
+
+  create-release:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-x86_64-unknown-linux-gnu
+          path: binaries/x86_64-unknown-linux-gnu
+
+      - name: Download musl binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-x86_64-unknown-linux-musl
+          path: binaries/x86_64-unknown-linux-musl
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Linux GNU Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-gnu/agent
+          asset_name: agent-x86_64-unknown-linux-gnu
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux MUSL Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-musl/agent
+          asset_name: agent-x86_64-unknown-linux-musl
+          asset_content_type: application/octet-stream
+
+      - name: Upload Broker GNU Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-gnu/broker
+          asset_name: broker-x86_64-unknown-linux-gnu
+          asset_content_type: application/octet-stream
+
+      - name: Upload Broker MUSL Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-musl/broker
+          asset_name: broker-x86_64-unknown-linux-musl
+          asset_content_type: application/octet-stream
+
+      - name: Upload CLI GNU Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-gnu/boundless-cli
+          asset_name: boundless-cli-x86_64-unknown-linux-gnu
+          asset_content_type: application/octet-stream
+
+      - name: Upload CLI MUSL Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-musl/boundless-cli
+          asset_name: boundless-cli-x86_64-unknown-linux-musl
+          asset_content_type: application/octet-stream
+
+      - name: Upload REST API GNU Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-gnu/rest_api
+          asset_name: rest_api-x86_64-unknown-linux-gnu
+          asset_content_type: application/octet-stream
+
+      - name: Upload REST API MUSL Binaries
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/x86_64-unknown-linux-musl/rest_api
+          asset_name: rest_api-x86_64-unknown-linux-musl
+          asset_content_type: application/octet-stream

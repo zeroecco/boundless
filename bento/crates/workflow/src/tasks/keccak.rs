@@ -5,7 +5,7 @@
 
 use crate::{
     redis::{self},
-    tasks::{serialize_obj},
+    tasks::{serialize_obj_compressed},
     Agent,
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -61,7 +61,7 @@ pub async fn keccak(
     let job_prefix = format!("job:{job_id}");
     let receipts_key = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{task_id}");
     let keccak_receipt_bytes =
-        serialize_obj(&keccak_receipt).context("Failed to serialize keccak receipt")?;
+        serialize_obj_compressed(&keccak_receipt).context("Failed to serialize keccak receipt")?;
 
     redis::set_key_with_expiry(
         &mut conn,
