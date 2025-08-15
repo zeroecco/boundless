@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use deadpool_redis::Pool as RedisPool;
+use redis::AsyncCommands;
 use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::{
@@ -22,6 +23,33 @@ use taskdb::ReadyTask;
 use tokio::time;
 use workflow_common::{TaskType, COPROC_WORK_TYPE};
 use workflow_common::s3::S3Client;
+
+/// A task with prefetched segment data ready for immediate processing
+struct PrefetchedTask {
+    task: ReadyTask,
+    segment_data: Option<Vec<u8>>,
+    prefetch_complete: bool,
+}
+
+impl PrefetchedTask {
+    fn new(task: ReadyTask) -> Self {
+        Self {
+            task,
+            segment_data: None,
+            prefetch_complete: false,
+        }
+    }
+
+    /// Check if the task is ready for immediate processing
+    fn is_ready(&self) -> bool {
+        self.prefetch_complete
+    }
+
+    /// Get the prefetched segment data if available
+    fn get_segment_data(&self) -> Option<&Vec<u8>> {
+        self.segment_data.as_ref()
+    }
+}
 
 // Re-export commonly used types
 pub use workflow_common::{
@@ -271,10 +299,17 @@ impl Agent {
         let pipeline_depth = self.args.pipeline_depth;
         let mut task_queue = Vec::with_capacity(pipeline_depth);
 
-        // Pre-fill the pipeline with tasks
+        // Pre-fill the pipeline with prefetched tasks
         for _ in 0..pipeline_depth {
             if let Ok(Some(task)) = taskdb::request_work(&self.db_pool, &self.args.task_stream).await {
-                task_queue.push(task);
+                let mut prefetched_task = PrefetchedTask::new(task);
+
+                // Start prefetching segment data if enabled
+                if self.args.enable_segment_prefetch {
+                    self.prefetch_segment_data(&mut prefetched_task).await;
+                }
+
+                task_queue.push(prefetched_task);
             } else {
                 break;
             }
@@ -282,44 +317,45 @@ impl Agent {
 
         tracing::info!("Started pipelined processing with {} tasks in queue", task_queue.len());
 
+        // Log prefetch status
+        let ready_count = task_queue.iter().filter(|t| t.is_ready()).count();
+        tracing::info!("Pipeline status: {}/{} tasks ready for immediate processing", ready_count, task_queue.len());
+
         while !term_sig.load(Ordering::Relaxed) && !task_queue.is_empty() {
-            // Process current task
+            // Process current job
             let current_task = task_queue.remove(0);
 
-            // Start fetching next task in background while processing current one
-            let next_task_future = if task_queue.len() < pipeline_depth {
-                let db_pool = self.db_pool.clone();
-                let task_stream = self.args.task_stream.clone();
-                Some(tokio::spawn(async move {
-                    taskdb::request_work(&db_pool, &task_stream).await
-                }))
+            if current_task.is_ready() {
+                tracing::debug!("Processing task {} with prefetched data ({} bytes)",
+                    current_task.task.task_id,
+                    current_task.get_segment_data().map(|d| d.len()).unwrap_or(0)
+                );
             } else {
-                None
-            };
-
-            // Process the current task
-            if let Err(err) = self.process_work(&current_task).await {
-                tracing::error!("Failure during task processing: {err:?}");
-                self.handle_task_failure(&current_task, err).await?;
+                tracing::warn!("Processing task {} without prefetched data - may cause delays",
+                    current_task.task.task_id
+                );
             }
 
-            // Wait for next task to be fetched and add it to queue
-            if let Some(next_task_handle) = next_task_future {
-                match next_task_handle.await {
-                    Ok(Ok(Some(next_task))) => {
-                        task_queue.push(next_task);
-                        tracing::debug!("Added next task to pipeline, queue size: {}", task_queue.len());
-                    }
-                    Ok(Ok(None)) => {
-                        tracing::debug!("No more tasks available");
-                    }
-                    Ok(Err(err)) => {
-                        tracing::warn!("Failed to fetch next task: {}", err);
-                    }
-                    Err(err) => {
-                        tracing::warn!("Next task fetch future failed: {}", err);
-                    }
+            // Process the task directly
+            if let Err(err) = self.process_work(&current_task.task).await {
+                tracing::error!("Failure during task processing: {err:?}");
+                self.handle_task_failure(&current_task.task, err).await?;
+                continue;
+            }
+
+            // Fetch next job and start prefetching
+            if let Ok(Some(next_task)) = taskdb::request_work(&self.db_pool, &self.args.task_stream).await {
+                let mut prefetched_task = PrefetchedTask::new(next_task);
+
+                // Start prefetching segment data for the next job
+                if self.args.enable_segment_prefetch {
+                    self.prefetch_segment_data(&mut prefetched_task).await;
                 }
+
+                task_queue.push(prefetched_task);
+                tracing::debug!("Added next job to pipeline, queue size: {}", task_queue.len());
+            } else {
+                tracing::debug!("No more jobs available");
             }
 
             // Small delay to prevent overwhelming the system
@@ -327,6 +363,77 @@ impl Agent {
         }
 
         Ok(())
+    }
+
+    /// Prefetch segment data for a task to eliminate download latency
+    async fn prefetch_segment_data(&self, prefetched_task: &mut PrefetchedTask) {
+        // Only prefetch for prove tasks
+        let task_type: TaskType = match serde_json::from_value(prefetched_task.task.task_def.clone()) {
+            Ok(task_type) => task_type,
+            Err(_) => return, // Skip prefetching if we can't parse the task
+        };
+
+        match task_type {
+            TaskType::Prove(prove_req) => {
+                // For prove tasks, download segment data from Redis and store it in a prefetch key
+                let segment_key = format!("job:{}:segments:{}", prefetched_task.task.job_id, prove_req.index);
+                let prefetch_key = format!("job:{}:prefetch:{}:{}", prefetched_task.task.job_id, prove_req.index, prefetched_task.task.task_id);
+
+                match self.redis_pool.get().await {
+                    Ok(mut conn) => {
+                        match conn.get::<_, Option<Vec<u8>>>(&segment_key).await {
+                            Ok(Some(segment_data)) => {
+                                // Store the prefetched data in Redis with a special prefetch key
+                                if let Err(err) = redis::set_key_with_expiry(
+                                    &mut conn,
+                                    &prefetch_key,
+                                    segment_data.clone(),
+                                    Some(self.args.redis_ttl),
+                                ).await {
+                                    tracing::warn!("Failed to store prefetched data: {}", err);
+                                    prefetched_task.prefetch_complete = false;
+                                } else {
+                                    prefetched_task.segment_data = Some(segment_data.clone());
+                                    prefetched_task.prefetch_complete = true;
+
+                                    tracing::debug!(
+                                        "Segment data prefetched for prove task {} from Redis ({} bytes) and stored in prefetch key",
+                                        prefetched_task.task.task_id,
+                                        segment_data.len()
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::warn!("No segment data found in Redis for key: {}", segment_key);
+                                prefetched_task.prefetch_complete = false;
+                            }
+                            Err(err) => {
+                                tracing::warn!("Failed to prefetch segment data from Redis: {}", err);
+                                prefetched_task.prefetch_complete = false;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!("Failed to get Redis connection for prefetching: {}", err);
+                        prefetched_task.prefetch_complete = false;
+                    }
+                }
+            }
+            TaskType::Keccak(_keccak_req) => {
+                // For keccak tasks, the input data is stored in the task definition
+                prefetched_task.prefetch_complete = true;
+
+                tracing::debug!(
+                    "Keccak input data prefetched for task {} (data available in task definition)",
+                    prefetched_task.task.task_id
+                );
+            }
+            _ => {
+                // For other task types, mark as ready (no prefetching needed)
+                prefetched_task.prefetch_complete = true;
+                tracing::debug!("Task {} marked as ready (no prefetching needed)", prefetched_task.task.task_id);
+            }
+        }
     }
 
     /// Run traditional single job processing
