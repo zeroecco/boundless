@@ -4,8 +4,8 @@
 // as found in the LICENSE-BSL file.
 
 use crate::{
-    redis::{self, AsyncCommands},
-    tasks::{serialize_obj, COPROC_CB_PATH},
+    redis::{self},
+    tasks::{serialize_obj},
     Agent,
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -31,18 +31,14 @@ pub async fn keccak(
     task_id: &str,
     request: &KeccakReq,
 ) -> Result<()> {
-    let mut conn = agent.redis_pool.get().await?;
-    let keccak_input_path = format!("job:{job_id}:{}:{}", COPROC_CB_PATH, request.claim_digest);
-    let keccak_input: Vec<u8> = conn
-        .get::<_, Vec<u8>>(&keccak_input_path)
-        .await
-        .with_context(|| format!("segment data not found for segment key: {keccak_input_path}"))?;
+    // Use keccak input data from task definition instead of Redis
+    let keccak_input = &request.data;
 
     let keccak_req = ProveKeccakRequest {
         claim_digest: request.claim_digest,
         po2: request.po2,
         control_root: request.control_root,
-        input: try_keccak_bytes_to_input(&keccak_input)?,
+        input: try_keccak_bytes_to_input(keccak_input)?,
     };
 
     if keccak_req.input.is_empty() {
@@ -61,6 +57,7 @@ pub async fn keccak(
         .prove_keccak(&keccak_req)
         .context("Failed to prove_keccak")?;
 
+    let mut conn = agent.redis_pool.get().await?;
     let job_prefix = format!("job:{job_id}");
     let receipts_key = format!("{job_prefix}:{KECCAK_RECEIPT_PATH}:{task_id}");
     let keccak_receipt_bytes =

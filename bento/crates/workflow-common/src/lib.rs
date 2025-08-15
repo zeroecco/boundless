@@ -147,6 +147,8 @@ pub struct KeccakReq {
     pub po2: usize,
     /// The control root which identifies a particular keccak circuit revision.
     pub control_root: Digest,
+    /// Keccak input data (serialized)
+    pub data: Vec<u8>,
 }
 
 /// High level enum of different sub task types and data

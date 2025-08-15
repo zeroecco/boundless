@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{
     redis::{self},
-    tasks::{read_image_id, serialize_obj, COPROC_CB_PATH, RECEIPT_PATH, SEGMENTS_PATH},
+    tasks::{read_image_id, serialize_obj, RECEIPT_PATH},
     Agent, Args, TaskType,
 };
 use anyhow::{bail, Context, Result};
@@ -367,9 +367,6 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
         }
     }
 
-    // set the segment prefix
-    let segments_prefix = format!("{job_prefix}:{SEGMENTS_PATH}");
-
     // queue segments into a spmc queue
     let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel::<Segment>(CONCURRENT_SEGMENTS);
     let (task_tx, mut task_rx) = tokio::sync::mpsc::channel::<SenderType>(TASK_QUEUE_SIZE);
@@ -442,8 +439,6 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
 
     // Write keccak data to redis + schedule proving
     let coproc = Coprocessor::new(task_tx_clone.clone());
-    let mut coproc_redis = agent.redis_pool.get().await?;
-    let coproc_prefix = format!("{job_prefix}:{COPROC_CB_PATH}");
     let mut guest_fault = false;
 
     // Generate tasks
@@ -457,6 +452,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
             match task_type {
                 SenderType::Segment((segment_index, segment_data)) => {
                     planner.enqueue_segment().expect("Failed to enqueue segment");
+                    let segment_data_clone = segment_data.clone();
                     while let Some(tree_task) = planner.next_task() {
                         process_task(
                             &args_copy,
@@ -471,25 +467,17 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                             &assumptions,
                             compress_type,
                             None,
-                            Some(segment_data),
+                            Some(segment_data_clone.clone()),
                         )
                         .await
                         .expect("Failed to process task and insert into taskdb");
                     }
                 }
                 SenderType::Keccak(mut keccak_req) => {
-                    let redis_key = format!("{coproc_prefix}:{}", keccak_req.claim_digest);
-                    redis::set_key_with_expiry(
-                        &mut coproc_redis,
-                        &redis_key,
-                        // input,
-                        bytemuck::cast_slice::<_, u8>(&keccak_req.input).to_vec(),
-                        Some(redis_ttl),
-                    )
-                    .await
-                    .expect("Failed to set key with expiry");
+                    // Get the keccak input data before clearing it
+                    let keccak_input_data = bytemuck::cast_slice::<_, u8>(&keccak_req.input).to_vec();
                     keccak_req.input.clear();
-                    tracing::debug!("Wrote keccak input to redis");
+                    tracing::debug!("Prepared keccak input data for task definition");
 
                     planner.enqueue_keccak().expect("Failed to enqueue keccak");
                     while let Some(tree_task) = planner.next_task() {
@@ -497,6 +485,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                             claim_digest: keccak_req.claim_digest,
                             control_root: keccak_req.control_root,
                             po2: keccak_req.po2,
+                            data: keccak_input_data.clone(),
                         };
 
                         process_task(
@@ -512,6 +501,7 @@ pub async fn executor(agent: &Agent, job_id: &Uuid, request: &ExecutorReq) -> Re
                             &assumptions,
                             compress_type,
                             Some(req),
+                            None,
                         )
                         .await
                         .expect("Failed to process task and insert into taskdb");
