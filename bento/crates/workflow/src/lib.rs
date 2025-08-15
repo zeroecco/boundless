@@ -77,30 +77,6 @@ pub struct Args {
     #[arg(short, long, default_value_t = 1)]
     pub poll_time: u64,
 
-    /// Enable pipelined job processing
-    ///
-    /// When enabled, agent will fetch next job while processing current job
-    #[arg(long, default_value_t = false)]
-    pub enable_pipelined_jobs: bool,
-
-    /// Pipeline depth (number of jobs to prefetch)
-    ///
-    /// How many jobs to prepare ahead of time
-    #[arg(long, default_value_t = 2)]
-    pub pipeline_depth: usize,
-
-    /// Enable segment data prefetching
-    ///
-    /// When enabled, segment data is downloaded while jobs are queued
-    #[arg(long, default_value_t = false)]
-    pub enable_segment_prefetch: bool,
-
-    /// Prefetch timeout in seconds
-    ///
-    /// Maximum time to wait for segment prefetch before skipping
-    #[arg(long, default_value_t = 30)]
-    pub prefetch_timeout: u64,
-
     /// taskdb postgres DATABASE_URL
     #[clap(env)]
     pub database_url: String,
@@ -146,6 +122,30 @@ pub struct Args {
     /// S3 region, can be anything if using minio
     #[clap(env, default_value = "us-west-2")]
     pub s3_region: String,
+
+    /// Enable pipelined job processing
+    ///
+    /// When enabled, agent will fetch next job while processing current job
+    #[arg(long, default_value_t = false)]
+    pub enable_pipelined_jobs: bool,
+
+    /// Pipeline depth (number of jobs to prefetch)
+    ///
+    /// How many jobs to prepare ahead of time
+    #[arg(long, default_value_t = 2)]
+    pub pipeline_depth: usize,
+
+    /// Enable segment data prefetching
+    ///
+    /// When enabled, segment data is downloaded while jobs are queued
+    #[arg(long, default_value_t = false)]
+    pub enable_segment_prefetch: bool,
+
+    /// Prefetch timeout in seconds
+    ///
+    /// Maximum time to wait for segment prefetch before skipping
+    #[arg(long, default_value_t = 30)]
+    pub prefetch_timeout: u64,
 
     /// Enables a background thread to monitor for tasks that need to be retried / timed-out
     #[clap(long, default_value_t = false)]
