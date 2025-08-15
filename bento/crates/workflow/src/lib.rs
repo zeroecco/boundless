@@ -285,7 +285,7 @@ impl Agent {
         while !term_sig.load(Ordering::Relaxed) && !task_queue.is_empty() {
             // Process current task
             let current_task = task_queue.remove(0);
-            
+
             // Start fetching next task in background while processing current one
             let next_task_future = if task_queue.len() < pipeline_depth {
                 let db_pool = self.db_pool.clone();
