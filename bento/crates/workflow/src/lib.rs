@@ -7,28 +7,28 @@
 
 //! Workflow processing Agent service
 
-use crate::redis::RedisPool;
 use anyhow::{Context, Result};
 use clap::Parser;
+use deadpool_redis::Pool as RedisPool;
 use risc0_zkvm::{get_prover_server, ProverOpts, ProverServer, VerifierContext};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::{
     rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
+    sync::Arc,
 };
 use taskdb::ReadyTask;
 use tokio::time;
 use workflow_common::{TaskType, COPROC_WORK_TYPE};
+use workflow_common::s3::S3Client;
+
+// Re-export commonly used types
+pub use workflow_common::{
+    AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
+};
 
 mod redis;
 mod tasks;
-
-pub use workflow_common::{
-    s3::S3Client, AUX_WORK_TYPE, EXEC_WORK_TYPE, JOIN_WORK_TYPE, PROVE_WORK_TYPE,
-};
 
 /// Workflow agent
 ///
@@ -48,6 +48,18 @@ pub struct Args {
     /// Time to wait between request_work calls
     #[arg(short, long, default_value_t = 1)]
     pub poll_time: u64,
+
+    /// Enable pipelined job processing
+    ///
+    /// When enabled, agent will fetch next job while processing current job
+    #[arg(long, default_value_t = false)]
+    pub enable_pipelined_jobs: bool,
+
+    /// Pipeline depth (number of jobs to prefetch)
+    ///
+    /// How many jobs to prepare ahead of time
+    #[arg(long, default_value_t = 2)]
+    pub pipeline_depth: usize,
 
     /// taskdb postgres DATABASE_URL
     #[clap(env)]
@@ -189,7 +201,7 @@ impl Agent {
         {
             let opts = ProverOpts::default();
             let prover = get_prover_server(&opts).context("Failed to initialize prover server")?;
-            Some(prover)
+            Some(Rc::from(prover))
         } else {
             None
         };
@@ -234,6 +246,57 @@ impl Agent {
             });
         }
 
+        if self.args.enable_pipelined_jobs {
+            self.run_pipelined_work(term_sig).await
+        } else {
+            self.run_single_work(term_sig).await
+        }
+    }
+
+    /// Run pipelined job processing for maximum GPU utilization
+    async fn run_pipelined_work(&self, term_sig: Arc<AtomicBool>) -> Result<()> {
+        let pipeline_depth = self.args.pipeline_depth;
+        let mut job_queue = Vec::with_capacity(pipeline_depth);
+
+        // Pre-fill the pipeline
+        for _ in 0..pipeline_depth {
+            if let Ok(Some(task)) = taskdb::request_work(&self.db_pool, &self.args.task_stream).await {
+                job_queue.push(task);
+            } else {
+                break;
+            }
+        }
+
+        tracing::info!("Started pipelined processing with {} jobs in queue", job_queue.len());
+
+        while !term_sig.load(Ordering::Relaxed) && !job_queue.is_empty() {
+            // Process current job
+            let current_task = job_queue.remove(0);
+
+            // Process the task directly
+            if let Err(err) = self.process_work(&current_task).await {
+                tracing::error!("Failure during task processing: {err:?}");
+                self.handle_task_failure(&current_task, err).await?;
+                continue;
+            }
+
+            // Fetch next job to keep pipeline full
+            if let Ok(Some(next_task)) = taskdb::request_work(&self.db_pool, &self.args.task_stream).await {
+                job_queue.push(next_task);
+                tracing::debug!("Added next job to pipeline, queue size: {}", job_queue.len());
+            } else {
+                tracing::debug!("No more jobs available");
+            }
+
+            // Small delay to prevent overwhelming the system
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Run traditional single job processing
+    async fn run_single_work(&self, term_sig: Arc<AtomicBool>) -> Result<()> {
         while !term_sig.load(Ordering::Relaxed) {
             let task = taskdb::request_work(&self.db_pool, &self.args.task_stream)
                 .await
@@ -271,6 +334,31 @@ impl Agent {
         }
         tracing::warn!("Handled SIGTERM, shutting down...");
 
+        Ok(())
+    }
+
+    /// Handle task failure with retry logic
+    async fn handle_task_failure(&self, task: &ReadyTask, err: anyhow::Error) -> Result<()> {
+        if task.max_retries > 0 {
+            if !taskdb::update_task_retry(&self.db_pool, &task.job_id, &task.task_id)
+                .await
+                .context("Failed to update task retries")?
+            {
+                tracing::info!("update_task_retried failed: {}", task.job_id);
+            }
+        } else {
+            // Prevent massive errors from being reported to the DB
+            let mut err_str = format!("{err:?}");
+            err_str.truncate(1024);
+            taskdb::update_task_failed(
+                &self.db_pool,
+                &task.job_id,
+                &task.task_id,
+                &err_str,
+            )
+            .await
+            .context("Failed to report task failure")?;
+        }
         Ok(())
     }
 
