@@ -185,7 +185,7 @@ services:
     runtime: nvidia
     mem_limit: 4G
     cpus: 4
-    entrypoint: /app/agent -t prove --redis-ttl ${REDIS_TTL:-57600}
+    entrypoint: /app/agent -t prove --enable-pipelined-jobs --pipeline-depth 3 --enable-segment-prefetch --prefetch-timeout 30 --redis-ttl ${REDIS_TTL:-57600}
 
     # comment-out if running in CPU proving mode
     deploy:
