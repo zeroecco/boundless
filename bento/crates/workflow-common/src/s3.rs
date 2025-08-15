@@ -35,6 +35,7 @@ pub const STARK_BUCKET_DIR: &str = "stark";
 pub const GROTH16_BUCKET_DIR: &str = "groth16";
 
 /// S3 client object
+#[derive(Clone)]
 pub struct S3Client {
     bucket: String,
     client: Client,
