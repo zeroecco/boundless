@@ -21,7 +21,7 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
     let prefetch_key = format!("{job_prefix}:prefetch:{index}:{task_id}");
 
     tracing::debug!("Starting proof of idx: {job_id} - {index}");
-    
+
     // First try to get prefetched segment data
     let segment_vec: Vec<u8> = match conn.get::<_, Option<Vec<u8>>>(&prefetch_key).await {
         Ok(Some(prefetched_data)) => {
@@ -42,7 +42,7 @@ pub async fn prover(agent: &Agent, job_id: &Uuid, task_id: &str, request: &Prove
                 .with_context(|| format!("segment data not found for segment key: {segment_key}"))?
         }
     };
-    
+
     let segment =
         deserialize_obj(&segment_vec).context("Failed to deserialize segment data from redis")?;
 
