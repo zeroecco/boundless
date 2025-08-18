@@ -4,8 +4,6 @@
 // as found in the LICENSE-BSL file.
 pragma solidity ^0.8.20;
 
-import {CallbackType} from "./CallbackType.sol";
-
 struct AssessorCallback {
     /// @notice The index of the fill in the request
     uint16 index;
@@ -13,6 +11,4 @@ struct AssessorCallback {
     address addr;
     /// @notice Maximum gas to use for the callback
     uint96 gasLimit;
-    /// @notice The type of callback
-    CallbackType callbackType;
 }

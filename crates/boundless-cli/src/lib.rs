@@ -38,7 +38,7 @@ use boundless_market::{
     contracts::{
         boundless_market_contract::CallbackData, AssessorJournal, AssessorReceipt,
         EIP712DomainSaltless, Fulfillment as BoundlessFulfillment, FulfillmentClaimData,
-        PredicateType, RequestInputType,
+        FulfillmentDataType, PredicateType, RequestInputType,
     },
     input::GuestEnv,
     selector::{is_groth16_selector, SupportedSelectors},
@@ -310,14 +310,13 @@ impl DefaultProver {
             } else {
                 order_inclusion_receipt.abi_encode_seal()?
             };
-            let predicate_type = req.requirements.predicate.predicateType;
 
-            let (claim_digest, callback_data) = match predicate_type {
-                PredicateType::ClaimDigestMatch => (
+            let (claim_digest, fulfillment_data) = match req.requirements.fulfillmentDataType {
+                FulfillmentDataType::None => (
                     <[u8; 32]>::from(fills[i].fulfillment_data.claim_digest().unwrap()).into(),
                     vec![],
                 ),
-                _ => (
+                FulfillmentDataType::ImageIdAndJournal => (
                     <[u8; 32]>::from(claims[i].digest()).into(),
                     CallbackData {
                         imageId: <[u8; 32]>::from(fills[i].fulfillment_data.image_id().unwrap())
@@ -326,14 +325,19 @@ impl DefaultProver {
                     }
                     .abi_encode(),
                 ),
+                _ => {
+                    bail!("Invalid fulfillment type");
+                }
             };
+
             let fulfillment = BoundlessFulfillment {
                 claimDigest: claim_digest,
-                callbackData: callback_data.into(),
+                fulfillmentData: fulfillment_data.into(),
+                fulfillmentDataType: req.requirements.fulfillmentDataType,
                 id: req.id,
                 requestDigest: req.eip712_signing_hash(&self.domain.alloy_struct()),
                 seal: order_seal.into(),
-                predicateType: predicate_type,
+                predicateType: req.requirements.predicate.predicateType,
             };
 
             boundless_fills.push(fulfillment);

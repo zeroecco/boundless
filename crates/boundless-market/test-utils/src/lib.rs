@@ -442,9 +442,9 @@ pub fn mock_singleton(
     .unwrap();
 
     let predicate_type = request.requirements.predicate.predicateType;
-    let (claim_digest, callback_data) = match predicate_type {
+    let (claim_digest, fulfillment_data) = match predicate_type {
         PredicateType::ClaimDigestMatch => (<[u8; 32]>::from(app_claim_digest).into(), vec![]),
-        _ => (
+        PredicateType::PrefixMatch | PredicateType::DigestMatch => (
             <[u8; 32]>::from(app_claim_digest).into(),
             CallbackData {
                 imageId: <[u8; 32]>::from(
@@ -455,12 +455,14 @@ pub fn mock_singleton(
             }
             .abi_encode(),
         ),
+        _ => panic!("unsupported predicate type"),
     };
     let fulfillment = Fulfillment {
         id: request.id,
         requestDigest: request_digest,
         claimDigest: claim_digest,
-        callbackData: callback_data.into(),
+        fulfillmentData: fulfillment_data.into(),
+        fulfillmentDataType: request.requirements.fulfillmentDataType,
         seal: set_inclusion_seal.into(),
         predicateType: predicate_type,
     };

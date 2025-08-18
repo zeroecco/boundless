@@ -28,7 +28,7 @@ use boundless_market::{
     contracts::{
         boundless_market::{BoundlessMarketService, FulfillmentTx, MarketError, UnlockedRequest},
         boundless_market_contract::CallbackData,
-        encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, PredicateType,
+        encode_seal, AssessorJournal, AssessorReceipt, Fulfillment, FulfillmentDataType,
     },
     selector::is_groth16_selector,
 };
@@ -338,12 +338,15 @@ where
                 fulfillment_to_order_id.insert(request_id, order_id);
                 let predicate_type = order_request.requirements.predicate.predicateType;
 
-                let (claim_digest, callback_data) = match predicate_type {
-                    PredicateType::ClaimDigestMatch => (
+                let (claim_digest, fulfillment_data) = match order_request
+                    .requirements
+                    .fulfillmentDataType
+                {
+                    FulfillmentDataType::None => (
                         order_request.requirements.predicate.data.0.as_ref().try_into().unwrap(),
                         vec![],
                     ),
-                    _ => (
+                    FulfillmentDataType::ImageIdAndJournal => (
                         order_claim_digest,
                         CallbackData {
                             imageId: <[u8; 32]>::from(order_img_id).into(),
@@ -351,12 +354,16 @@ where
                         }
                         .abi_encode(),
                     ),
+                    _ => {
+                        panic!("Invalid fulfillment type");
+                    }
                 };
 
                 fulfillments.push(Fulfillment {
                     id: request_id,
                     requestDigest: request_digest,
-                    callbackData: callback_data.into(),
+                    fulfillmentData: fulfillment_data.into(),
+                    fulfillmentDataType: order_request.requirements.fulfillmentDataType,
                     claimDigest: <[u8; 32]>::from(claim_digest).into(),
                     seal: seal.into(),
                     predicateType: predicate_type,

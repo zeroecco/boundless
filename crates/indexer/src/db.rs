@@ -406,7 +406,7 @@ impl IndexerDb for AnyDb {
         .bind(format!("{:x}", fill.requestDigest))
         .bind(format!("{:x}", fill.id))
         .bind(format!("{prover_address:x}"))
-        .bind(format!("{:x}", fill.callbackData))
+        .bind(format!("{:x}", fill.fulfillmentData))
         .bind(format!("{:x}", fill.claimDigest))
         .bind(format!("{:x}", fill.seal))
         .bind(format!("{:x}", metadata.tx_hash))

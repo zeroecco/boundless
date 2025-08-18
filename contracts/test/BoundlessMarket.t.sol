@@ -35,7 +35,6 @@ import {HitPoints} from "../src/HitPoints.sol";
 import {BoundlessMarket} from "../src/BoundlessMarket.sol";
 import {Callback} from "../src/types/Callback.sol";
 import {CallbackData} from "../src/types/CallbackData.sol";
-import {CallbackType} from "../src/types/CallbackType.sol";
 import {RequestId, RequestIdLibrary} from "../src/types/RequestId.sol";
 import {AssessorJournal} from "../src/types/AssessorJournal.sol";
 import {AssessorCallback} from "../src/types/AssessorCallback.sol";
@@ -46,7 +45,7 @@ import {ProofRequest} from "../src/types/ProofRequest.sol";
 import {LockRequest} from "../src/types/LockRequest.sol";
 import {Account} from "../src/types/Account.sol";
 import {RequestLock} from "../src/types/RequestLock.sol";
-import {Fulfillment} from "../src/types/Fulfillment.sol";
+import {Fulfillment, FulfillmentDataType} from "../src/types/Fulfillment.sol";
 import {AssessorReceipt} from "../src/types/AssessorReceipt.sol";
 import {AssessorJournal} from "../src/types/AssessorJournal.sol";
 import {Offer} from "../src/types/Offer.sol";
@@ -378,15 +377,16 @@ contract BoundlessMarketTest is Test {
         fills = new Fulfillment[](requests.length);
         Selector[] memory selectors = new Selector[](0);
         AssessorCallback[] memory callbacks = new AssessorCallback[](0);
+
         for (uint8 i = 0; i < requests.length; i++) {
             bytes32 claimDigest;
-            bytes memory callbackData;
+            bytes memory fulfillmentData;
             bytes memory journal = journals[i];
             PredicateType predicateType = requests[i].requirements.predicate.predicateType;
             bytes32 imageId = bytesToBytes32(requests[i].requirements.predicate.data);
             if (predicateType != PredicateType.ClaimDigestMatch) {
                 claimDigest = ReceiptClaimLib.ok(imageId, sha256(journal)).digest();
-                callbackData = abi.encode(CallbackData({imageId: imageId, journal: journal}));
+                fulfillmentData = abi.encode(CallbackData({imageId: imageId, journal: journal}));
             } else {
                 claimDigest = bytesToBytes32(requests[i].requirements.predicate.data);
             }
@@ -396,9 +396,10 @@ contract BoundlessMarketTest is Test {
                     boundlessMarket.eip712DomainSeparator(), requests[i].eip712Digest()
                 ),
                 claimDigest: claimDigest,
-                callbackData: callbackData,
+                fulfillmentData: fulfillmentData,
                 seal: bytes(""),
-                predicateType: predicateType
+                predicateType: predicateType,
+                fulfillmentDataType: FulfillmentDataType.ImageIdAndJournal
             });
             fills[i] = fill;
             if (requests[i].requirements.selector != bytes4(0)) {
@@ -409,8 +410,7 @@ contract BoundlessMarketTest is Test {
                     AssessorCallback({
                         index: i,
                         gasLimit: requests[i].requirements.callback.gasLimit,
-                        addr: requests[i].requirements.callback.addr,
-                        callbackType: requests[i].requirements.callback.callbackType
+                        addr: requests[i].requirements.callback.addr
                     })
                 );
             }
@@ -2610,7 +2610,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         request.requirements = Requirements({
             predicate: PredicateLibrary.createDigestMatchPredicate(bytes32(APP_IMAGE_ID_2), sha256(APP_JOURNAL_2)),
             selector: bytes4(0),
-            callback: Callback({addr: address(0), gasLimit: 0, callbackType: CallbackType.JournalRequired})
+            callback: Callback({addr: address(0), gasLimit: 0}),
+            fulfillmentDataType: FulfillmentDataType.ImageIdAndJournal
         });
         boundlessMarket.lockRequestWithSignature(
             request, client.sign(request), testProver.signLockRequest(LockRequest({request: request}))
@@ -2621,11 +2622,11 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         (Fulfillment[] memory fills, AssessorReceipt memory assessorReceipt) =
             createFillsAndSubmitRoot(requests, journals, testProverAddress);
 
-        bytes memory callbackData0 = fills[0].callbackData;
+        bytes memory fulfillmentData0 = fills[0].fulfillmentData;
         bytes32 claimDigest0 = fills[0].claimDigest;
 
-        fills[0].callbackData = fills[1].callbackData;
-        fills[1].callbackData = callbackData0;
+        fills[0].fulfillmentData = fills[1].fulfillmentData;
+        fills[1].fulfillmentData = fulfillmentData0;
 
         fills[0].claimDigest = fills[1].claimDigest;
         fills[1].claimDigest = claimDigest0;
@@ -2925,8 +2926,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         bytes[] memory clientSignatures = new bytes[](1);
         clientSignatures[0] = clientSignature;
 
-        CallbackData memory callbackData = abi.decode(fill.callbackData, (CallbackData));
-        bytes32 claimDigest = ReceiptClaimLib.ok(callbackData.imageId, sha256(callbackData.journal)).digest();
+        CallbackData memory fulfillmentData = abi.decode(fill.fulfillmentData, (CallbackData));
+        bytes32 claimDigest = ReceiptClaimLib.ok(fulfillmentData.imageId, sha256(fulfillmentData.journal)).digest();
 
         // If no selector is specified, we expect the call to verifyIntegrity to use the default
         // gas limit when verifying the application.
@@ -2961,8 +2962,8 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         bytes[] memory clientSignatures = new bytes[](1);
         clientSignatures[0] = clientSignature;
 
-        CallbackData memory callbackData = abi.decode(fill.callbackData, (CallbackData));
-        bytes32 claimDigest = ReceiptClaimLib.ok(callbackData.imageId, sha256(callbackData.journal)).digest();
+        CallbackData memory fulfillmentData = abi.decode(fill.fulfillmentData, (CallbackData));
+        bytes32 claimDigest = ReceiptClaimLib.ok(fulfillmentData.imageId, sha256(fulfillmentData.journal)).digest();
 
         // If a selector is specified, we expect the call to verifyIntegrity to not use the default
         // gas limit, so the minimum gas it should have should exceed it.
@@ -3503,8 +3504,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
         // Create request with low gas callback
         ProofRequest memory request = client.request(1);
-        request.requirements.callback =
-            Callback({addr: address(mockCallback), gasLimit: 500_000, callbackType: CallbackType.JournalRequired});
+        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 500_000});
 
         bytes memory clientSignature = client.sign(request);
         client.snapshotBalance();
@@ -3543,8 +3543,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
         // Create request with high gas callback that will exceed limit
         ProofRequest memory request = client.request(1);
-        request.requirements.callback =
-            Callback({addr: address(mockHighGasCallback), gasLimit: 10_000, callbackType: CallbackType.JournalRequired});
+        request.requirements.callback = Callback({addr: address(mockHighGasCallback), gasLimit: 10_000});
 
         bytes memory clientSignature = client.sign(request);
         client.snapshotBalance();
@@ -3582,8 +3581,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
 
         // Create request with low gas callback
         ProofRequest memory request = client.request(1);
-        request.requirements.callback =
-            Callback({addr: address(mockCallback), gasLimit: 100_000, callbackType: CallbackType.JournalRequired});
+        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 100_000});
 
         bytes memory clientSignature = client.sign(request);
 
@@ -3630,8 +3628,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
         Client client = getClient(1);
 
         ProofRequest memory request = client.request(1);
-        request.requirements.callback =
-            Callback({addr: address(mockCallback), gasLimit: 100_000, callbackType: CallbackType.JournalRequired});
+        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 100_000});
 
         bytes memory clientSignature = client.sign(request);
 
@@ -3696,8 +3693,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
                 lockStake: 1 ether
             })
         );
-        request.requirements.callback =
-            Callback({addr: address(mockCallback), gasLimit: 100_000, callbackType: CallbackType.JournalRequired});
+        request.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 100_000});
         ProofRequest[] memory requests = new ProofRequest[](1);
         requests[0] = request;
 
@@ -3760,8 +3756,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
             lockStake: 1 ether
         });
         ProofRequest memory requestA = client.request(1, offerA);
-        requestA.requirements.callback =
-            Callback({addr: address(mockCallback), gasLimit: 10_000, callbackType: CallbackType.JournalRequired});
+        requestA.requirements.callback = Callback({addr: address(mockCallback), gasLimit: 10_000});
         bytes memory clientSignatureA = client.sign(requestA);
 
         // Create second request with same ID but different callback
@@ -3775,11 +3770,7 @@ contract BoundlessMarketBasicTest is BoundlessMarketTest {
             lockStake: offerA.lockStake
         });
         ProofRequest memory requestB = client.request(1, offerB);
-        requestB.requirements.callback = Callback({
-            addr: address(mockHighGasCallback),
-            gasLimit: 300_000,
-            callbackType: CallbackType.JournalRequired
-        });
+        requestB.requirements.callback = Callback({addr: address(mockHighGasCallback), gasLimit: 300_000});
         ProofRequest[] memory requests = new ProofRequest[](1);
         requests[0] = requestB;
         bytes memory clientSignatureB = client.sign(requestB);

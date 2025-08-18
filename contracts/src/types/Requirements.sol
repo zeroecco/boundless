@@ -6,7 +6,7 @@ pragma solidity ^0.8.24;
 
 import {Predicate, PredicateLibrary} from "./Predicate.sol";
 import {Callback, CallbackLibrary} from "./Callback.sol";
-import {CallbackType} from "./CallbackType.sol";
+import {FulfillmentDataType} from "./Fulfillment.sol";
 
 using RequirementsLibrary for Requirements global;
 
@@ -14,10 +14,12 @@ struct Requirements {
     Callback callback;
     Predicate predicate;
     bytes4 selector;
+    FulfillmentDataType fulfillmentDataType;
 }
 
 library RequirementsLibrary {
-    string constant REQUIREMENTS_TYPE = "Requirements(Callback callback,Predicate predicate,bytes4 selector)";
+    string constant REQUIREMENTS_TYPE =
+        "Requirements(Callback callback,Predicate predicate,bytes4 selector,uint8 fulfillmentDataType)";
     bytes32 constant REQUIREMENTS_TYPEHASH =
         keccak256(abi.encodePacked(REQUIREMENTS_TYPE, CallbackLibrary.CALLBACK_TYPE, PredicateLibrary.PREDICATE_TYPE));
 
@@ -30,7 +32,8 @@ library RequirementsLibrary {
                 REQUIREMENTS_TYPEHASH,
                 CallbackLibrary.eip712Digest(requirements.callback),
                 PredicateLibrary.eip712Digest(requirements.predicate),
-                requirements.selector
+                requirements.selector,
+                requirements.fulfillmentDataType
             )
         );
     }
