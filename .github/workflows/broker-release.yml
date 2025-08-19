@@ -34,18 +34,6 @@ jobs:
             os: linux
             arch: x64
             artifact_name: linux-amd64
-          - target: aarch64-unknown-linux-gnu
-            os: linux
-            arch: arm64
-            artifact_name: linux-arm64
-          - target: x86_64-apple-darwin
-            os: macos
-            arch: x64
-            artifact_name: darwin-amd64
-          - target: aarch64-apple-darwin
-            os: macos
-            arch: arm64
-            artifact_name: darwin-arm64
 
     steps:
       - name: Checkout code
