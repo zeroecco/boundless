@@ -94,16 +94,16 @@ jobs:
           cargo build --release --target ${{ matrix.target }} --bin rest_api
           cargo build --release --target ${{ matrix.target }} --bin bento_cli
 
-          # Create bundle directory
-          mkdir -p ../../binaries/${{ matrix.artifact_name }}/bento-bundle
+          # Create bundle directory in workspace root
+          mkdir -p ../binaries/${{ matrix.artifact_name }}/bento-bundle
 
           # Copy all components to bundle
-          cp target/${{ matrix.target }}/release/agent ../../binaries/${{ matrix.artifact_name }}/bento-bundle/bento-agent
-          cp target/${{ matrix.target }}/release/rest_api ../../binaries/${{ matrix.artifact_name }}/bento-bundle/bento-rest-api
-          cp target/${{ matrix.target }}/release/bento_cli ../../binaries/${{ matrix.artifact_name }}/bento-bundle/bento-cli
+          cp target/${{ matrix.target }}/release/agent ../binaries/${{ matrix.artifact_name }}/bento-bundle/bento-agent
+          cp target/${{ matrix.target }}/release/rest_api ../binaries/${{ matrix.artifact_name }}/bento-bundle/bento-rest-api
+          cp target/${{ matrix.target }}/release/bento_cli ../binaries/${{ matrix.artifact_name }}/bento-bundle/bento-cli
 
           # Create bundle archive
-          cd ../../binaries/${{ matrix.artifact_name }}
+          cd ../binaries/${{ matrix.artifact_name }}
           tar -czf bento-bundle-${{ matrix.artifact_name }}.tar.gz bento-bundle/
           rm -rf bento-bundle/
 
