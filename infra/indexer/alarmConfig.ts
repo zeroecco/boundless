@@ -290,8 +290,8 @@ export const alarmConfig: ChainStageAlarms = {
             }
           ],
           successRate: [
-            // Onchain orders are large orders that can take variable lengths of time to fulfill, 
-            // so we set a more lenient success rate threshold, since there may be periods where 
+            // Onchain orders are large orders that can take variable lengths of time to fulfill,
+            // so we set a more lenient success rate threshold, since there may be periods where
             // fewer proofs get fulfilled due to variant proof lengths.
             {
               description: "less than 90% success rate for two consecutive hours from og_onchain",
@@ -307,6 +307,41 @@ export const alarmConfig: ChainStageAlarms = {
               }
             }
           ]
+        },
+        {
+          name: "signal_requestor",
+          address: "0x47c76e56ad9316a5c1ab17cba87a1cc134552183",
+          submissionRate: [
+            {
+              description: "no submitted orders in 3 hours from signal_requestor",
+              severity: Severity.SEV1,
+              metricConfig: {
+                period: 10800
+              },
+              alarmConfig: {
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                threshold: 1,
+                comparisonOperator: "LessThanThreshold",
+                treatMissingData: "breaching"
+              }
+            },
+            {
+              description: "no submitted orders in 2 hours from signal_requestor",
+              severity: Severity.SEV2,
+              metricConfig: {
+                period: 7200
+              },
+              alarmConfig: {
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                threshold: 1,
+                comparisonOperator: "LessThanThreshold",
+                treatMissingData: "breaching"
+              }
+            }
+          ],
+          successRate: [] // Signal rarely gets fulfilled on testnet.
         }
       ],
       provers: [
@@ -512,12 +547,110 @@ export const alarmConfig: ChainStageAlarms = {
             }
           ],
           successRate: [
-            // Onchain orders are large orders that can take variable lengths of time to fulfill, 
-            // so we set a more lenient success rate threshold, since there may be periods where 
+            // Onchain orders are large orders that can take variable lengths of time to fulfill,
+            // so we set a more lenient success rate threshold, since there may be periods where
             // fewer proofs get fulfilled due to variant proof lengths.
             {
               description: "less than 90% success rate for two consecutive hours from og_onchain",
               severity: Severity.SEV1,
+              metricConfig: {
+                period: 3600
+              },
+              alarmConfig: {
+                threshold: 0.90,
+                evaluationPeriods: 2,
+                datapointsToAlarm: 2,
+                comparisonOperator: "LessThanThreshold"
+              }
+            }
+          ]
+        },
+        {
+          name: "signal_requestor",
+          address: "0x734df7809c4ef94da037449c287166d114503198",
+          submissionRate: [
+            {
+              description: "no submitted orders in 2 hours from signal_requestor",
+              severity: Severity.SEV1,
+              metricConfig: {
+                period: 7200
+              },
+              alarmConfig: {
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                threshold: 1,
+                comparisonOperator: "LessThanThreshold",
+                treatMissingData: "breaching"
+              }
+            },
+            {
+              description: "no submitted orders in 30 minutes from signal_requestor",
+              severity: Severity.SEV2,
+              metricConfig: {
+                period: 1800
+              },
+              alarmConfig: {
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                threshold: 1,
+                comparisonOperator: "LessThanThreshold",
+                treatMissingData: "breaching"
+              }
+            }
+          ],
+          successRate: [
+            {
+              description: "less than 90% success rate for two consecutive hours from signal_requestor",
+              severity: Severity.SEV2,
+              metricConfig: {
+                period: 3600
+              },
+              alarmConfig: {
+                threshold: 0.90,
+                evaluationPeriods: 2,
+                datapointsToAlarm: 2,
+                comparisonOperator: "LessThanThreshold"
+              }
+            }
+          ]
+        },
+        {
+          name: "kailua_og_offchain",
+          address: "0x89f12aba0bcda3e708b1129eb2557b96f57b0de6",
+          submissionRate: [
+            {
+              description: "no submitted orders in 2 hours from kailua_og_offchain",
+              severity: Severity.SEV1,
+              metricConfig: {
+                period: 7200
+              },
+              alarmConfig: {
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                threshold: 1,
+                comparisonOperator: "LessThanThreshold",
+                treatMissingData: "breaching"
+              }
+            },
+            {
+              description: "no submitted orders in 30 minutes from kailua_og_offchain",
+              severity: Severity.SEV2,
+              metricConfig: {
+                period: 1800
+              },
+              alarmConfig: {
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                threshold: 1,
+                comparisonOperator: "LessThanThreshold",
+                treatMissingData: "breaching"
+              }
+            }
+          ],
+          successRate: [
+            {
+              description: "less than 90% success rate for two consecutive hours from kailua_og_offchain",
+              severity: Severity.SEV2,
               metricConfig: {
                 period: 3600
               },
@@ -817,7 +950,7 @@ export const alarmConfig: ChainStageAlarms = {
             }
           ],
           successRate: [
-            // Offchain orders are small orders submitted every 5 mins, 
+            // Offchain orders are small orders submitted every 5 mins,
             // so we set a more aggressive success rate threshold.
             {
               description: "less than 90% success rate for two 30 minute periods in 2 hours from og_offchain",
@@ -881,8 +1014,8 @@ export const alarmConfig: ChainStageAlarms = {
             }
           ],
           successRate: [
-            // Onchain orders are large orders that can take variable lengths of time to fulfill, 
-            // so we set a more lenient success rate threshold, since there may be periods where 
+            // Onchain orders are large orders that can take variable lengths of time to fulfill,
+            // so we set a more lenient success rate threshold, since there may be periods where
             // fewer proofs get fulfilled due to variant proof lengths.
             {
               description: "less than 90% success rate for two consecutive hours from og_onchain",

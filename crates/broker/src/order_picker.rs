@@ -80,9 +80,6 @@ pub enum OrderPickerErr {
     #[error("{code} failed to fetch / push image: {0}", code = self.code())]
     FetchImageErr(#[source] Arc<anyhow::Error>),
 
-    #[error("{code} guest panicked: {0}", code = self.code())]
-    GuestPanic(String),
-
     #[error("{code} invalid request: {0}", code = self.code())]
     RequestError(Arc<RequestError>),
 
@@ -98,7 +95,6 @@ impl CodedError for OrderPickerErr {
         match self {
             OrderPickerErr::FetchInputErr(_) => "[B-OP-001]",
             OrderPickerErr::FetchImageErr(_) => "[B-OP-002]",
-            OrderPickerErr::GuestPanic(_) => "[B-OP-003]",
             OrderPickerErr::RequestError(_) => "[B-OP-004]",
             OrderPickerErr::RpcErr(_) => "[B-OP-005]",
             OrderPickerErr::UnexpectedErr(_) => "[B-OP-500]",
@@ -352,7 +348,13 @@ where
 
         if !self.supported_selectors.is_supported(order.request.requirements.selector) {
             tracing::info!(
-                "Removing order {order_id} because it has an unsupported selector requirement"
+                "Removing order {order_id} because it has an unsupported selector requirement. Requested: {:x}. Supported: {:?}",
+                order.request.requirements.selector,
+                self.supported_selectors
+                    .selectors
+                    .iter()
+                    .map(|(k, v)| format!("{k:x} ({v:?})"))
+                    .collect::<Vec<_>>()
             );
 
             return Ok(Skip);
@@ -551,21 +553,26 @@ where
                                 })
                             }
                             Err(err) => match err {
-                                ProverError::ProvingFailed(ref err_msg)
-                                    if err_msg.contains("Session limit exceeded") =>
-                                {
-                                    tracing::debug!(
-                                        "Skipping order {order_id_clone} due to session limit exceeded: {}",
-                                        err_msg
-                                    );
-                                    Ok(PreflightCacheValue::Skip {
-                                        cached_limit: exec_limit_cycles,
-                                    })
-                                }
-                                ProverError::ProvingFailed(ref err_msg)
-                                    if err_msg.contains("GuestPanic") =>
-                                {
-                                    Err(OrderPickerErr::GuestPanic(err_msg.clone()))
+                                ProverError::ProvingFailed(ref err_msg) => {
+                                    if err_msg.contains("Session limit exceeded") {
+                                        tracing::debug!(
+                                            "Skipping order {order_id_clone} due to session limit exceeded: {}",
+                                            err_msg
+                                        );
+                                        Ok(PreflightCacheValue::Skip {
+                                            cached_limit: exec_limit_cycles,
+                                        })
+                                    } else if err_msg.contains("Guest panicked") || err_msg.contains("GuestPanic") {
+                                        // Error message from bento and bonsai respectively for guest failures
+                                        tracing::debug!("Skipping order {order_id_clone} due to guest panic (invalid request): {}", err_msg);
+                                        Ok(PreflightCacheValue::Skip {
+                                            // Use max cached limit, to avoid re-running preflight
+                                            // for an invalid request.
+                                            cached_limit: u64::MAX,
+                                        })
+                                    } else {
+                                        Err(OrderPickerErr::UnexpectedErr(Arc::new(err.into())))
+                                    }
                                 }
                                 _ => Err(OrderPickerErr::UnexpectedErr(Arc::new(err.into()))),
                             },
@@ -596,13 +603,8 @@ where
         };
 
         // Handle the preflight result
-        let (exec_session_id, cycle_count) = match preflight_result {
-            Ok(PreflightCacheValue::Success {
-                exec_session_id,
-                cycle_count,
-                image_id,
-                input_id,
-            }) => {
+        let (exec_session_id, cycle_count) = match preflight_result? {
+            PreflightCacheValue::Success { exec_session_id, cycle_count, image_id, input_id } => {
                 tracing::debug!(
                     "Using preflight result for {order_id}: session id {} with {} mcycles",
                     exec_session_id,
@@ -615,11 +617,8 @@ where
 
                 (exec_session_id, cycle_count)
             }
-            Ok(PreflightCacheValue::Skip { .. }) => {
+            PreflightCacheValue::Skip { .. } => {
                 return Ok(Skip);
-            }
-            Err(err) => {
-                return Err(err);
             }
         };
 
@@ -632,7 +631,7 @@ where
         // If a max_mcycle_limit is configured check if the order is over that limit
         let proof_cycles = proof_res.stats.total_cycles;
         if proof_cycles > prove_limit {
-            tracing::info!("Order {order_id} max_mcycle_limit check failed req: {proof_cycles} | config: {prove_limit}");
+            tracing::info!("Order {order_id} with {proof_cycles} cycles above prove limit from capacity ({prove_limit})");
             return Ok(Skip);
         }
 
