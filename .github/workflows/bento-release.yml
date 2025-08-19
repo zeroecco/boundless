@@ -17,7 +17,7 @@ on:
 
 env:
   RISC0_TOOLCHAIN_VERSION: 1.88.0
-  RISC0_CRATE_VERSION: "2.3.0"
+  RISC0_CRATE_VERSION: "2.3.1"
   RUST_VERSION: "1.88.0"
 
 jobs:
@@ -82,10 +82,9 @@ jobs:
       - name: Build Bento Components Bundle
         working-directory: bento
         env:
-          RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
           CUDA_PATH: /usr/local/cuda
           CUDA_HOME: /usr/local/cuda
-          PATH: /usr/local/cuda/bin:/home/runner/.cargo/bin:$PATH
+          PATH: /usr/local/cuda/bin:/usr/bin:/usr/local/bin:/home/runner/.cargo/bin:$PATH
           LD_LIBRARY_PATH: /usr/local/cuda/lib64:$LD_LIBRARY_PATH
           NVCC_FLAGS: "--generate-code arch=compute_86,code=sm_86 --generate-code arch=compute_89,code=sm_89 --generate-code arch=compute_120,code=sm_120"
         run: |
