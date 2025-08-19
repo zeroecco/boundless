@@ -49,6 +49,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev cuda-toolkit-13-0 nvidia-open
 
+          # Debug PATH and verify tools
+          echo "=== PATH Debug ==="
+          echo "PATH: $PATH"
+          echo "=== Tool Locations ==="
+          which gcc || echo "gcc not found"
+          which cc || echo "cc not found"
+          which nvcc || echo "nvcc not found"
+          echo "=== CUDA Paths ==="
+          ls -la /usr/local/cuda/bin/ || echo "CUDA bin not found"
+          ls -la /usr/bin/gcc || echo "System gcc not found"
+
       - name: Setup Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
