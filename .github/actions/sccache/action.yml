@@ -10,7 +10,7 @@ inputs:
   aws_region:
     default: us-west-2
   aws_account:
-    default: '083632199359'
+    default: "221366736655"
   aws_role:
     default: gha_oidc_risc0_cache_shared_access
 
