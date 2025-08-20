@@ -16,6 +16,8 @@ on:
         default: 'false'
 
 env:
+  RISC0_TOOLCHAIN_VERSION: 1.88.0
+  RISC0_CRATE_VERSION: "2.3.1"
   RUST_VERSION: "1.88.0"
 
 jobs:
@@ -51,6 +53,17 @@ jobs:
           target: ${{ matrix.target }}
           override: true
           profile: minimal
+
+      - name: Install RISC0 toolchain
+        uses: risc0/risc0/.github/actions/rustup@352dea62857ba57331053cd0986a12c1a4708732
+        with:
+          toolchain: ${{ env.RISC0_TOOLCHAIN_VERSION }}
+
+      - name: Install cargo risczero
+        uses: ./.github/actions/bininstall-risc0
+        with:
+          risczero-version: ${{ env.RISC0_CRATE_VERSION }}
+          toolchain-version: ${{ env.RISC0_TOOLCHAIN_VERSION }}
 
       - name: Build Broker Components
         env:
